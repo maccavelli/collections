@@ -20,18 +20,7 @@ requiring manual effort.
 - **Standards Enforcement**: Defaults to Conventional Commits (feat, fix, docs, etc.).
 - **Native Performance**: Written in Go for zero-latency execution.
 
-## 🚀 Usage Instructions
-
-1. **Configure**: Run the setup wizard to choose your provider and model.
-
-   ```bash
-   ./prepare-commit-msg --setup
-   ```
-
-2. **Commit**: Work as usual. The tool automatically drafts the message.
-3. **Edit/Save**: Review the AI-generated draft in your editor and save.
-
-## 🔧 Installation Instructions
+## � Installation Instructions
 
 1. **Copy Binary**: Copy the built binary into your project's `.git/hooks/` directory.
 
@@ -45,11 +34,26 @@ requiring manual effort.
    chmod +x .git/hooks/prepare-commit-msg
    ```
 
+## �🚀 Usage Instructions
+
+1. **Configure**: Run the setup wizard to choose your provider and model.
+
+   ```bash
+   ./prepare-commit-msg --setup
+   ```
+
+2. **Commit**: Work as usual. The tool automatically drafts the message.
+3. **Edit/Save**: Review the AI-generated draft in your editor and save.
+
 ## 💡 Detailed Guidance
 
 - **Model Selection**: For the best balance of speed and quality, the tool recommends `gemini-2.5-flash-lite`.
 - **Security**: API keys are stored in `~/.config/prepare-commit-msg/config.json`.
 - **Customization**: You can override the generated message entirely by simply deleting it in your editor before saving.
+
+## ⚖️ License
+
+MIT
 
 ---
 *Built with Go for performance and stability.*
