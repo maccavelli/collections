@@ -1,5 +1,5 @@
 BINARY_NAME=prepare-commit-msg
-DIST_DIR=bin
+DIST_DIR=dist
 VERSION?=$(shell git describe --tags --always --dirty 2>/dev/null || echo "v2.0.0")
 
 .PHONY: all build clean test run install version build-all linux darwin-amd64 darwin-arm64 windows help fmt vet lint
