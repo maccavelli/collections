@@ -1,36 +1,58 @@
 # DuckDuckGo MCP Server (Go)
 
-A high-performance Model Context Protocol (MCP) server written in Go that provides
-comprehensive search capabilities using DuckDuckGo and Anna's Archive.
+A high-performance Model Context Protocol (MCP) server that provides comprehensive search capabilities.
 
-This server is designed for speed, resilience, and rich metadata extraction,
-making it an ideal companion for AI agents that need to stay grounded in
-real-world data.
+## 🎯 What it is for
 
-## ✨ Features
+The `duckduckgo` MCP server enables AI agents to stay grounded in real-world data by providing dedicated tools for Web,
+News, Images, Videos, and Books. It is designed for speed, resilience, and rich metadata extraction.
 
-- **🌐 Multi-Modal Search**: Dedicated tools for Web, News, Images, and Videos
-  via DuckDuckGo.
-- **📚 Resilient Book Search**: High-performance book discovery via Anna's
-  Archive mirrors, utilizing concurrent requests across multiple TLDs (e.g.,
-  `.gd`, `.gl`, `.pk`) for maximum speed and uptime.
-- **💎 Rich Metadata**: Goes beyond simple links. Extracts snippets, thumbnails,
-  durations, authors, and file formats where available.
-- **⚡ Performance**: Built in Go for minimal overhead and lightning-fast
-  execution.
-- **🛡️ Resilience**: Implements intelligent scraping of DuckDuckGo's HTML and
-  JSON endpoints to avoid common API limitations.
+## ⚙️ How it works
 
-## 🚀 Installation & Setup
+- **Native Protocol**: Communicates via `JSON-RPC 2.0` over `stdio` transport as per the MCP specification.
+- **Scraping Architecture**: Intelligently extracts a `vqd` token from DuckDuckGo to authenticate requests to internal
+  JSON endpoints used for News, Images, and Videos.
+- **Anna's Archive Integration**: Uses a high-performance concurrent scraper to query multiple book archive mirrors.
 
-To register this server in your Antigravity `mcp_config.json`, add the following
-entry to the `mcpServers` object, changing the -os- to the os version of the build:
+## 🧠 Why it works
+
+- **Golang Efficiency**: Written in Go to ensure minimal memory overhead and near-instant execution, which is critical
+  for agentic tool loops.
+- **Mirror Resilience**: The book search queries multiple TLDs (e.g., `.gd`, `.gl`, `.pk`) in parallel. The first
+  successful response is returned immediately.
+- **Rich Metadata Extraction**: Unlike simple link scrapers, this server extracts thumbnails, durations, authors, and
+  file formats, providing the AI with superior context.
+
+## � Installation Instructions
+
+1. **Pre-built Binaries**: You can simply copy the pre-built binary for your platform from the `bin/` directory to any
+   location on your system.
+2. **Deploy**: Update your MCP host configuration with the absolute path to the binary.
+
+   *Example*: If you place the Linux binary in `~/.local/bin`, your configuration path would be:
+   `/home/username/.local/bin/mcp-server-duckduckgo-linux-amd64`
+
+3. **Build from Source** (Optional):
+
+   ```bash
+   go build -o mcp-server-duckduckgo
+   ```
+
+4. **Verify**:
+
+   ```bash
+   ./mcp-server-duckduckgo --version
+   ```
+
+## �🚀 Usage Instructions
+
+Register the server in your Antigravity or Claude Desktop `mcp_config.json`:
 
 ```json
 {
   "mcpServers": {
     "duckduckgo": {
-      "command": "/absolute/path/to/mcp-server-duckduckgo-os-amd64",
+      "command": "/path/to/mcp-server-duckduckgo-linux-amd64",
       "args": [],
       "env": {}
     }
@@ -38,64 +60,23 @@ entry to the `mcpServers` object, changing the -os- to the os version of the bui
 }
 ```
 
-> [!TIP]
-> You can verify the installation by running the binary with the `--version`
-> flag:
-> `./mcp-server-duckduckgo-linux-amd64 --version`
+Available tools:
+
+- `ddg_search_web`: High-quality web search snippets.
+- `ddg_search_news`: Recent news articles with timestamps.
+- `ddg_search_images`: Visual content discovery.
+- `ddg_search_videos`: Video metadata and links.
+- `ddg_search_books`: Deep search for books via Anna's Archive.
+
+## 💡 Detailed Guidance
+
+- **Rate Limiting**: While resilient, excessive rapid-fire requests may lead to temporary blocks by DuckDuckGo.
+- **Book Search Latency**: Book results may take 2-4 seconds as multiple mirrors are queried across regions.
+- **Metadata Quality**: Image and video metadata depends on DuckDuckGo's internal extraction; results may vary.
+
+## ⚖️ License
+
+MIT
 
 ---
-
-## 🛠️ Tools Provided
-
-### 1. `ddg_search_web`
-
-Performs a high-quality web search using the DuckDuckGo HTML endpoint.
-
-- **Parameters**:
-  - `query` (string, required): Search keywords.
-  - `max_results` (number, default: 5): Results to return.
-- **Returns**: Title, URL, and snippet description.
-
-### 2. `ddg_search_news`
-
-Searches for recent news articles.
-
-- **Parameters**: `query`, `max_results`.
-- **Returns**: Title, URL, excerpt, source name, publication date, and thumbnail
-  URL.
-
-### 3. `ddg_search_images`
-
-Discovery of image content.
-
-- **Parameters**: `query`, `max_results`.
-- **Returns**: Title, source URL, direct image URL, and thumbnail.
-
-### 4. `ddg_search_videos`
-
-Discovery of video content.
-
-- **Parameters**: `query`, `max_results`.
-- **Returns**: Title, URL, description, duration, and publisher.
-
-### 5. `ddg_search_books`
-
-Deep search for books and documents via Anna's Archive.
-
-- **Parameters**: `query`, `max_results`.
-- **Returns**: Title, direct link, author, description, and a `metadata` object
-  containing size, format, year, language, and category.
-
----
-
-## 🏗️ Technical Architecture
-
-- **DuckDuckGo Engine**: The server intelligently extracts a `vqd` (Verification
-  Query Description) token from the main site to authenticate requests to
-  internal JSON endpoints used for News, Images, and Videos. Web results are
-  scraped from the reliable HTML-only endpoint.
-- **Concurrent Book Search**: The Book tool queries multiple Anna's Archive
-  mirrors simultaneously. The first successful response is returned immediately,
-  and pending requests are cancelled to ensure the lowest possible latency.
-- **Standard Protocol**: Communicates over `JSON-RPC 2.0` via `stdio` transport
-  as per the MCP specification.
+*Built with Go for performance and stability.*
