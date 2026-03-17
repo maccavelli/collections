@@ -1,86 +1,55 @@
 # Go Prepare Commit Message Hook
 
-`prepare-commit-msg` is a standalone Git hook that leverages artificial intelligence to automatically
-generate descriptive, well-structured, and compliant Conventional Commit messages based on your staged changes.
+An AI-powered Git hook that automatically generates descriptive, Conventional Commit messages.
 
-## Why AI-Generated Commit Messages?
+## 🎯 What it is for
 
-Standard commit messages are often rushed, vague, or inconsistent. By leveraging AI, this tool significantly
-improves your repository's history:
+The `prepare-commit-msg` hook eliminates the mental overhead of drafting commit messages. It ensures that your
+repository history is consistent, detailed, and adheres to the Conventional Commits specification without
+requiring manual effort.
 
-- **Consistency:** Automatically adheres to the [Conventional Commits](https://www.conventionalcommits.org/)
-  specification.
-- **Context-Aware:** Analyzes the actual code diff to understand *what* changed and *why*.
-- **Quality:** Generates detailed body descriptions that help teammates understand technical decisions without
-  digging through the diff themselves.
-- **Efficiency:** Saves developers time by drafting the boilerplate and structure, leaving only the final review
-  to the human.
+## ⚙️ How it works
 
-## How it Works
+1. **Diff Analysis**: Scans staged changes to gather file statuses and full unified diffs.
+2. **AI Orchestration**: Constructs a high-context prompt for Gemini or OpenAI.
+3. **Hook Integration**: Leverages the standard Git `prepare-commit-msg` hook flow.
 
-1. **Deep Analysis:** The tool scans your staged changes, gathering file statuses, addition/deletion counts, and the
-   full unified diff.
-2. **Intelligent Prompting:** It constructs a high-context prompt that summarizes the technical changes for the
-   selected LLM (Gemini or OpenAI).
-3. **Native Generation:** Using built-in SDKs, it communicates directly with the AI provider to generate a draft
-   message.
-4. **Draft Review:** The tool prepends the AI's suggestion to your `COMMIT_EDITMSG` file, allowing you to edit or
-   approve it before finalizing the commit.
+## 🧠 Why it works
 
-## Installation and Usage
+- **Context-Awareness**: It understands the *logic* of your code changes.
+- **Standards Enforcement**: Defaults to Conventional Commits (feat, fix, docs, etc.).
+- **Native Performance**: Written in Go for zero-latency execution.
 
-### 1. Configuration (`--setup`)
+## 🚀 Usage Instructions
 
-Before using the hook, you must configure your AI provider and API key.
-
-```bash
-./prepare-commit-msg-linux-amd64 --setup
-```
-
-**Features of Setup:**
-
-- **Interactive Provider Selection:** Choose between Gemini (default) or OpenAI.
-- **Smart Key Detection:** If `GEMINI_API_KEY` or `OPENAI_API_KEY` is set in your environment, the tool will
-  automatically import it.
-- **Model Selection:** Choose from recommended models like `gemini-2.5-flash-lite`.
-
-Settings are stored securely in `~/.config/prepare-commit-msg/config.json`.
-
-### 2. Install as a Git Hook
-
-To integrate the tool into your repository:
-
-1. **Navigate to your repository's hooks directory:**
+1. **Configure**: Run the setup wizard to choose your provider and model.
 
    ```bash
-   cd /path/to/your/repo/.git/hooks
+   ./prepare-commit-msg --setup
    ```
 
-2. **Create the `prepare-commit-msg` file:**
-   Simply copy the binary into your `.git/hooks/` directory, renaming it to `prepare-commit-msg`.
+2. **Commit**: Work as usual. The tool automatically drafts the message.
+3. **Edit/Save**: Review the AI-generated draft in your editor and save.
+
+## 🔧 Installation Instructions
+
+1. **Copy Binary**: Copy the built binary into your project's `.git/hooks/` directory.
 
    ```bash
-   cp /path/to/prepare-commit-msg-linux-amd64 prepare-commit-msg
+   cp prepare-commit-msg-linux-amd64 .git/hooks/prepare-commit-msg
    ```
 
-3. **Make it executable:**
+2. **Make Executable**:
 
    ```bash
    chmod +x .git/hooks/prepare-commit-msg
    ```
 
-### 3. Commit Your Changes
+## 💡 Detailed Guidance
 
-Work as usual! When you run `git commit`, the tool will trigger:
-
-   ```bash
-   git add .
-   git commit
-   # [Tool] Generating commit message via gemini (gemini-2.5-flash-lite)...
-   ```
-
-The AI-drafted message will appear in your editor. Review, save, and you're done!
+- **Model Selection**: For the best balance of speed and quality, the tool recommends `gemini-2.5-flash-lite`.
+- **Security**: API keys are stored in `~/.config/prepare-commit-msg/config.json`.
+- **Customization**: You can override the generated message entirely by simply deleting it in your editor before saving.
 
 ---
-
 *Built with Go for performance and stability.*
