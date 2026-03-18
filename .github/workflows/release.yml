@@ -1,0 +1,48 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - '*-v*' # Triggers on app prefix semantics e.g. prepare-commit-msg-v1.0.0
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Extract App Name
+        id: parse
+        run: |
+          # GITHUB_REF is refs/tags/appname-vX.Y.Z
+          TAG_NAME=${GITHUB_REF#refs/tags/}
+          APP_NAME=${TAG_NAME%-v*}
+          echo "APP_NAME=$APP_NAME" >> $GITHUB_ENV
+          echo "Extracted App: $APP_NAME"
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
+
+      - name: Build Binaries
+        working-directory: ${{ env.APP_NAME }}
+        run: |
+          GOOS=darwin GOARCH=arm64 go build -o commit-hook-macos-arm64 .
+          GOOS=darwin GOARCH=amd64 go build -o commit-hook-macos-amd64 .
+          GOOS=linux GOARCH=amd64 go build -o commit-hook-linux-amd64 .
+          GOOS=windows GOARCH=amd64 go build -o commit-hook-windows-amd64.exe .
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ env.APP_NAME }}/commit-hook-macos-arm64
+            ${{ env.APP_NAME }}/commit-hook-macos-amd64
+            ${{ env.APP_NAME }}/commit-hook-linux-amd64
+            ${{ env.APP_NAME }}/commit-hook-windows-amd64.exe
