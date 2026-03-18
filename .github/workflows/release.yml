@@ -22,7 +22,7 @@ jobs:
           # GITHUB_REF is refs/tags/appname-vX.Y.Z
           TAG_NAME=${GITHUB_REF#refs/tags/}
           APP_NAME=${TAG_NAME%-v*}
-          echo "APP_NAME=$APP_NAME" >> $GITHUB_ENV
+          echo "APP_NAME=$APP_NAME" >> $GITHUB_OUTPUT
           echo "Extracted App: $APP_NAME"
 
       - name: Set up Go
@@ -31,7 +31,7 @@ jobs:
           go-version: 'stable'
 
       - name: Build Binaries
-        working-directory: ${{ env.APP_NAME }}
+        working-directory: ${{ steps.parse.outputs.APP_NAME }}
         run: |
           GOOS=darwin GOARCH=arm64 go build -o commit-hook-macos-arm64 .
           GOOS=darwin GOARCH=amd64 go build -o commit-hook-macos-amd64 .
@@ -42,7 +42,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            ${{ env.APP_NAME }}/commit-hook-macos-arm64
-            ${{ env.APP_NAME }}/commit-hook-macos-amd64
-            ${{ env.APP_NAME }}/commit-hook-linux-amd64
-            ${{ env.APP_NAME }}/commit-hook-windows-amd64.exe
+            ${{ steps.parse.outputs.APP_NAME }}/commit-hook-macos-arm64
+            ${{ steps.parse.outputs.APP_NAME }}/commit-hook-macos-amd64
+            ${{ steps.parse.outputs.APP_NAME }}/commit-hook-linux-amd64
+            ${{ steps.parse.outputs.APP_NAME }}/commit-hook-windows-amd64.exe
