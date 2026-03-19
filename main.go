@@ -121,12 +121,19 @@ func runAnalyzer(file string, conf *config.Config) error {
 }
 
 func cleanLLMOutput(out string) string {
-	// Remove code fences
+	// Remove code fences (find closing fence explicitly)
 	out = strings.TrimSpace(out)
 	if strings.HasPrefix(out, "```") {
 		lines := strings.Split(out, "\n")
-		if len(lines) > 2 {
-			out = strings.Join(lines[1:len(lines)-1], "\n")
+		endIdx := len(lines) - 1
+		for i := len(lines) - 1; i > 0; i-- {
+			if strings.HasPrefix(strings.TrimSpace(lines[i]), "```") {
+				endIdx = i
+				break
+			}
+		}
+		if endIdx > 1 {
+			out = strings.Join(lines[1:endIdx], "\n")
 		}
 	}
 

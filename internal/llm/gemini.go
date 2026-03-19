@@ -7,11 +7,13 @@ import (
 	"google.golang.org/genai"
 )
 
+// GeminiProvider implements Provider using the Google Gemini API.
 type GeminiProvider struct {
 	client *genai.Client
 	model  string
 }
 
+// NewGemini creates a Gemini provider, initializing the API client.
 func NewGemini(ctx context.Context, apiKey, model string) (*GeminiProvider, error) {
 	client, err := genai.NewClient(ctx, &genai.ClientConfig{
 		APIKey:  apiKey,

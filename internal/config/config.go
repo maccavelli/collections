@@ -7,16 +7,20 @@ import (
 	"path/filepath"
 )
 
+// Config holds the application configuration including the active LLM provider
+// and per-provider settings.
 type Config struct {
 	ActiveProvider string                    `json:"active_provider"`
 	Providers      map[string]ProviderConfig `json:"providers"`
 }
 
+// ProviderConfig stores credentials and model selection for a single LLM provider.
 type ProviderConfig struct {
 	APIKey string `json:"api_key"`
 	Model  string `json:"model"`
 }
 
+// GetConfigPath returns the absolute path to the configuration file.
 func GetConfigPath() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -25,6 +29,7 @@ func GetConfigPath() (string, error) {
 	return filepath.Join(home, ".config", "prepare-commit-msg", "config.json"), nil
 }
 
+// Load reads the configuration from disk, migrating from the legacy path if needed.
 func Load() (*Config, error) {
 	path, err := GetConfigPath()
 	if err != nil {
@@ -55,6 +60,7 @@ func Load() (*Config, error) {
 	return &conf, nil
 }
 
+// Save writes the current configuration to disk, creating directories as needed.
 func (c *Config) Save() error {
 	path, err := GetConfigPath()
 	if err != nil {
@@ -73,6 +79,7 @@ func (c *Config) Save() error {
 	return os.WriteFile(path, data, 0600)
 }
 
+// GetActive returns the ProviderConfig for the currently active provider.
 func (c *Config) GetActive() (ProviderConfig, error) {
 	if c.ActiveProvider == "" {
 		return ProviderConfig{}, fmt.Errorf("no active provider configured; please run with --setup")
