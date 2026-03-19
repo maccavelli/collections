@@ -4,7 +4,7 @@ package main
 type SearchResult struct {
 	Title       string `json:"title"`
 	URL         string `json:"url"`
-	Description string `json:"description"`
+	Description string `json:"description,omitempty"`
 	Source      string `json:"source,omitempty"`
 	Date        string `json:"date,omitempty"`
 	Author      string `json:"author,omitempty"`
@@ -12,13 +12,13 @@ type SearchResult struct {
 	Thumbnail   string `json:"thumbnail,omitempty"`
 	Duration    string `json:"duration,omitempty"`
 	Publisher   string `json:"publisher,omitempty"`
-	Type        string            `json:"type,omitempty"` // web, news, image, video, book
-	Metadata    map[string]string `json:"metadata,omitempty"`
+	Info        string `json:"info,omitempty"`
 }
 
 // SearchResponse represents the structured payload returned by search tools.
+// Type is set once at the response level since all results share the same type.
+// Query and count are omitted — the agent already has both from its own call context.
 type SearchResponse struct {
-	Query   string         `json:"query"`
+	Type    string         `json:"type"`
 	Results []SearchResult `json:"results"`
-	Count   int            `json:"count"`
 }

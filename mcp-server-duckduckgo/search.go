@@ -112,7 +112,6 @@ func (e *SearchEngine) WebSearch(query string, maxResults int) ([]SearchResult, 
 				Title:       strings.TrimSpace(title),
 				URL:         link,
 				Description: strings.TrimSpace(snippet),
-				Type:        "web",
 			})
 		}
 	})
@@ -179,7 +178,6 @@ func (e *SearchEngine) NewsSearch(query string, maxResults int) ([]SearchResult,
 			Source:      r.Source,
 			Date:        dateStr,
 			ImageURL:    r.Image,
-			Type:        "news",
 		})
 	}
 	return results, nil
@@ -226,13 +224,11 @@ func (e *SearchEngine) ImageSearch(query string, maxResults int) ([]SearchResult
 			break
 		}
 		results = append(results, SearchResult{
-			Title:       r.Title,
-			URL:         r.URL,
-			ImageURL:    r.Image,
-			Thumbnail:   r.Thumbnail,
-			Source:      r.Source,
-			Description: fmt.Sprintf("Image from %s", r.Source),
-			Type:        "image",
+			Title:     r.Title,
+			URL:       r.URL,
+			ImageURL:  r.Image,
+			Thumbnail: r.Thumbnail,
+			Source:    r.Source,
 		})
 	}
 	return results, nil
@@ -286,7 +282,6 @@ func (e *SearchEngine) VideoSearch(query string, maxResults int) ([]SearchResult
 			Duration:    r.Duration,
 			Publisher:   r.Publisher,
 			Date:        r.Published,
-			Type:        "video",
 		})
 	}
 	return results, nil
@@ -400,51 +395,23 @@ func (e *SearchEngine) queryMirror(ctx context.Context, tld, query string, maxRe
 			author = s.Find("div.italic").Text()
 		}
 
-		// Extract info and metadata
-		var metadataLine string
+		// Extract info and description
+		var infoLine string
 		var description string
-		
+
 		s.Find("div.text-gray-800, div.text-sm.text-gray-600").Each(func(i int, sel *goquery.Selection) {
 			sel.Find("script, style").Remove()
 			txt := strings.TrimSpace(sel.Text())
 			if txt == "" {
 				return
 			}
-			// Metadata line usually contains the separator "·"
-			if strings.Contains(txt, "·") && metadataLine == "" {
-				metadataLine = txt
+			// Info line usually contains the separator "·"
+			if strings.Contains(txt, "·") && infoLine == "" {
+				infoLine = txt
 			} else if description == "" || len(txt) > len(description) {
-				// Pick the longest text block that isn't the metadata as the description
 				description = txt
 			}
 		})
-
-		metadata := make(map[string]string)
-		if metadataLine != "" {
-			parts := strings.Split(metadataLine, "·")
-			for _, p := range parts {
-				p = strings.TrimSpace(p)
-				if p == "" {
-					continue
-				}
-				lowerP := strings.ToLower(p)
-				if (strings.Contains(p, "MB") || strings.Contains(p, "KB") || strings.Contains(p, "GB")) && metadata["size"] == "" {
-					metadata["size"] = p
-				} else if (strings.Contains(lowerP, "pdf") || strings.Contains(lowerP, "epub") || strings.Contains(lowerP, "mobi") || strings.Contains(lowerP, "azw")) && metadata["format"] == "" {
-					metadata["format"] = p
-				} else if len(p) == 4 && metadata["year"] == "" && isNumeric(p) {
-					metadata["year"] = p
-				} else if (strings.Contains(p, "[") && strings.Contains(p, "]") || strings.Contains(lowerP, "english") || strings.Contains(lowerP, "chinese")) && metadata["language"] == "" {
-					metadata["language"] = p
-				} else {
-					if metadata["category"] == "" {
-						metadata["category"] = p
-					} else {
-						metadata["category"] += " · " + p
-					}
-				}
-			}
-		}
 
 		if title != "" && link != "" {
 			title = strings.TrimSpace(title)
@@ -452,7 +419,7 @@ func (e *SearchEngine) queryMirror(ctx context.Context, tld, query string, maxRe
 			if !strings.HasPrefix(href, "http") {
 				href = baseUrl + href
 			}
-			
+
 			isDuplicate := false
 			for _, r := range results {
 				if r.URL == href {
@@ -462,18 +429,12 @@ func (e *SearchEngine) queryMirror(ctx context.Context, tld, query string, maxRe
 			}
 
 			if !isDuplicate {
-				// Fallback description if only metadata was found
-				if description == "" {
-					description = metadataLine
-				}
-				
 				results = append(results, SearchResult{
 					Title:       title,
 					URL:         href,
 					Description: description,
 					Author:      strings.TrimSpace(author),
-					Type:        "book",
-					Metadata:    metadata,
+					Info:        infoLine,
 				})
 			}
 		}
