@@ -38,31 +38,31 @@ func main() {
 		mcp.WithDescription("Perform a high-quality web search using DuckDuckGo."),
 		mcp.WithString("query", mcp.Description("The search keywords"), mcp.Required()),
 		mcp.WithNumber("max_results", mcp.Description("Maximum results to return (default 5)"), mcp.DefaultNumber(5)),
-	), makeSearchHandler(engine.WebSearch))
+	), makeSearchHandler(engine.WebSearch, "web"))
 
 	s.AddTool(mcp.NewTool("ddg_search_news",
 		mcp.WithDescription("Perform a news-specific search using DuckDuckGo."),
 		mcp.WithString("query", mcp.Description("The search keywords"), mcp.Required()),
 		mcp.WithNumber("max_results", mcp.Description("Maximum results to return (default 5)"), mcp.DefaultNumber(5)),
-	), makeSearchHandler(engine.NewsSearch))
+	), makeSearchHandler(engine.NewsSearch, "news"))
 
 	s.AddTool(mcp.NewTool("ddg_search_images",
 		mcp.WithDescription("Search for images using DuckDuckGo."),
 		mcp.WithString("query", mcp.Description("The search keywords"), mcp.Required()),
 		mcp.WithNumber("max_results", mcp.Description("Maximum results to return (default 5)"), mcp.DefaultNumber(5)),
-	), makeSearchHandler(engine.ImageSearch))
+	), makeSearchHandler(engine.ImageSearch, "image"))
 
 	s.AddTool(mcp.NewTool("ddg_search_videos",
 		mcp.WithDescription("Search for videos using DuckDuckGo."),
 		mcp.WithString("query", mcp.Description("The search keywords"), mcp.Required()),
 		mcp.WithNumber("max_results", mcp.Description("Maximum results to return (default 5)"), mcp.DefaultNumber(5)),
-	), makeSearchHandler(engine.VideoSearch))
+	), makeSearchHandler(engine.VideoSearch, "video"))
 
 	s.AddTool(mcp.NewTool("ddg_search_books",
 		mcp.WithDescription("Search for books using DuckDuckGo."),
 		mcp.WithString("query", mcp.Description("The search keywords"), mcp.Required()),
 		mcp.WithNumber("max_results", mcp.Description("Maximum results to return (default 5)"), mcp.DefaultNumber(5)),
-	), makeSearchHandler(engine.BookSearch))
+	), makeSearchHandler(engine.BookSearch, "book"))
 
 	// Start the server using stdio transport
 	if err := server.ServeStdio(s); err != nil {
@@ -75,6 +75,7 @@ func main() {
 // This eliminates the duplicated boilerplate across all 5 search handlers.
 func makeSearchHandler(
 	searchFn func(string, int) ([]SearchResult, error),
+	resultType string,
 ) server.ToolHandlerFunc {
 	return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		query, err := request.RequireString("query")
@@ -89,9 +90,8 @@ func makeSearchHandler(
 		}
 
 		result, err := mcp.NewToolResultJSON(SearchResponse{
-			Query:   query,
+			Type:    resultType,
 			Results: results,
-			Count:   len(results),
 		})
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
