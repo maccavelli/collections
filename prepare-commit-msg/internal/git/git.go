@@ -7,6 +7,7 @@ import (
 	"strings"
 )
 
+// Info holds the staged change metadata collected from git for prompt construction.
 type Info struct {
 	Files     []string
 	Stats     string
@@ -15,6 +16,7 @@ type Info struct {
 	Diff      string
 }
 
+// GatherInfo collects staged file names, diff stats, and the unified diff from git.
 func GatherInfo() (*Info, error) {
 	gitBin, err := exec.LookPath("git")
 	if err != nil {
@@ -80,16 +82,22 @@ func GatherInfo() (*Info, error) {
 	info.Additions = parseShortStat(statLine, "insertion")
 	info.Deletions = parseShortStat(statLine, "deletion")
 
-	// 3. Get actual diff
+	// 3. Get actual diff (truncated to avoid blowing LLM token limits)
+	const maxDiffBytes = 32_000
 	cmd = exec.Command(gitBin, "diff", "--cached", "--unified=3")
 	out, err = cmd.Output()
 	if err == nil {
-		info.Diff = string(out)
+		if len(out) > maxDiffBytes {
+			info.Diff = string(out[:maxDiffBytes]) + "\n\n[diff truncated]"
+		} else {
+			info.Diff = string(out)
+		}
 	}
 
 	return info, nil
 }
 
+// parseShortStat extracts a numeric value from git's --shortstat output for the given term.
 func parseShortStat(line, term string) int {
 	parts := strings.Split(line, ",")
 	for _, p := range parts {
@@ -102,6 +110,7 @@ func parseShortStat(line, term string) int {
 	return 0
 }
 
+// IsCommitMsgEmpty returns true if the commit message file contains only blank lines and comments.
 func IsCommitMsgEmpty(path string) bool {
 	data, err := os.ReadFile(path)
 	if err != nil {

@@ -9,6 +9,7 @@ import (
 	"github.com/AlecAivazis/survey/v2"
 )
 
+// RunSetup runs the interactive configuration wizard for provider and model selection.
 func RunSetup(conf *config.Config) error {
 	fmt.Println("--- prepare-commit-msg Setup ---")
 

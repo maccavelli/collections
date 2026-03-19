@@ -7,11 +7,13 @@ import (
 	"github.com/sashabaranov/go-openai"
 )
 
+// OpenAIProvider implements Provider using the OpenAI chat completions API.
 type OpenAIProvider struct {
 	client *openai.Client
 	model  string
 }
 
+// NewOpenAI creates an OpenAI provider with the given API key and model.
 func NewOpenAI(apiKey, model string) *OpenAIProvider {
 	return &OpenAIProvider{
 		client: openai.NewClient(apiKey),
