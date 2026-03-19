@@ -14,6 +14,13 @@ import (
 	"github.com/PuerkitoBio/goquery"
 )
 
+// Pre-compiled VQD extraction patterns (compiled once at startup).
+var vqdPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`vqd='([^']+)'`),
+	regexp.MustCompile(`vqd="([^"]+)"`),
+	regexp.MustCompile(`vqd=([^&]+)`),
+}
+
 // SearchEngine handles DDG scraping logic.
 type SearchEngine struct {
 	Client *http.Client
@@ -51,14 +58,7 @@ func (e *SearchEngine) getVQD(query string) (string, error) {
 	}
 
 	// Patterns for VQD extraction
-	patterns := []string{
-		`vqd='([^']+)'`,
-		`vqd="([^"]+)"`,
-		`vqd=([^&]+)`,
-	}
-
-	for _, p := range patterns {
-		re := regexp.MustCompile(p)
+	for _, re := range vqdPatterns {
 		matches := re.FindSubmatch(body)
 		if len(matches) > 1 {
 			return string(matches[1]), nil
@@ -128,7 +128,10 @@ func (e *SearchEngine) NewsSearch(query string, maxResults int) ([]SearchResult,
 	}
 
 	u := fmt.Sprintf("https://duckduckgo.com/news.js?q=%s&vqd=%s&l=us-en&o=json&p=-1", url.QueryEscape(query), vqd)
-	req, _ := http.NewRequest("GET", u, nil)
+	req, err := http.NewRequest("GET", u, nil)
+	if err != nil {
+		return nil, fmt.Errorf("news search request creation failed: %w", err)
+	}
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36")
 	req.Header.Set("Referer", "https://duckduckgo.com/")
 
@@ -190,7 +193,10 @@ func (e *SearchEngine) ImageSearch(query string, maxResults int) ([]SearchResult
 	}
 
 	u := fmt.Sprintf("https://duckduckgo.com/i.js?q=%s&vqd=%s&o=json&l=us-en&p=1", url.QueryEscape(query), vqd)
-	req, _ := http.NewRequest("GET", u, nil)
+	req, err := http.NewRequest("GET", u, nil)
+	if err != nil {
+		return nil, fmt.Errorf("image search request creation failed: %w", err)
+	}
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36")
 	req.Header.Set("Referer", "https://duckduckgo.com/")
 
@@ -240,7 +246,10 @@ func (e *SearchEngine) VideoSearch(query string, maxResults int) ([]SearchResult
 	}
 
 	u := fmt.Sprintf("https://duckduckgo.com/v.js?q=%s&vqd=%s&o=json&l=us-en&p=-1", url.QueryEscape(query), vqd)
-	req, _ := http.NewRequest("GET", u, nil)
+	req, err := http.NewRequest("GET", u, nil)
+	if err != nil {
+		return nil, fmt.Errorf("video search request creation failed: %w", err)
+	}
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36")
 	req.Header.Set("Referer", "https://duckduckgo.com/")
 
@@ -474,10 +483,10 @@ func (e *SearchEngine) queryMirror(ctx context.Context, tld, query string, maxRe
 }
 
 func isNumeric(s string) bool {
-for _, r := range s {
-if r < '0' || r > '9' {
-return false
-}
-}
-return true
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }

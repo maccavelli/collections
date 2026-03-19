@@ -47,11 +47,6 @@ run: build ## Builds and executes the local binary
 	@BIN_NAME=$(DIST_DIR)/$(BINARY_NAME)-$(shell go env GOOS)-$(shell go env GOARCH)$(if $(filter windows,$(shell go env GOOS)),.exe,) ; \
 	$$BIN_NAME
 
-install: build ## Copies the local binary to ~/.local/bin/
-	@BIN_NAME=$(DIST_DIR)/$(BINARY_NAME)-$(shell go env GOOS)-$(shell go env GOARCH)$(if $(filter windows,$(shell go env GOOS)),.exe,) ; \
-	cp $$BIN_NAME $(HOME)/.local/bin/$(BINARY_NAME)
-	@echo "Installed $(BINARY_NAME) to ~/.local/bin/"
-
 version: build ## Displays the version of the local binary
 	@BIN_NAME=$(DIST_DIR)/$(BINARY_NAME)-$(shell go env GOOS)-$(shell go env GOARCH)$(if $(filter windows,$(shell go env GOOS)),.exe,) ; \
 	$$BIN_NAME --version
