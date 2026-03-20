@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"flag"
 	"fmt"
@@ -121,34 +122,45 @@ func runAnalyzer(file string, conf *config.Config) error {
 }
 
 func cleanLLMOutput(out string) string {
-	// Remove code fences (find closing fence explicitly)
 	out = strings.TrimSpace(out)
-	if strings.HasPrefix(out, "```") {
-		lines := strings.Split(out, "\n")
-		endIdx := len(lines) - 1
-		for i := len(lines) - 1; i > 0; i-- {
-			if strings.HasPrefix(strings.TrimSpace(lines[i]), "```") {
-				endIdx = i
-				break
-			}
-		}
-		if endIdx > 1 {
-			out = strings.Join(lines[1:endIdx], "\n")
-		}
+	if out == "" {
+		return ""
 	}
 
-	// Remove LLM noise
-	lines := strings.Split(out, "\n")
-	var cleaned []string
-	for _, l := range lines {
-		tl := strings.TrimSpace(l)
-		if tl == "" || tl == "---" || strings.HasPrefix(tl, "Based on") || strings.HasPrefix(tl, "Generate") || strings.HasPrefix(tl, "Here is") {
+	var sb strings.Builder
+	scanner := bufio.NewScanner(strings.NewReader(out))
+	
+	// Skip markdown code fences if present
+	inFence := false
+	firstLine := true
+	
+	for scanner.Scan() {
+		line := scanner.Text()
+		tl := strings.TrimSpace(line)
+		
+		if strings.HasPrefix(tl, "```") {
+			inFence = !inFence
 			continue
 		}
-		cleaned = append(cleaned, l)
+		
+		if inFence || (!strings.HasPrefix(tl, "Based on") && 
+		   !strings.HasPrefix(tl, "Generate") && 
+		   !strings.HasPrefix(tl, "Here is") && 
+		   tl != "---") {
+			if tl == "" && firstLine {
+				continue
+			}
+			if !firstLine {
+				sb.WriteString("\n")
+			}
+			sb.WriteString(line)
+			firstLine = false
+		}
 	}
-	return strings.TrimSpace(strings.Join(cleaned, "\n"))
+	
+	return strings.TrimSpace(sb.String())
 }
+
 
 func buildPrompt(info *git.Info) string {
 	return fmt.Sprintf(`Generate a conventional commit message for these changes.

@@ -55,5 +55,6 @@ requiring manual effort.
 
 MIT
 
----
-*Built with Go for performance and stability.*
+___________________________________________________________________________
+
+Created in Go for performance and efficiency.
