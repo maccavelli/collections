@@ -277,3 +277,23 @@ type errorReader struct{}
 
 func (e *errorReader) Read(p []byte) (n int, err error) { return 0, fmt.Errorf("read error") }
 
+func TestTruncate(t *testing.T) {
+	tests := []struct {
+		input    string
+		limit    int
+		expected string
+	}{
+		{"hello", 10, "hello"},
+		{"hello world", 5, "hello..."},
+		{"咖啡", 1, "咖..."},
+		{"咖啡", 2, "咖啡"},
+	}
+
+	for _, tt := range tests {
+		got := truncate(tt.input, tt.limit)
+		if got != tt.expected {
+			t.Errorf("truncate(%q, %d) = %q, want %q", tt.input, tt.limit, got, tt.expected)
+		}
+	}
+}
+

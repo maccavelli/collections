@@ -48,33 +48,33 @@ func newServer(searchEngine *engine.SearchEngine) *server.MCPServer {
 
 	// Register tools
 	s.AddTool(mcp.NewTool("ddg_search_web",
-		mcp.WithDescription("Perform a high-quality web search using DuckDuckGo."),
+		mcp.WithDescription("Perform a high-quality web search using DuckDuckGo. Use lower max_results for efficiency."),
 		mcp.WithString("query", mcp.Description("The search keywords"), mcp.Required()),
-		mcp.WithNumber("max_results", mcp.Description("Maximum results to return (default 5)"), mcp.DefaultNumber(5)),
+		mcp.WithNumber("max_results", mcp.Description("Maximum results to return (default 5). Low counts are faster and more token-efficient."), mcp.DefaultNumber(5)),
 	), makeSearchHandler(searchEngine.WebSearch, "web"))
 
 	s.AddTool(mcp.NewTool("ddg_search_news",
-		mcp.WithDescription("Perform a news-specific search using DuckDuckGo."),
+		mcp.WithDescription("Perform a news-specific search using DuckDuckGo. Use lower max_results for efficiency."),
 		mcp.WithString("query", mcp.Description("The search keywords"), mcp.Required()),
-		mcp.WithNumber("max_results", mcp.Description("Maximum results to return (default 5)"), mcp.DefaultNumber(5)),
+		mcp.WithNumber("max_results", mcp.Description("Maximum results to return (default 5). Low counts are faster and more token-efficient."), mcp.DefaultNumber(5)),
 	), makeSearchHandler(searchEngine.NewsSearch, "news"))
 
 	s.AddTool(mcp.NewTool("ddg_search_images",
-		mcp.WithDescription("Search for images using DuckDuckGo."),
+		mcp.WithDescription("Search for images using DuckDuckGo. Use lower max_results for efficiency."),
 		mcp.WithString("query", mcp.Description("The search keywords"), mcp.Required()),
-		mcp.WithNumber("max_results", mcp.Description("Maximum results to return (default 5)"), mcp.DefaultNumber(5)),
+		mcp.WithNumber("max_results", mcp.Description("Maximum results to return (default 5). Low counts are faster and more token-efficient."), mcp.DefaultNumber(5)),
 	), makeSearchHandler(searchEngine.ImageSearch, "image"))
 
 	s.AddTool(mcp.NewTool("ddg_search_videos",
-		mcp.WithDescription("Search for videos using DuckDuckGo."),
+		mcp.WithDescription("Search for videos using DuckDuckGo. Use lower max_results for efficiency."),
 		mcp.WithString("query", mcp.Description("The search keywords"), mcp.Required()),
-		mcp.WithNumber("max_results", mcp.Description("Maximum results to return (default 5)"), mcp.DefaultNumber(5)),
+		mcp.WithNumber("max_results", mcp.Description("Maximum results to return (default 5). Low counts are faster and more token-efficient."), mcp.DefaultNumber(5)),
 	), makeSearchHandler(searchEngine.VideoSearch, "video"))
 
 	s.AddTool(mcp.NewTool("ddg_search_books",
-		mcp.WithDescription("Search for books using DuckDuckGo."),
+		mcp.WithDescription("Search for books using DuckDuckGo. Use lower max_results for efficiency."),
 		mcp.WithString("query", mcp.Description("The search keywords"), mcp.Required()),
-		mcp.WithNumber("max_results", mcp.Description("Maximum results to return (default 5)"), mcp.DefaultNumber(5)),
+		mcp.WithNumber("max_results", mcp.Description("Maximum results to return (default 5). Low counts are faster and more token-efficient."), mcp.DefaultNumber(5)),
 	), makeSearchHandler(searchEngine.BookSearch, "book"))
 
 	return s

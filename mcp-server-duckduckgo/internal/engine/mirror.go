@@ -159,9 +159,9 @@ func (e *SearchEngine) queryMirror(ctx context.Context, tld, query string, maxRe
 				results = append(results, models.SearchResult{
 					Title:       title,
 					URL:         href,
-					Description: description,
-					Author:      author,
-					Info:        infoLine,
+					Description: truncate(description, MaxSnippetLength),
+					Author:      truncate(author, MaxSnippetLength),
+					Info:        truncate(infoLine, MaxSnippetLength),
 				})
 			}
 		}
