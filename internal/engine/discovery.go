@@ -1,0 +1,199 @@
+package engine
+
+import (
+	"context"
+	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"mcp-server-brainstorm/internal/models"
+)
+
+// AnalyzeDiscovery scans the project for context and
+// identifies initial gaps. It uses a depth-limited walk
+// and skips common non-source directories.
+func (e *Engine) AnalyzeDiscovery(
+	ctx context.Context, path string,
+) ([]models.Gap, error) {
+	target := e.ResolvePath(path)
+	var gaps []models.Gap
+
+	readmeFound := false
+	rootDepth := strings.Count(
+		target, string(os.PathSeparator),
+	)
+
+	err := filepath.WalkDir(
+		target,
+		func(
+			p string, d fs.DirEntry, err error,
+		) error {
+			if err != nil {
+				return err
+			}
+
+			// Respect cancellation.
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			default:
+			}
+
+			// Enforce depth limit and skip excluded dirs.
+			if d.IsDir() {
+				depth := strings.Count(
+					p, string(os.PathSeparator),
+				) - rootDepth
+				if depth > maxWalkDepth {
+					return fs.SkipDir
+				}
+				if skipDirs[d.Name()] {
+					return fs.SkipDir
+				}
+				return nil
+			}
+
+			name := strings.ToUpper(d.Name())
+			if strings.HasPrefix(name, "README") {
+				readmeFound = true
+			}
+			return nil
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"walk filesystem: %w", err,
+		)
+	}
+
+	if !readmeFound {
+		gaps = append(gaps, models.Gap{
+			Area: "CONTEXT",
+			Description: "No README found." +
+				" Project context is missing.",
+			Severity: "CRITICAL",
+		})
+	}
+
+	// Detect language/stack.
+	goMod := filepath.Join(target, "go.mod")
+	pkgJSON := filepath.Join(target, "package.json")
+	reqTxt := filepath.Join(target, "requirements.txt")
+
+	hasGo := fileExists(goMod)
+	hasNode := fileExists(pkgJSON)
+	hasPy := fileExists(reqTxt)
+
+	if !hasGo && !hasNode && !hasPy {
+		gaps = append(gaps, models.Gap{
+			Area:        "TECH_STACK",
+			Description: "Cannot detect language or stack.",
+			Severity:    "RECOMMENDED",
+		})
+	}
+
+	if hasGo {
+		astGaps, err := e.inspector.AnalyzeDirectory(ctx, target)
+		if err != nil {
+			gaps = append(gaps, models.Gap{
+				Area: "STABILITY",
+				Description: fmt.Sprintf(
+					"failed to analyze Go source: %v", err,
+				),
+				Severity: "RECOMMENDED",
+			})
+		} else {
+			gaps = append(gaps, astGaps...)
+		}
+	}
+
+	return gaps, nil
+}
+
+// DiscoverProject performs a unified discovery scan, identifying
+// gaps and suggesting the next logical step. It returns a
+// consolidated DiscoveryResponse with a narrative summary
+// and formatted markdown.
+func (e *Engine) DiscoverProject(
+	ctx context.Context, path string, session *models.Session,
+) (models.DiscoveryResponse, error) {
+	gaps, err := e.AnalyzeDiscovery(ctx, path)
+	if err != nil {
+		return models.DiscoveryResponse{}, err
+	}
+
+	// Update session gaps for SuggestNextStep.
+	session.Gaps = gaps
+	nextStep, err := e.SuggestNextStep(ctx, session, "")
+	if err != nil {
+		return models.DiscoveryResponse{}, err
+	}
+
+	narrative := "Project discovery complete."
+	if len(gaps) > 0 {
+		narrative = fmt.Sprintf(
+			"Discovery complete. Identified %d potential gaps.",
+			len(gaps),
+		)
+	}
+
+	// Generate Markdown Summary.
+	var sb strings.Builder
+	sb.WriteString("### Project Discovery Summary\n\n")
+	if len(gaps) > 0 {
+		sb.WriteString("| Area | Severity | Description |\n")
+		sb.WriteString("| :--- | :---: | :--- |\n")
+		for _, g := range gaps {
+			sb.WriteString(fmt.Sprintf(
+				"| %s | %s | %s |\n",
+				g.Area, g.Severity, g.Description,
+			))
+		}
+	} else {
+		sb.WriteString("*No critical gaps identified.*\n")
+	}
+	sb.WriteString(fmt.Sprintf("\n**Next Step**: %s", nextStep))
+
+	return models.DiscoveryResponse{
+		Narrative: narrative,
+		SummaryMD: sb.String(),
+		Gaps:      gaps,
+		NextStep:  nextStep,
+	}, nil
+}
+
+// SuggestNextStep returns the most critical next action
+// based on the current session state.
+func (e *Engine) SuggestNextStep(
+	ctx context.Context,
+	session *models.Session,
+	_ string,
+) (string, error) {
+	select {
+	case <-ctx.Done():
+		return "", ctx.Err()
+	default:
+	}
+	if len(session.Gaps) > 0 {
+		g := session.Gaps[0]
+		return fmt.Sprintf(
+			"Critical Gap: %s. %s",
+			g.Area, g.Description,
+		), nil
+	}
+
+	switch session.Status {
+	case "DISCOVERY":
+		return "Discovery complete. Ask for the" +
+			" project's primary Purpose.", nil
+	case "CLARIFICATION":
+		return "Purpose defined. Ask for Constraints" +
+			" or Success Criteria.", nil
+	default:
+		return "Iterative design phase: use" +
+			" 'critique_design' to stress-test" +
+			" components.", nil
+	}
+}
