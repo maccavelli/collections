@@ -22,6 +22,17 @@ var vqdPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`vqd=([^&]+)`),
 }
 
+const MaxSnippetLength = 1000
+
+// truncate safely trims a string to a maximum length of runes and adds an ellipsis.
+func truncate(s string, limit int) string {
+	r := []rune(s)
+	if len(r) <= limit {
+		return s
+	}
+	return string(r[:limit]) + "..."
+}
+
 // SearchEngine handles DDG scraping logic.
 type SearchEngine struct {
 	Client *http.Client
@@ -111,7 +122,7 @@ func (e *SearchEngine) WebSearch(ctx context.Context, query string, maxResults i
 			results = append(results, models.SearchResult{
 				Title:       title,
 				URL:         link,
-				Description: snippet,
+				Description: truncate(snippet, MaxSnippetLength),
 			})
 		}
 	})
@@ -174,7 +185,7 @@ func (e *SearchEngine) NewsSearch(ctx context.Context, query string, maxResults 
 		results = append(results, models.SearchResult{
 			Title:       r.Title,
 			URL:         r.URL,
-			Description: r.Excerpt,
+			Description: truncate(r.Excerpt, MaxSnippetLength),
 			Source:      r.Source,
 			Date:        dateStr,
 			ImageURL:    r.Image,
@@ -278,7 +289,7 @@ func (e *SearchEngine) VideoSearch(ctx context.Context, query string, maxResults
 		results = append(results, models.SearchResult{
 			Title:       r.Title,
 			URL:         r.URL,
-			Description: r.Description,
+			Description: truncate(r.Description, MaxSnippetLength),
 			Duration:    r.Duration,
 			Publisher:   r.Publisher,
 			Date:        r.Published,
