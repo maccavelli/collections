@@ -1,0 +1,15 @@
+# Binaries
+bin/
+dist/
+mcp-server-magicskills
+mcp-server-magicskills-linux-amd64
+mcp-server-magicskills-darwin-amd64
+mcp-server-magicskills-darwin-arm64
+mcp-server-magicskills-windows-amd64.exe
+
+# OS-specific
+.DS_Store
+
+# Go
+go.sum
+vendor/
