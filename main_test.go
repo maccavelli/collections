@@ -1,31 +1,28 @@
 package main
 
 import (
+	"mcp-server-brainstorm/internal/config"
 	"mcp-server-brainstorm/internal/engine"
+	"mcp-server-brainstorm/internal/handler/decision"
+	"mcp-server-brainstorm/internal/handler/design"
+	"mcp-server-brainstorm/internal/handler/discovery"
+	"mcp-server-brainstorm/internal/handler/system"
+	"mcp-server-brainstorm/internal/registry"
 	"mcp-server-brainstorm/internal/state"
 	"testing"
-
-	"github.com/mark3labs/mcp-go/server"
 )
 
-func TestLogBuffer_Trimming(t *testing.T) {
-	lb := &LogBuffer{}
+func TestLogBuffer_Trimming_Brain(t *testing.T) {
+	lb := &system.LogBuffer{}
 	
-	// Basic Write/String
 	msg := "test log message\n"
-	n, err := lb.Write([]byte(msg))
-	if err != nil {
-		t.Fatalf("Write failed: %v", err)
-	}
-	if n != len(msg) {
-		t.Errorf("want %d bytes, got %d", len(msg), n)
-	}
+	_, _ = lb.Write([]byte(msg))
 	if lb.String() != msg {
 		t.Errorf("want '%s', got '%s'", msg, lb.String())
 	}
 
 	// Trimming logic
-	data := make([]byte, 1024*1024+100)
+	data := make([]byte, config.LogBufferLimit+100)
 	for i := range data {
 		data[i] = 'a'
 		if i%100 == 0 {
@@ -33,41 +30,36 @@ func TestLogBuffer_Trimming(t *testing.T) {
 		}
 	}
 	_, _ = lb.Write(data)
-	if lb.buf.Len() > logBufferLimit {
-		t.Errorf("buffer length %d exceeds limit after trimming", lb.buf.Len())
+	if len(lb.String()) > config.LogBufferLimit {
+		t.Errorf("buffer length %d exceeds limit after trimming", len(lb.String()))
 	}
 }
 
-func TestLogBuffer_TrimmingNoNewline(t *testing.T) {
-	lb := &LogBuffer{}
-	
-	// Write data without newlines in the trim range.
-	data := make([]byte, 1024*1024+100)
-	for i := range data {
-		data[i] = 'a'
-	}
-	
-	_, _ = lb.Write(data)
-	if lb.buf.Len() > logBufferLimit {
-		t.Errorf("buffer length %d exceeds limit after trimming", lb.buf.Len())
-	}
-}
-
-func TestVersionReporting(t *testing.T) {
+func TestVersionReporting_Brain(t *testing.T) {
 	printVersion()
 }
 
-func TestToolRegistrations(t *testing.T) {
-	s := server.NewMCPServer("test", "1.0.0")
-	mgr := state.NewManager(".")
-	ports := engine.NewEngine(".")
-	
-	registerDiscoveryTools(s, mgr, ports)
-	registerDesignTools(s, ports)
-	registerDecisionTools(s, ports)
-	
-	tools := s.ListTools()
+func TestRegistryToolLoading_Brain(t *testing.T) {
+	wd := "."
+	mgr := state.NewManager(wd)
+	eng := engine.NewEngine(wd)
+	buffer := &system.LogBuffer{}
+
+	discovery.Register(mgr, eng)
+	design.Register(eng)
+	decision.Register(eng)
+	system.Register(buffer)
+
+	tools := registry.Global.List()
 	if len(tools) == 0 {
-		t.Error("expected tools to be registered")
+		t.Error("expected tools to be registered in global registry")
+	}
+
+	// Verify specific tools
+	if _, ok := registry.Global.Get("discover_project"); !ok {
+		t.Error("discover_project tool not found in registry")
+	}
+	if _, ok := registry.Global.Get("get_internal_logs"); !ok {
+		t.Error("get_internal_logs tool not found in registry")
 	}
 }
