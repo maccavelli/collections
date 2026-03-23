@@ -15,7 +15,8 @@ import (
 	"prepare-commit-msg/internal/ui"
 )
 
-var version = "2.0.0"
+// Version is overwritten by build flags
+var Version = "2.0.0"
 
 const (
 	AppTitle = "prepare-commit-msg"
@@ -28,7 +29,7 @@ func main() {
 	flag.Parse()
 
 	if *ver {
-		fmt.Printf("%s version %s\n", AppTitle, version)
+		fmt.Printf("%s version %s\n", AppTitle, Version)
 		return
 	}
 
