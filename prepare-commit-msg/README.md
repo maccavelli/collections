@@ -13,6 +13,7 @@ requiring manual effort.
 1. **Diff Analysis**: Scans staged changes to gather file statuses and full unified diffs.
 2. **AI Orchestration**: Constructs a high-context prompt for Gemini or OpenAI.
 3. **Hook Integration**: Leverages the standard Git `prepare-commit-msg` hook flow.
+4. **IDE Integration**: Hijacks the commit button in VSCode or Antigravity to automatically generate a commit message.
 
 ## 🧠 Why it works
 
@@ -20,21 +21,27 @@ requiring manual effort.
 - **Standards Enforcement**: Defaults to Conventional Commits (feat, fix, docs, etc.).
 - **Native Performance**: Written in Go for zero-latency execution.
 
-## � Installation Instructions
+## 🔧 Installation Instructions
 
-1. **Copy Binary**: Copy the built binary into your project's `.git/hooks/` directory.
+1. **Build**:
 
    ```bash
-   cp prepare-commit-msg-linux-amd64 .git/hooks/prepare-commit-msg
+   make build
    ```
 
-2. **Make Executable**:
+2. **Copy Binary**: Copy the built binary into your project's `.git/hooks/` directory.
+
+   ```bash
+   cp dist/prepare-commit-msg-linux-amd64 .git/hooks/prepare-commit-msg
+   ```
+
+3. **Make Executable**:
 
    ```bash
    chmod +x .git/hooks/prepare-commit-msg
    ```
 
-## �🚀 Usage Instructions
+## 🚀 Usage Instructions
 
 1. **Configure**: Run the setup wizard to choose your provider and model.
 
