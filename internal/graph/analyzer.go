@@ -3,6 +3,7 @@ package graph
 import (
 	"context"
 	"fmt"
+	"mcp-server-go-refactor/internal/loader"
 	"mcp-server-go-refactor/internal/registry"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -47,13 +48,9 @@ type CallGraphResult struct {
 
 // AnalyzeCycles checks the package for import cycles.
 func AnalyzeCycles(ctx context.Context, pkgPath string) (*CycleResult, error) {
-	cfg := &packages.Config{
-		Mode:    packages.NeedName | packages.NeedImports,
-		Context: ctx,
-	}
-	pkgs, err := packages.Load(cfg, pkgPath)
+	pkgs, err := loader.LoadPackages(ctx, pkgPath, loader.DefaultMode)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load package: %v", err)
+		return nil, err
 	}
 
 	visited := make(map[string]bool)

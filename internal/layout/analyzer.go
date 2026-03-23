@@ -4,11 +4,11 @@ import (
 	"context"
 	"fmt"
 	"go/types"
+	"mcp-server-go-refactor/internal/loader"
 	"mcp-server-go-refactor/internal/registry"
 	"sort"
 
 	"github.com/mark3labs/mcp-go/mcp"
-	"golang.org/x/tools/go/packages"
 )
 
 // Tool implements the struct alignment analyzer tool.
@@ -47,17 +47,9 @@ type AlignmentResult struct {
 
 // AnalyzeStructAlignment calculates current vs optimal memory layout for a struct.
 func AnalyzeStructAlignment(ctx context.Context, structName string, pkgPath string) (*AlignmentResult, error) {
-	cfg := &packages.Config{
-		Mode:    packages.NeedTypes,
-		Tests:   true,
-		Context: ctx,
-	}
-	pkgs, err := packages.Load(cfg, pkgPath)
+	pkgs, err := loader.LoadPackages(ctx, pkgPath, loader.DefaultMode)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load package: %v", err)
-	}
-	if len(pkgs) == 0 {
-		return nil, fmt.Errorf("no package found at %s", pkgPath)
+		return nil, err
 	}
 
 	var obj types.Object
