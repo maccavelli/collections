@@ -21,10 +21,11 @@ type Session struct {
 // DiscoveryResponse provides a unified view of project gaps
 // and the recommended next step.
 type DiscoveryResponse struct {
-	Narrative string `json:"narrative"`
-	SummaryMD string `json:"summary_md"`
-	Gaps      []Gap  `json:"gaps"`
-	NextStep  string `json:"next_step"`
+	Narrative string   `json:"narrative"`
+	Reasoning string   `json:"reasoning,omitempty"` // Added for smarter Agent reasoning
+	SummaryMD string   `json:"summary_md"`
+	Gaps      []Gap    `json:"gaps"`
+	NextStep  string   `json:"next_step"`
 }
 
 // Gap represents a missing piece of information detected by the
@@ -71,6 +72,7 @@ type QualityMetric struct {
 type EvolutionResult struct {
 	Category       string `json:"category"`
 	RiskLevel      string `json:"risk_level"`
+	Reasoning      string `json:"reasoning,omitempty"` // Added for systematic analysis
 	Recommendation string `json:"recommendation"`
 	Narrative      string `json:"narrative,omitempty"`
 	SummaryMD      string `json:"summary_md,omitempty"`
@@ -88,6 +90,7 @@ type RedTeamChallenge struct {
 // socratic questions.
 type CritiqueResponse struct {
 	Narrative  string             `json:"narrative"`
+	Reasoning  string             `json:"reasoning,omitempty"` // Added for Agent transparency
 	SummaryMD  string             `json:"summary_md"`
 	Challenges []string           `json:"challenges"`
 	Metrics    []QualityMetric    `json:"metrics"`

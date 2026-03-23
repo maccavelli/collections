@@ -20,52 +20,10 @@ func (e *Engine) AnalyzeDiscovery(
 	target := e.ResolvePath(path)
 	var gaps []models.Gap
 
-	readmeFound := false
-	rootDepth := strings.Count(
-		target, string(os.PathSeparator),
-	)
-
-	err := filepath.WalkDir(
-		target,
-		func(
-			p string, d fs.DirEntry, err error,
-		) error {
-			if err != nil {
-				return err
-			}
-
-			// Respect cancellation.
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			default:
-			}
-
-			// Enforce depth limit and skip excluded dirs.
-			if d.IsDir() {
-				depth := strings.Count(
-					p, string(os.PathSeparator),
-				) - rootDepth
-				if depth > maxWalkDepth {
-					return fs.SkipDir
-				}
-				if skipDirs[d.Name()] {
-					return fs.SkipDir
-				}
-				return nil
-			}
-
-			name := strings.ToUpper(d.Name())
-			if strings.HasPrefix(name, "README") {
-				readmeFound = true
-			}
-			return nil
-		},
-	)
+	// 1. Scan for key files (README, tests)
+	readmeFound, testFound, err := e.scanForContextFiles(ctx, target)
 	if err != nil {
-		return nil, fmt.Errorf(
-			"walk filesystem: %w", err,
-		)
+		return nil, err
 	}
 
 	if !readmeFound {
@@ -76,8 +34,62 @@ func (e *Engine) AnalyzeDiscovery(
 			Severity: "CRITICAL",
 		})
 	}
+	if !testFound {
+		gaps = append(gaps, models.Gap{
+			Area: "TESTING",
+			Description: "No unit tests (_test.go) or test directory found. " +
+				"Reliability is unverified.",
+			Severity: "HIGH",
+		})
+	}
 
-	// Detect language/stack.
+	// 2. Detect language/stack and analyze Go if present
+	stackGaps, err := e.analyzeStackAndSource(ctx, target)
+	if err != nil {
+		return nil, err
+	}
+	gaps = append(gaps, stackGaps...)
+
+	return gaps, nil
+}
+
+func (e *Engine) scanForContextFiles(ctx context.Context, target string) (bool, bool, error) {
+	readmeFound := false
+	testFound := false
+	rootDepth := strings.Count(target, string(os.PathSeparator))
+
+	err := filepath.WalkDir(target, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		if d.IsDir() {
+			depth := strings.Count(p, string(os.PathSeparator)) - rootDepth
+			if depth > maxWalkDepth || skipDirs[d.Name()] {
+				return fs.SkipDir
+			}
+			return nil
+		}
+
+		name := strings.ToUpper(d.Name())
+		if strings.HasPrefix(name, "README") {
+			readmeFound = true
+		}
+		if strings.HasSuffix(name, "_TEST.GO") || strings.Contains(strings.ToLower(p), "/test") {
+			testFound = true
+		}
+		return nil
+	})
+	return readmeFound, testFound, err
+}
+
+func (e *Engine) analyzeStackAndSource(ctx context.Context, target string) ([]models.Gap, error) {
+	var gaps []models.Gap
 	goMod := filepath.Join(target, "go.mod")
 	pkgJSON := filepath.Join(target, "package.json")
 	reqTxt := filepath.Join(target, "requirements.txt")
@@ -108,7 +120,6 @@ func (e *Engine) AnalyzeDiscovery(
 			gaps = append(gaps, astGaps...)
 		}
 	}
-
 	return gaps, nil
 }
 
@@ -158,6 +169,12 @@ func (e *Engine) DiscoverProject(
 
 	return models.DiscoveryResponse{
 		Narrative: narrative,
+		Reasoning: fmt.Sprintf(
+			"The engine performed a depth-limited filesystem scan (max depth: %d) "+
+				"and executed targeted Go AST analysis. We identified %d gaps across "+
+				"Context, Tech Stack, Testing, and Code Quality domains.",
+			maxWalkDepth, len(gaps),
+		),
 		SummaryMD: sb.String(),
 		Gaps:      gaps,
 		NextStep:  nextStep,

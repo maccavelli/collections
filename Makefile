@@ -1,8 +1,8 @@
 BINARY_NAME=mcp-server-brainstorm
 DIST_DIR=dist
-VERSION?=$(shell git describe --tags --always --dirty 2>/dev/null || echo "0.1.0")
+VERSION?=$(shell git describe --tags --always --dirty 2>/dev/null || echo "1.0.0")
 
-.PHONY: all build clean test run version build-all linux darwin-amd64 darwin-arm64 windows help fmt vet
+.PHONY: all build clean test run install version build-all linux darwin-amd64 darwin-arm64 windows help fmt vet
 
 all: help build-all
 
@@ -44,6 +44,11 @@ run: build ## Builds and executes the local binary
 	@BIN_NAME=$(DIST_DIR)/$(BINARY_NAME)-$(shell go env GOOS)-$(shell go env GOARCH)$(if $(filter windows,$(shell go env GOOS)),.exe,) ; \
 	$$BIN_NAME
 
+install: build ## Copies the local binary to ~/.local/bin/
+	@BIN_NAME=$(DIST_DIR)/$(BINARY_NAME)-$(shell go env GOOS)-$(shell go env GOARCH)$(if $(filter windows,$(shell go env GOOS)),.exe,) ; \
+	cp $$BIN_NAME $(HOME)/.local/bin/$(BINARY_NAME)
+	@echo "Installed $(BINARY_NAME) to ~/.local/bin/"
+
 version: build ## Displays the version of the local binary
 	@BIN_NAME=$(DIST_DIR)/$(BINARY_NAME)-$(shell go env GOOS)-$(shell go env GOARCH)$(if $(filter windows,$(shell go env GOOS)),.exe,) ; \
 	$$BIN_NAME --version
@@ -52,4 +57,4 @@ help: ## Displays this help message
 	@echo "Usage: make [target]"
 	@echo ""
 	@echo "Targets:"
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
+	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'

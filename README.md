@@ -20,56 +20,59 @@ and automated discovery.
 
 ### How it works (Architecture)
 
-Built in Go for performance and reliability, the server follows a modular architecture:
+Built in Go for performance and reliability, the server follows a modular, provider-centric architecture:
 
-- **Go-based MCP Server**: Implements the Model Context Protocol for seamless integration with AI IDEs.
-- **Provider-based Engine**: Core logic is encapsulated into specialized providers (`Discovery`, `Design`, `Decision`),
-  allowing for easy extension of analysis rules.
-- **Session Persistence**: Context is maintained in a local `.brainstorm.json` file, allowing tools to provide
-  relevant suggestions based on the project history.
-- **Middleware Integration**: Structured logging, performance timing, and robust error handling ensure
-  production-ready reliability.
+- **Unified Processing Engine**: Core reasoning is partitioned into specialized providers (`Discovery`, `Design`,
+  `Decision`), allowing for high-density analysis within a single tool invocation.
+- **Socratic & Red-Teaming Integration**: The `critique_design` tool uses a multi-dimensional persona system to
+  simultaneously audit for quality attributes, security risks, and architectural blind spots.
+- **Context-Aware Analytics**: Tools maintain awareness of previous project states via the internal `.brainstorm.json`
+  manifest.
+- **MCP Provider**: Implements a standard JSON-RPC 2.0 interface for seamless integration into any AI-driven
+  development workflow.
 
 ### Why it exists (Rationale)
 
-LLMs often lack the specific project context or the "adversarial instinct" required for deep architectural review.
+LLMs often suffer from "default compliance," agreeing with flawed designs to avoid conflict.
 The Brainstorm server provides:
 
-- **Structured Criticality**: Forcing deeper inquiry into failure modes and edge cases.
-- **Context Preservation**: Making project-specific metadata (naming conventions, stack details) available to the AI.
-- **Process Standardization**: Driving the engineering process from initial discovery to finalized decision
-  documentation.
+- **Forced Contention**: Systematic "Red Team" analysis to find non-obvious failure modes.
+- **Socratic Scrutiny**: Questions the underlying assumptions of a proposal rather than just suggesting syntax.
+- **Institutional Memory**: Documentation of decision logic that persists beyond a single terminal session.
 
 ## Tools
 
-### Discovery Tools
+### Discovery & Analytics
 
-- `analyze_project`: Scans a directory for project metadata and identifies documentation/complexity gaps.
-- `suggest_next_step`: Analyzes session state to provide the most critical next action.
-- `get_internal_logs`: Retrieves server logs for transparency and debugging.
+- `discover_project(path)`: Performs a unified scan of the project structure and technology stack to identify
+  documentation gaps and suggest critical next steps.
+- `get_internal_logs(max_lines)`: Retrieves recent internal server logs for debugging and transparency.
 
-### Design Tools
+### Architectural Critique
 
-- `challenge_assumption`: Generates targeted questions about failure modes based on a design snippet.
-- `analyze_evolution`: Evaluates proposed changes for risks and deprecation paths.
-- `evaluate_quality_attributes`: Audits a design against rubrics (Scalability, Security, etc.).
-- `red_team_review`: Simulates adversarial personas to uncover non-obvious failure modes.
+- `critique_design(design)`: Provides a consolidated, multi-dimensional assessment of a design snippet, using
+  Socratic inquiry and Red Team personas to audit for scalability, security, and modularity.
+- `analyze_evolution(proposal)`: Evaluates the risks, breaking changes, and deprecation paths of a proposed project
+  extension.
 
-### Decision Tools
+### Decision Capture
 
-- `capture_decision_logic`: Generates structured ADRs capturing context and rejected alternatives.
+- `capture_decision_logic(decision, alternatives)`: Translates architectural discussions into structured,
+  high-quality Architecture Decision Records (ADR).
 
 ## Getting Started
 
 ### Installation
 
 ```bash
-go build -o brainstorm-server
+make build
 ```
+
+The resulting binary will be located in the `dist` directory.
 
 ### Usage as an MCP Server
 
-Add the server to your MCP configuration (e.g., in Claude Desktop):
+Add the server to your MCP configuration (e.g., in Claude Desktop or Antigravity):
 
 ```json
 {
@@ -84,12 +87,13 @@ Add the server to your MCP configuration (e.g., in Claude Desktop):
 
 ## Development
 
-The project is modularized for better maintainability:
+The project is structured for high modularity:
 
-- `internal/engine`: Core reasoning and analysis providers.
-- `internal/handler`: MCP tool handlers and response formatting.
-- `internal/models`: Shared communication structures.
-- `internal/state`: Session and project metadata management.
+- `internal/engine`: Core reasoning engine and persona providers.
+- `internal/handler`: MCP request handlers and response mapping.
+- `internal/state`: State management for project manifests.
+- `internal/models`: Common data structures.
 
 ---
+
 Created in Go for performance and efficiency.
