@@ -4,10 +4,10 @@ import (
 	"context"
 	"fmt"
 	"go/ast"
+	"mcp-server-go-refactor/internal/loader"
 	"mcp-server-go-refactor/internal/registry"
 
 	"github.com/mark3labs/mcp-go/mcp"
-	"golang.org/x/tools/go/packages"
 )
 
 // Tool implements the dead code pruner tool.
@@ -42,17 +42,9 @@ type DeadCodeResult struct {
 
 // PruneDeadCode runs semantic analysis to detect exported and local unused code.
 func PruneDeadCode(ctx context.Context, pkgPath string) (*DeadCodeResult, error) {
-	cfg := &packages.Config{
-		Mode:    packages.NeedName | packages.NeedTypes | packages.NeedSyntax | packages.NeedTypesInfo,
-		Tests:   true,
-		Context: ctx,
-	}
-	pkgs, err := packages.Load(cfg, pkgPath)
+	pkgs, err := loader.LoadPackages(ctx, pkgPath, loader.DefaultMode)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load package: %v", err)
-	}
-	if len(pkgs) == 0 {
-		return nil, fmt.Errorf("no package found at %s", pkgPath)
+		return nil, err
 	}
 
 	unusedFuncs := []string{}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"go/types"
+	"mcp-server-go-refactor/internal/loader"
 	"mcp-server-go-refactor/internal/registry"
 	"strings"
 
@@ -48,7 +49,6 @@ func (t *Tool) Handle(ctx context.Context, request mcp.CallToolRequest) (*mcp.Ca
 	return mcp.NewToolResultText(fmt.Sprintf("Extracted Interface Definition:\n%+v", result)), nil
 }
 
-// Analysis result for interface compatibility.
 type Analysis struct {
 	StructName     string   `json:"StructName"`
 	InterfaceName  string   `json:"InterfaceName"`
@@ -58,14 +58,9 @@ type Analysis struct {
 
 // AnalyzeInterface compares a struct's methods to an interface's defined methods.
 func AnalyzeInterface(ctx context.Context, pkgPath string, structName string, ifaceName string) (*Analysis, error) {
-	cfg := &packages.Config{
-		Mode:    packages.NeedName | packages.NeedTypes | packages.NeedSyntax | packages.NeedTypesInfo,
-		Tests:   true,
-		Context: ctx,
-	}
-	pkgs, err := packages.Load(cfg, pkgPath)
+	pkgs, err := loader.LoadPackages(ctx, pkgPath, loader.DefaultMode)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load package: %v", err)
+		return nil, err
 	}
 
 	if len(pkgs) == 0 {
@@ -124,17 +119,9 @@ type ExtractionResult struct {
 
 // ExtractInterface identifies all public methods of a struct to define an interface.
 func ExtractInterface(ctx context.Context, pkgPath string, structName string) (*ExtractionResult, error) {
-	cfg := &packages.Config{
-		Mode:    packages.NeedName | packages.NeedTypes | packages.NeedSyntax | packages.NeedTypesInfo,
-		Tests:   true,
-		Context: ctx,
-	}
-	pkgs, err := packages.Load(cfg, pkgPath)
+	pkgs, err := loader.LoadPackages(ctx, pkgPath, loader.DefaultMode)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load package: %v", err)
-	}
-	if len(pkgs) == 0 {
-		return nil, fmt.Errorf("no package found at %s", pkgPath)
+		return nil, err
 	}
 
 	var obj types.Object

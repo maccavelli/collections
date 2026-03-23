@@ -4,11 +4,11 @@ import (
 	"context"
 	"fmt"
 	"go/ast"
+	"mcp-server-go-refactor/internal/loader"
 	"mcp-server-go-refactor/internal/registry"
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
-	"golang.org/x/tools/go/packages"
 )
 
 // Tool implements the tag manager tool.
@@ -56,17 +56,9 @@ type TagResult struct {
 
 // AnalyzeTags calculates standard formatting tags (e.g., json, yaml) for standard cases.
 func AnalyzeTags(ctx context.Context, pkgPath string, structName string, caseFormat string, targetTag string) (*TagResult, error) {
-	cfg := &packages.Config{
-		Mode:    packages.NeedName | packages.NeedSyntax | packages.NeedTypes,
-		Tests:   true,
-		Context: ctx,
-	}
-	pkgs, err := packages.Load(cfg, pkgPath)
+	pkgs, err := loader.LoadPackages(ctx, pkgPath, loader.DefaultMode)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load package: %v", err)
-	}
-	if len(pkgs) == 0 {
-		return nil, fmt.Errorf("no package found at %s", pkgPath)
+		return nil, err
 	}
 
 	var targetStruct *ast.TypeSpec
