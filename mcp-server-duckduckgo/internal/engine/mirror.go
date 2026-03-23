@@ -66,106 +66,120 @@ func (e *SearchEngine) queryMirror(ctx context.Context, tld, query string, maxRe
 	baseUrl := fmt.Sprintf("https://annas-archive.%s", tld)
 	u := fmt.Sprintf("%s/search?q=%s", baseUrl, url.QueryEscape(query))
 
-	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
+	respBody, err := e.fetchMirrorHTML(ctx, u)
 	if err != nil {
 		return nil, err
 	}
 
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36")
+	return e.parseMirrorHTML(baseUrl, respBody, maxResults)
+}
+
+func (e *SearchEngine) fetchMirrorHTML(ctx context.Context, u string) ([]byte, error) {
+	req, err := e.newRequest(ctx, "GET", u, http.NoBody)
+	if err != nil {
+		return nil, err
+	}
 
 	resp, err := e.Client.Do(req)
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck // read-only close error is safe
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("mirror %s returned status %d", tld, resp.StatusCode)
+		return nil, fmt.Errorf("mirror returned status %d", resp.StatusCode)
 	}
 
-	respBody, err := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxBodyBytes))
 	if err != nil {
 		return nil, err
 	}
 
 	// Anna's Archive hides results in comments, need to strip them
-	htmlStr := strings.ReplaceAll(string(respBody), "<!--", "")
-	htmlStr = strings.ReplaceAll(htmlStr, "-->", "")
+	stripped := strings.ReplaceAll(string(respBody), "<!--", "")
+	stripped = strings.ReplaceAll(stripped, "-->", "")
+	return []byte(stripped), nil
+}
 
-	doc, err := goquery.NewDocumentFromReader(strings.NewReader(htmlStr))
+func (e *SearchEngine) parseMirrorHTML(baseUrl string, htmlData []byte, maxResults int) ([]models.SearchResult, error) {
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(string(htmlData)))
 	if err != nil {
 		return nil, err
 	}
 
-	results := []models.SearchResult{}
+	results := make([]models.SearchResult, 0, maxResults)
 	doc.Find("div.js-aarecord-list-outer div.flex").Each(func(i int, s *goquery.Selection) {
 		if len(results) >= maxResults {
 			return
 		}
 
-		anchor := s.Find("a.text-lg, a.font-semibold, a.js-vim-focus").First()
-		if anchor.Length() == 0 {
-			anchor = s.Find("a").First()
-		}
-		title := strings.TrimSpace(anchor.Text())
-
-		link, exists := anchor.Attr("href")
-		if !exists || link == "" {
-			link, _ = s.Find("a").First().Attr("href")
-		}
-
-		author := ""
-		s.Find("a").Each(func(i int, sel *goquery.Selection) {
-			if sel.Find(".icon-\\[mdi--user-edit\\]").Length() > 0 {
-				author = strings.TrimSpace(sel.Text())
-			}
-		})
-		if author == "" {
-			author = strings.TrimSpace(s.Find("div.italic").Text())
-		}
-
-		// Extract info and description
-		var infoLine string
-		var description string
-
-		s.Find("div.text-gray-800, div.text-sm.text-gray-600").Each(func(i int, sel *goquery.Selection) {
-			sel.Find("script, style").Remove()
-			txt := strings.TrimSpace(sel.Text())
-			if txt == "" {
-				return
-			}
-			if strings.Contains(txt, "·") && infoLine == "" {
-				infoLine = txt
-			} else if description == "" || len(txt) > len(description) {
-				description = txt
-			}
-		})
-
-		if title != "" && link != "" {
-			href := link
-			if !strings.HasPrefix(href, "http") {
-				href = baseUrl + href
-			}
-
+		res := e.extractMirrorResult(baseUrl, s)
+		if res.Title != "" && res.URL != "" {
+			// Check for duplicates
 			isDuplicate := false
 			for _, r := range results {
-				if r.URL == href {
+				if r.URL == res.URL {
 					isDuplicate = true
 					break
 				}
 			}
-
 			if !isDuplicate {
-				results = append(results, models.SearchResult{
-					Title:       title,
-					URL:         href,
-					Description: truncate(description, MaxSnippetLength),
-					Author:      truncate(author, MaxSnippetLength),
-					Info:        truncate(infoLine, MaxSnippetLength),
-				})
+				results = append(results, res)
 			}
 		}
 	})
 
 	return results, nil
 }
+
+func (e *SearchEngine) extractMirrorResult(baseUrl string, s *goquery.Selection) models.SearchResult {
+	anchor := s.Find("a.text-lg, a.font-semibold, a.js-vim-focus").First()
+	if anchor.Length() == 0 {
+		anchor = s.Find("a").First()
+	}
+	title := strings.TrimSpace(anchor.Text())
+
+	link, _ := anchor.Attr("href")
+	if link == "" {
+		link, _ = s.Find("a").First().Attr("href")
+	}
+
+	author := ""
+	s.Find("a").Each(func(i int, sel *goquery.Selection) {
+		if sel.Find(".icon-\\[mdi--user-edit\\]").Length() > 0 {
+			author = strings.TrimSpace(sel.Text())
+		}
+	})
+	if author == "" {
+		author = strings.TrimSpace(s.Find("div.italic").Text())
+	}
+
+	var infoLine string
+	var description string
+	s.Find("div.text-gray-800, div.text-sm.text-gray-600").Each(func(i int, sel *goquery.Selection) {
+		sel.Find("script, style").Remove()
+		txt := strings.TrimSpace(sel.Text())
+		if txt == "" {
+			return
+		}
+		if strings.Contains(txt, "·") && infoLine == "" {
+			infoLine = txt
+		} else if description == "" || len(txt) > len(description) {
+			description = txt
+		}
+	})
+
+	href := link
+	if href != "" && !strings.HasPrefix(href, "http") {
+		href = baseUrl + href
+	}
+
+	return models.SearchResult{
+		Title:       title,
+		URL:         href,
+		Description: truncate(description, MaxSnippetLength),
+		Author:      truncate(author, MaxSnippetLength),
+		Info:        truncate(infoLine, MaxSnippetLength),
+	}
+}
+
