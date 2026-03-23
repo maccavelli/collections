@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -34,7 +35,8 @@ Always test your code.
 	}
 
 	e := NewEngine()
-	if err := e.Ingest([]string{path}); err != nil {
+	ctx := context.Background()
+	if err := e.Ingest(ctx, []string{path}); err != nil {
 		t.Fatalf("Ingest failed: %v", err)
 	}
 
@@ -65,25 +67,24 @@ func TestEngine_MatchSkills(t *testing.T) {
 		TermFreq: tokenize("Python automation scripting"),
 	}
 	e.RecalculateIndices()
+	ctx := context.Background()
 
 	t.Run("Match by name", func(t *testing.T) {
-		matches := e.MatchSkills("go")
+		matches := e.MatchSkills(ctx, "go")
 		if len(matches) == 0 || matches[0].Metadata.Name != "go-skill" {
 			t.Errorf("Expected go-skill to be top match for 'go'")
 		}
 	})
 
 	t.Run("Match by description", func(t *testing.T) {
-		matches := e.MatchSkills("automation")
+		matches := e.MatchSkills(ctx, "automation")
 		if len(matches) == 0 || matches[0].Metadata.Name != "python-skill" {
 			t.Errorf("Expected python-skill to be top match for 'automation'")
 		}
 	})
 
 	t.Run("Weighted relevance", func(t *testing.T) {
-		// 'golang' is a tag in go-skill. 'automation' is in python-skill description.
-		// Tags should score higher (+3) than description (+2).
-		matches := e.MatchSkills("golang automation")
+		matches := e.MatchSkills(ctx, "golang automation")
 		if len(matches) < 2 {
 			t.Fatal("Expected two matches")
 		}
@@ -101,9 +102,10 @@ func TestEngine_Summarize(t *testing.T) {
 			"full":            "Full content that is very long...",
 		},
 	}
+	ctx := context.Background()
 
 	t.Run("Specific section priority", func(t *testing.T) {
-		summary, ok := e.Summarize("test")
+		summary, ok := e.Summarize(ctx, "test")
 		if !ok || summary != "The magic instruction." {
 			t.Errorf("Expected 'The magic instruction.', got '%s'", summary)
 		}
@@ -115,7 +117,7 @@ func TestEngine_Summarize(t *testing.T) {
 				"full": "Short content",
 			},
 		}
-		summary, _ := e.Summarize("fallback")
+		summary, _ := e.Summarize(ctx, "fallback")
 		if summary != "Short content" {
 			t.Errorf("Expected 'Short content', got '%s'", summary)
 		}
@@ -162,7 +164,8 @@ This is a test.
 	}
 
 	e := NewEngine()
-	if err := e.IngestSingle(path); err != nil {
+	ctx := context.Background()
+	if err := e.IngestSingle(ctx, path); err != nil {
 		t.Fatalf("IngestSingle failed: %v", err)
 	}
 
@@ -176,13 +179,13 @@ This is a test.
 
 	// Test malformed
 	badPath := filepath.Join(tempDir, "BAD.md")
-	os.WriteFile(badPath, []byte("NOT A VALID SKILL"), 0600)
-	if err := e.IngestSingle(badPath); err == nil {
+	_ = os.WriteFile(badPath, []byte("NOT A VALID SKILL"), 0600)
+	if err := e.IngestSingle(ctx, badPath); err == nil {
 		t.Error("Expected error for malformed skill in IngestSingle")
 	}
 
 	// Test missing file
-	if err := e.IngestSingle(filepath.Join(tempDir, "missing.md")); err == nil {
+	if err := e.IngestSingle(ctx, filepath.Join(tempDir, "missing.md")); err == nil {
 		t.Error("Expected error for missing file in IngestSingle")
 	}
 }
@@ -197,7 +200,7 @@ func TestEngine_LocalPriority(t *testing.T) {
 	cwd, _ := os.Getwd()
 	globalPath := filepath.Join(tempDir, "global", "SKILL.md")
 	localPath := filepath.Join(cwd, "test-local-SKILL.md") // Simulated local path
-	os.MkdirAll(filepath.Dir(globalPath), 0755)
+	_ = os.MkdirAll(filepath.Dir(globalPath), 0755)
 
 	skillContent := `---
 name: priority-skill
@@ -205,7 +208,7 @@ version: 1.0.0
 ---
 ## Global
 `
-	os.WriteFile(globalPath, []byte(skillContent), 0600)
+	_ = os.WriteFile(globalPath, []byte(skillContent), 0600)
 
 	localContent := `---
 name: priority-skill
@@ -213,12 +216,12 @@ version: 2.0.0
 ---
 ## Local
 `
-	os.WriteFile(localPath, []byte(localContent), 0600)
+	_ = os.WriteFile(localPath, []byte(localContent), 0600)
 	defer os.Remove(localPath)
 
 	e := NewEngine()
-	// Simulate order: Global then Local
-	if err := e.Ingest([]string{globalPath, localPath}); err != nil {
+	ctx := context.Background()
+	if err := e.Ingest(ctx, []string{globalPath, localPath}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -236,7 +239,8 @@ func TestEngine_Remove(t *testing.T) {
 	e.Skills[name] = &models.Skill{Metadata: models.SkillMetadata{Name: name}}
 	e.PathToName[path] = name
 
-	e.Remove(path)
+	ctx := context.Background()
+	e.Remove(ctx, path)
 
 	if _, ok := e.GetSkill(name); ok {
 		t.Error("Skill was not removed")
@@ -256,8 +260,9 @@ func BenchmarkMatchSkills_500(b *testing.B) {
 		}
 	}
 	e.RecalculateIndices()
+	ctx := context.Background()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		e.MatchSkills("workflow typical keyword")
+		e.MatchSkills(ctx, "workflow typical keyword")
 	}
 }

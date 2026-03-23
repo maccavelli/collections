@@ -1,6 +1,7 @@
 package scanner
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -15,14 +16,12 @@ func TestScanner_FindProjectSkillsRoots(t *testing.T) {
 	}
 	defer os.RemoveAll(tempDir)
 
-	// Create structure: tempDir/project/.agent/skills
 	projectDir := filepath.Join(tempDir, "project")
 	skillsDir := filepath.Join(projectDir, ".agent", "skills")
 	if err := os.MkdirAll(skillsDir, 0750); err != nil {
 		t.Fatal(err)
 	}
 
-	// Change working directory to test finding it
 	originalCwd, _ := os.Getwd()
 	defer os.Chdir(originalCwd)
 
@@ -64,7 +63,8 @@ func TestScanner_Discover(t *testing.T) {
 		t.Fatalf("NewScanner failed: %v", err)
 	}
 
-	files, err := s.Discover()
+	ctx := context.Background()
+	files, err := s.Discover(ctx)
 	if err != nil {
 		t.Fatalf("Discover failed: %v", err)
 	}
@@ -98,13 +98,15 @@ func TestScanner_Listen(t *testing.T) {
 	updatedChan := make(chan string, 1)
 	deletedChan := make(chan string, 1)
 
-	s.Listen(func(path string) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	s.Listen(ctx, func(path string) {
 		updatedChan <- path
 	}, func(path string) {
 		deletedChan <- path
 	})
 
-	// Simulate event
 	s.Watcher.Events <- fsnotify.Event{Name: "/path/to/SKILL.md", Op: fsnotify.Write}
 	val := <-updatedChan
 	if val != "/path/to/SKILL.md" {
