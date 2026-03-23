@@ -191,8 +191,8 @@ func TestEvaluateQualityAttributes_Default(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(metrics) != 4 {
-		t.Fatalf("want 4 metrics, got %d", len(metrics))
+	if len(metrics) != 5 {
+		t.Fatalf("want 5 metrics, got %d", len(metrics))
 	}
 
 	for _, m := range metrics {

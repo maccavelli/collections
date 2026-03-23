@@ -13,21 +13,33 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"mcp-server-brainstorm/internal/models"
 )
 
 // Inspector performs static analysis on Go source files.
-type Inspector struct{}
+type Inspector struct {
+	cache   map[string]cacheResult
+	cacheMu sync.RWMutex
+}
 
-// NewInspector creates a new Go code inspector.
+type cacheResult struct {
+	gaps    []models.Gap
+	modTime time.Time
+}
+
+// NewInspector creates a new Go code inspector with an in-memory cache.
 func NewInspector() *Inspector {
-	return &Inspector{}
+	return &Inspector{
+		cache: make(map[string]cacheResult),
+	}
 }
 
 // AnalyzeDirectory recursively scans a directory for Go
 // files and identifies code quality gaps using AST analysis.
-// It processes files in parallel using a worker pool.
+// It processes files in parallel using a worker pool and
+// utilizes a cache for improved performance.
 func (i *Inspector) AnalyzeDirectory(
 	ctx context.Context, root string,
 ) ([]models.Gap, error) {
@@ -53,11 +65,39 @@ func (i *Inspector) AnalyzeDirectory(
 					if !ok {
 						return
 					}
+
+					// Check cache first.
+					info, err := os.Stat(path)
+					if err == nil {
+						i.cacheMu.RLock()
+						entry, exists := i.cache[path]
+						i.cacheMu.RUnlock()
+						if exists && entry.modTime.Equal(info.ModTime()) {
+							select {
+							case results <- entry.gaps:
+								continue
+							case <-ctx.Done():
+								return
+							}
+						}
+					}
+
 					fileGaps, err := i.analyzeFile(ctx, fset, path)
 					if err != nil {
 						slog.Error("AST parsing error", "file", path, "error", err)
 						continue
 					}
+
+					// Update cache.
+					if info != nil {
+						i.cacheMu.Lock()
+						i.cache[path] = cacheResult{
+							gaps:    fileGaps,
+							modTime: info.ModTime(),
+						}
+						i.cacheMu.Unlock()
+					}
+
 					select {
 					case results <- fileGaps:
 					case <-ctx.Done():
@@ -167,6 +207,16 @@ func (i *Inspector) analyzeFile(
 				i.checkExplicitDiscard(
 					fset, fn, relPath,
 				)...,
+			)
+			gaps = append(
+				gaps,
+				i.checkPanic(fset, fn, relPath)...,
+			)
+
+		case *ast.BasicLit:
+			gaps = append(
+				gaps,
+				i.checkSecrets(fset, fn, relPath)...,
 			)
 		}
 		return true
@@ -334,8 +384,8 @@ func (i *Inspector) checkExplicitDiscard(
 	}
 
 	criticals := map[string]bool{
-		"os.Remove":   true,
-		"os.Rename":   true,
+		"os.Remove":    true,
+		"os.Rename":    true,
 		"os.WriteFile": true,
 	}
 
@@ -353,3 +403,86 @@ func (i *Inspector) checkExplicitDiscard(
 	}
 	return nil
 }
+
+// checkPanic flags functions that use panic() for error handling.
+func (i *Inspector) checkPanic(
+	fset *token.FileSet,
+	stmt *ast.ExprStmt,
+	relPath string,
+) []models.Gap {
+	call, ok := stmt.X.(*ast.CallExpr)
+	if !ok {
+		return nil
+	}
+	if ident, ok := call.Fun.(*ast.Ident); ok && ident.Name == "panic" {
+		line := fset.Position(stmt.Pos()).Line
+		return []models.Gap{{
+			Area: "STABILITY",
+			Description: fmt.Sprintf(
+				"Use of panic() detected at %s:%d. Use explicit error "+
+					"return or recovery instead.",
+				relPath, line,
+			),
+			Severity: "RECOMMENDED",
+		}}
+	}
+	return nil
+}
+
+// checkSecrets detects potential hardcoded secrets in string literals.
+func (i *Inspector) checkSecrets(
+	fset *token.FileSet,
+	lit *ast.BasicLit,
+	relPath string,
+) []models.Gap {
+	if lit.Kind != token.STRING {
+		return nil
+	}
+	val := strings.Trim(lit.Value, "`\"")
+	if len(val) < 16 {
+		return nil
+	}
+
+	// Heuristic for high entropy or specific markers.
+	if i.isPotentialSecret(val) {
+		line := fset.Position(lit.Pos()).Line
+		return []models.Gap{{
+			Area: "SECURITY",
+			Description: fmt.Sprintf(
+				"Potential hardcoded secret detected at %s:%d.",
+				relPath, line,
+			),
+			Severity: "CRITICAL",
+		}}
+	}
+	return nil
+}
+
+func (i *Inspector) isPotentialSecret(s string) bool {
+	// Refined markers with stricter boundaries to avoid false positives
+	// like "risk_level" containing "sk_".
+	s = strings.ToLower(s)
+
+	// Check for common secret prefixes followed by characters.
+	prefixes := []string{"key-", "api_", "secret_", "token_"}
+	for _, p := range prefixes {
+		if strings.Contains(s, p) {
+			return true
+		}
+	}
+
+	// "sk_" is usually a prefix for Stripe/other keys.
+	// We check if it is either at the beginning or has a boundary before it.
+	if strings.HasPrefix(s, "sk_") {
+		return true
+	}
+	if idx := strings.Index(s, "_sk_"); idx >= 0 {
+		return true
+	}
+	if idx := strings.Index(s, "-sk_"); idx >= 0 {
+		return true
+	}
+
+	return false
+}
+

@@ -125,17 +125,21 @@ func (e *Engine) ChallengeAssumption(
 	return challenges, nil
 }
 
-// evolutionPatterns maps keywords to structured evolution
-// analysis results.
-var evolutionPatterns = []struct {
+type evolutionPattern struct {
 	keywords []string
 	result   models.EvolutionResult
-}{
+}
+
+// evolutionPatterns maps keywords to structured evolution
+// analysis results.
+var evolutionPatterns = []evolutionPattern{
 	{
 		keywords: []string{"refactor"},
 		result: models.EvolutionResult{
 			Category:  "refactor",
 			RiskLevel: "HIGH",
+			Reasoning: "Refactoring often involves heavy logic " +
+				"displacement with high regression risk.",
 			Recommendation: "Identify all upstream" +
 				" dependencies before proceeding." +
 				" Ensure existing tests cover" +
@@ -147,6 +151,9 @@ var evolutionPatterns = []struct {
 		result: models.EvolutionResult{
 			Category:  "deprecation",
 			RiskLevel: "HIGH",
+			Reasoning: "Removing established APIs can " +
+				"break downstream consumers " +
+				"permanently.",
 			Recommendation: "Ensure backward" +
 				" compatibility or provide a" +
 				" migration guide.",
@@ -157,6 +164,9 @@ var evolutionPatterns = []struct {
 		result: models.EvolutionResult{
 			Category:  "rename",
 			RiskLevel: "MEDIUM",
+			Reasoning: "Naming changes require broad " +
+				"re-factoring and can cause build " +
+				"failures if missed.",
 			Recommendation: "Update all references." +
 				" Consider aliasing the old name" +
 				" during transition.",
@@ -167,6 +177,9 @@ var evolutionPatterns = []struct {
 		result: models.EvolutionResult{
 			Category:  "split",
 			RiskLevel: "MEDIUM",
+			Reasoning: "Breaking down components " +
+				"introduces communication overhead " +
+				"and interface debt.",
 			Recommendation: "Define clear interfaces" +
 				" between the split components." +
 				" Verify no circular dependencies.",
@@ -177,6 +190,9 @@ var evolutionPatterns = []struct {
 		result: models.EvolutionResult{
 			Category:  "merge",
 			RiskLevel: "MEDIUM",
+			Reasoning: "Consolidating logic can " +
+				"obscure individual responsibilities " +
+				"and create monoliths.",
 			Recommendation: "Reconcile divergent" +
 				" behaviors and configurations." +
 				" Test combined edge cases.",
@@ -187,6 +203,9 @@ var evolutionPatterns = []struct {
 		result: models.EvolutionResult{
 			Category:  "rewrite",
 			RiskLevel: "HIGH",
+			Reasoning: "Full rewrites often ignore " +
+				"legacy bugfixes and critical edge " +
+				"cases.",
 			Recommendation: "Consider incremental" +
 				" replacement over full rewrite." +
 				" Maintain a compatibility layer.",
@@ -198,6 +217,9 @@ var evolutionPatterns = []struct {
 		result: models.EvolutionResult{
 			Category:  "dependency_change",
 			RiskLevel: "MEDIUM",
+			Reasoning: "Third-party updates can " +
+				"introduce silent regressions or " +
+				"security vulnerabilities.",
 			Recommendation: "Check changelogs for" +
 				" breaking changes. Pin and test" +
 				" the exact version.",
@@ -208,6 +230,9 @@ var evolutionPatterns = []struct {
 		result: models.EvolutionResult{
 			Category:  "removal",
 			RiskLevel: "HIGH",
+			Reasoning: "Deletions are irreversible " +
+				"in runtime and might orphan " +
+				"critical dependencies.",
 			Recommendation: "Verify no downstream" +
 				" consumers depend on the removed" +
 				" component.",
@@ -218,6 +243,9 @@ var evolutionPatterns = []struct {
 		result: models.EvolutionResult{
 			Category:  "addition",
 			RiskLevel: "LOW",
+			Reasoning: "New additions have lower " +
+				"impact on existing paths but " +
+				"increase maintenance surface.",
 			Recommendation: "Define acceptance" +
 				" criteria. Ensure new component" +
 				" follows existing conventions.",
@@ -229,6 +257,9 @@ var evolutionPatterns = []struct {
 		result: models.EvolutionResult{
 			Category:  "replacement",
 			RiskLevel: "MEDIUM",
+			Reasoning: "Swapping implementations " +
+				"requires strict behavioral parity " +
+				"alignment.",
 			Recommendation: "Ensure the replacement" +
 				" covers all use cases of the" +
 				" original. Run comparative tests.",
@@ -268,6 +299,7 @@ func (e *Engine) AnalyzeEvolution(
 		res = models.EvolutionResult{
 			Category:  "general",
 			RiskLevel: "LOW",
+			Reasoning: "Proposal contains no known high-risk keywords.",
 			Recommendation: "Evolution path looks stable." +
 				" Define specific components next.",
 		}
@@ -376,6 +408,23 @@ var qualityRubrics = []qualityRubric{
 			{"abstract", 1},
 		},
 	},
+	{
+		attribute: "Performance",
+		baseScore: 4,
+		baseObs:   "No specific performance optimizations noted.",
+		bonuses: []struct {
+			keyword string
+			bonus   int
+		}{
+			{"latency", 2},
+			{"throughput", 2},
+			{"buffer", 1},
+			{"pool", 2},
+			{"index", 2},
+			{"cache", 1},
+			{"concurrent", 2},
+		},
+	},
 }
 
 // EvaluateQualityAttributes audits the design against
@@ -458,57 +507,17 @@ func (e *Engine) RedTeamReview(
 	lower := strings.ToLower(design)
 	var out []models.RedTeamChallenge
 
-	// Maintenance Grinch — flags missing observability.
-	if !strings.Contains(lower, "log") &&
-		!strings.Contains(lower, "debug") &&
-		!strings.Contains(lower, "monitor") {
-		out = append(out, models.RedTeamChallenge{
-			Persona:  "Maintenance",
-			Question: "How do you debug this at 3 AM?",
-		})
-	}
+	// Run all persona checks
+	out = append(out, e.checkMaintenancePersona(lower)...)
+	out = append(out, e.checkSecurityPersona(lower)...)
+	out = append(out, e.checkScalabilityPersona(lower)...)
+	out = append(out, e.checkCompatibilityPersona(lower)...)
+	out = append(out, e.checkReliabilityPersona(lower)...)
+	out = append(out, e.checkPerformancePersona(lower)...)
+	out = append(out, e.checkCompliancePersona(lower)...)
+	out = append(out, e.checkOperationsPersona(lower)...)
 
-	// Security Paranoid.
-	if strings.Contains(lower, "api") ||
-		strings.Contains(lower, "token") ||
-		strings.Contains(lower, "secret") ||
-		strings.Contains(lower, "password") {
-		out = append(out, models.RedTeamChallenge{
-			Persona:  "Security",
-			Question: "What if the API key leaks? Is data encrypted at rest?",
-		})
-	}
-
-	// Scalability Zealot.
-	if strings.Contains(lower, "single") ||
-		strings.Contains(lower, "monolith") ||
-		!strings.Contains(lower, "scale") {
-		out = append(out, models.RedTeamChallenge{
-			Persona:  "Scalability",
-			Question: "What if load triples? Where is the bottleneck?",
-		})
-	}
-
-	// Backward Compat Worrier.
-	if strings.Contains(lower, "change") ||
-		strings.Contains(lower, "migrat") ||
-		strings.Contains(lower, "deprecat") {
-		out = append(out, models.RedTeamChallenge{
-			Persona:  "Compatibility",
-			Question: "Will existing clients break?",
-		})
-	}
-
-	// Reliability Hawk.
-	if !strings.Contains(lower, "retry") &&
-		!strings.Contains(lower, "fallback") &&
-		!strings.Contains(lower, "circuit break") {
-		out = append(out, models.RedTeamChallenge{
-			Persona:  "Reliability",
-			Question: "What is the failure recovery strategy?",
-		})
-	}
-
+	// Fallback if no issues found
 	if len(out) == 0 {
 		out = append(out,
 			models.RedTeamChallenge{
@@ -524,6 +533,104 @@ func (e *Engine) RedTeamReview(
 
 	return out, nil
 }
+
+func (e *Engine) checkMaintenancePersona(design string) []models.RedTeamChallenge {
+	if !strings.Contains(design, "log") &&
+		!strings.Contains(design, "debug") &&
+		!strings.Contains(design, "monitor") {
+		return []models.RedTeamChallenge{{
+			Persona:  "Maintenance",
+			Question: "How do you debug this at 3 AM?",
+		}}
+	}
+	return nil
+}
+
+func (e *Engine) checkSecurityPersona(design string) []models.RedTeamChallenge {
+	if strings.Contains(design, "api") ||
+		strings.Contains(design, "token") ||
+		strings.Contains(design, "secret") ||
+		strings.Contains(design, "password") {
+		return []models.RedTeamChallenge{{
+			Persona:  "Security",
+			Question: "What if the API key leaks? Is data encrypted at rest?",
+		}}
+	}
+	return nil
+}
+
+func (e *Engine) checkScalabilityPersona(design string) []models.RedTeamChallenge {
+	if strings.Contains(design, "single") ||
+		strings.Contains(design, "monolith") ||
+		!strings.Contains(design, "scale") {
+		return []models.RedTeamChallenge{{
+			Persona:  "Scalability",
+			Question: "What if load triples? Where is the bottleneck?",
+		}}
+	}
+	return nil
+}
+
+func (e *Engine) checkCompatibilityPersona(design string) []models.RedTeamChallenge {
+	if strings.Contains(design, "change") ||
+		strings.Contains(design, "migrat") ||
+		strings.Contains(design, "deprecat") {
+		return []models.RedTeamChallenge{{
+			Persona:  "Compatibility",
+			Question: "Will existing clients break?",
+		}}
+	}
+	return nil
+}
+
+func (e *Engine) checkReliabilityPersona(design string) []models.RedTeamChallenge {
+	if !strings.Contains(design, "retry") &&
+		!strings.Contains(design, "fallback") &&
+		!strings.Contains(design, "circuit break") {
+		return []models.RedTeamChallenge{{
+			Persona:  "Reliability",
+			Question: "What is the failure recovery strategy?",
+		}}
+	}
+	return nil
+}
+
+func (e *Engine) checkPerformancePersona(design string) []models.RedTeamChallenge {
+	if strings.Contains(design, "loop") ||
+		strings.Contains(design, "recursive") ||
+		strings.Contains(design, "search") {
+		return []models.RedTeamChallenge{{
+			Persona:  "Performance",
+			Question: "How does this scale with O(n) or O(n^2)? Potential bottlenecks?",
+		}}
+	}
+	return nil
+}
+
+func (e *Engine) checkCompliancePersona(design string) []models.RedTeamChallenge {
+	if strings.Contains(design, "log") ||
+		strings.Contains(design, "persist") ||
+		strings.Contains(design, "store") {
+		return []models.RedTeamChallenge{{
+			Persona:  "Compliance",
+			Question: "Are we logging sensitive data? Is it GDPR/PII compliant?",
+		}}
+	}
+	return nil
+}
+
+func (e *Engine) checkOperationsPersona(design string) []models.RedTeamChallenge {
+	if strings.Contains(design, "deploy") ||
+		strings.Contains(design, "update") ||
+		strings.Contains(design, "config") {
+		return []models.RedTeamChallenge{{
+			Persona:  "Operations",
+			Question: "Can this be rolled back? Are there health checks?",
+		}}
+	}
+	return nil
+}
+
 
 // CritiqueDesign provides a consolidated, multi-dimensional
 // assessment of a design snippet.
@@ -586,6 +693,7 @@ func (e *Engine) CritiqueDesign(
 
 	return models.CritiqueResponse{
 		Narrative:  narrative,
+		Reasoning:  "Consolidated feedback based on 5 point quality rubric and adversarial Red Team simulations. Targeted Socratic challenges address domain-specific architecture gaps.",
 		SummaryMD:  sb.String(),
 		Challenges: challenges,
 		Metrics:    metrics,

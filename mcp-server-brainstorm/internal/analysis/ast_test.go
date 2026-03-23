@@ -222,3 +222,45 @@ func TestInspector_AnalyzeDirectory_NonExistent(t *testing.T) {
 		t.Error("expected error for non-existent directory")
 	}
 }
+
+func TestInspector_CheckSecrets(t *testing.T) {
+	tmpDir, _ := os.MkdirTemp("", "mcp-ast-secrets-*")
+	defer os.RemoveAll(tmpDir)
+
+	content := `package test
+const RiskLevel = "risk_level"
+const SecretKey = "sk_live_1234567890abcdef"
+const APIKey = "my_api_key_xxxxxxxx"
+`
+	_ = os.WriteFile(filepath.Join(tmpDir, "secrets.go"), []byte(content), 0644)
+	i := NewInspector()
+	gaps, _ := i.AnalyzeDirectory(context.Background(), tmpDir)
+
+	riskFound := false
+	secretFound := false
+	apiFound := false
+
+	for _, g := range gaps {
+		if g.Area == "SECURITY" {
+			if strings.Contains(g.Description, "secrets.go:2") {
+				riskFound = true
+			}
+			if strings.Contains(g.Description, "secrets.go:3") {
+				secretFound = true
+			}
+			if strings.Contains(g.Description, "secrets.go:4") {
+				apiFound = true
+			}
+		}
+	}
+
+	if riskFound {
+		t.Error("false positive: flagged 'risk_level' as secret")
+	}
+	if !secretFound {
+		t.Error("failed to detect 'sk_live_...' as secret")
+	}
+	if !apiFound {
+		t.Error("failed to detect 'my_api_key_...' as secret")
+	}
+}
