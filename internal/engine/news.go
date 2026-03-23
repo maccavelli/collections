@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"time"
 
+	"mcp-server-duckduckgo/internal/config"
 	"mcp-server-duckduckgo/internal/models"
 )
 
@@ -30,7 +31,7 @@ func (e *SearchEngine) NewsSearch(ctx context.Context, query string, maxResults 
 	if err != nil {
 		return nil, fmt.Errorf("news search failed: %w", err)
 	}
-	defer resp.Body.Close() //nolint:errcheck // error on read-only close is safe to ignore
+	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("news search failed with status code: %d", resp.StatusCode)
@@ -47,7 +48,7 @@ func (e *SearchEngine) NewsSearch(ctx context.Context, query string, maxResults 
 		} `json:"results"`
 	}
 
-	if err := json.NewDecoder(io.LimitReader(resp.Body, maxBodyBytes)).Decode(&data); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, config.MaxBodyBytes)).Decode(&data); err != nil {
 		return nil, fmt.Errorf("failed to decode news search results: %w", err)
 	}
 
@@ -70,7 +71,7 @@ func (e *SearchEngine) NewsSearch(ctx context.Context, query string, maxResults 
 		results = append(results, models.SearchResult{
 			Title:       r.Title,
 			URL:         r.URL,
-			Description: truncate(r.Excerpt, MaxSnippetLength),
+			Description: truncate(r.Excerpt, config.MaxSnippetLength),
 			Source:      r.Source,
 			Date:        dateStr,
 			ImageURL:    r.Image,

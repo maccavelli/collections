@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+
+	"mcp-server-duckduckgo/internal/config"
 )
 
 func TestNewSearchEngine(t *testing.T) {
@@ -25,8 +27,8 @@ func TestNewRequest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if req.Header.Get("User-Agent") != userAgent {
-		t.Errorf("expected User-Agent %s, got %s", userAgent, req.Header.Get("User-Agent"))
+	if req.Header.Get("User-Agent") != config.UserAgent {
+		t.Errorf("expected User-Agent %s, got %s", config.UserAgent, req.Header.Get("User-Agent"))
 	}
 }
 

@@ -9,10 +9,12 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+	"mcp-server-duckduckgo/internal/config"
 	"mcp-server-duckduckgo/internal/engine"
-	"mcp-server-duckduckgo/internal/models"
+	"mcp-server-duckduckgo/internal/handler/media"
+	"mcp-server-duckduckgo/internal/handler/search"
+	"mcp-server-duckduckgo/internal/registry"
 )
 
 func main() {
@@ -20,12 +22,12 @@ func main() {
 	flag.Parse()
 
 	if *versionFlag {
-		fmt.Printf("mcp-server-duckduckgo version %s\n", Version)
+		fmt.Printf("%s version %s\n", config.Name, Version)
 		os.Exit(0)
 	}
 
 	setupLogging()
-	slog.Info("starting mcp-server-duckduckgo", "version", Version)
+	slog.Info("starting "+config.Name, "version", Version)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -44,8 +46,23 @@ func setupLogging() {
 }
 
 func run(ctx context.Context) error {
-	s := newServer(engine.NewSearchEngine())
-	
+	eng := engine.NewSearchEngine()
+
+	// Tool Registration
+	search.Register(eng)
+	media.Register(eng)
+
+	s := server.NewMCPServer(
+		config.Platform+" Search",
+		Version,
+		server.WithLogging(),
+	)
+
+	// Register tools from global registry
+	for _, t := range registry.Global.List() {
+		s.AddTool(t.Metadata(), t.Handle)
+	}
+
 	go func() {
 		<-ctx.Done()
 		slog.Info("shutdown signal received; stopping server")
@@ -53,75 +70,3 @@ func run(ctx context.Context) error {
 
 	return server.ServeStdio(s)
 }
-
-func newServer(searchEngine *engine.SearchEngine) *server.MCPServer {
-	s := server.NewMCPServer(
-		"DuckDuckGo Search",
-		Version,
-		server.WithLogging(),
-	)
-
-	// Register tools
-	s.AddTool(mcp.NewTool("ddg_search_web",
-		mcp.WithDescription("Perform a high-quality web search using DuckDuckGo. Use lower max_results for efficiency."),
-		mcp.WithString("query", mcp.Description("The search keywords"), mcp.Required()),
-		mcp.WithNumber("max_results", mcp.Description("Maximum results to return (default 5). Low counts are faster and more token-efficient."), mcp.DefaultNumber(5)),
-	), makeSearchHandler(searchEngine.WebSearch, "web"))
-
-	s.AddTool(mcp.NewTool("ddg_search_news",
-		mcp.WithDescription("Perform a news-specific search using DuckDuckGo. Use lower max_results for efficiency."),
-		mcp.WithString("query", mcp.Description("The search keywords"), mcp.Required()),
-		mcp.WithNumber("max_results", mcp.Description("Maximum results to return (default 5). Low counts are faster and more token-efficient."), mcp.DefaultNumber(5)),
-	), makeSearchHandler(searchEngine.NewsSearch, "news"))
-
-	s.AddTool(mcp.NewTool("ddg_search_images",
-		mcp.WithDescription("Search for images using DuckDuckGo. Use lower max_results for efficiency."),
-		mcp.WithString("query", mcp.Description("The search keywords"), mcp.Required()),
-		mcp.WithNumber("max_results", mcp.Description("Maximum results to return (default 5). Low counts are faster and more token-efficient."), mcp.DefaultNumber(5)),
-	), makeSearchHandler(searchEngine.ImageSearch, "image"))
-
-	s.AddTool(mcp.NewTool("ddg_search_videos",
-		mcp.WithDescription("Search for videos using DuckDuckGo. Use lower max_results for efficiency."),
-		mcp.WithString("query", mcp.Description("The search keywords"), mcp.Required()),
-		mcp.WithNumber("max_results", mcp.Description("Maximum results to return (default 5). Low counts are faster and more token-efficient."), mcp.DefaultNumber(5)),
-	), makeSearchHandler(searchEngine.VideoSearch, "video"))
-
-	s.AddTool(mcp.NewTool("ddg_search_books",
-		mcp.WithDescription("Search for books using DuckDuckGo. Use lower max_results for efficiency."),
-		mcp.WithString("query", mcp.Description("The search keywords"), mcp.Required()),
-		mcp.WithNumber("max_results", mcp.Description("Maximum results to return (default 5). Low counts are faster and more token-efficient."), mcp.DefaultNumber(5)),
-	), makeSearchHandler(searchEngine.BookSearch, "book"))
-
-	return s
-}
-
-// makeSearchHandler creates an MCP tool handler from any search function.
-func makeSearchHandler(
-	searchFn func(context.Context, string, int) ([]models.SearchResult, error),
-	resultType string,
-) server.ToolHandlerFunc {
-	return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		query, err := request.RequireString("query")
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-		maxResults := request.GetInt("max_results", 5)
-
-		slog.Info("executing search", "type", resultType, "query", query, "maxResults", maxResults)
-		results, err := searchFn(ctx, query, maxResults)
-		if err != nil {
-			slog.Error("search failed", "type", resultType, "query", query, "error", err)
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-
-		result, err := mcp.NewToolResultJSON(models.SearchResponse{
-			Type:    resultType,
-			Results: results,
-		})
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-		return result, nil
-	}
-}
-

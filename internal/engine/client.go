@@ -10,6 +10,8 @@ import (
 	"regexp"
 	"sync"
 	"time"
+
+	"mcp-server-duckduckgo/internal/config"
 )
 
 // Pre-compiled VQD extraction patterns.
@@ -18,13 +20,6 @@ var vqdPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`vqd="([^"]+)"`),
 	regexp.MustCompile(`vqd=([^&]+)`),
 }
-
-const (
-	MaxSnippetLength = 1000
-	maxBodyBytes     = 10 * 1024 * 1024 // 10 MB limit for safety
-	userAgent        = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
-	vqdCacheTTL      = 5 * time.Minute
-)
 
 type cacheEntry struct {
 	vqd       string
@@ -53,7 +48,7 @@ func NewSearchEngine() *SearchEngine {
 
 	return &SearchEngine{
 		Client: &http.Client{
-			Timeout:   15 * time.Second,
+			Timeout:   config.DefaultTimeout,
 			Transport: transport,
 		},
 		vqdCache: make(map[string]cacheEntry),
@@ -75,7 +70,7 @@ func (e *SearchEngine) newRequest(ctx context.Context, method, u string, body io
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", userAgent)
+	req.Header.Set("User-Agent", config.UserAgent)
 	return req, nil
 }
 
@@ -104,13 +99,13 @@ func (e *SearchEngine) getVQD(ctx context.Context, query string) (string, error)
 	if err != nil {
 		return "", fmt.Errorf("failed to perform VQD request: %w", err)
 	}
-	defer resp.Body.Close() //nolint:errcheck // read-only close error is safe
+	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("vqd fetch failed with status code: %d", resp.StatusCode)
 	}
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBodyBytes))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, config.MaxBodyBytes))
 	if err != nil {
 		return "", fmt.Errorf("failed to read VQD response body: %w", err)
 	}
@@ -121,9 +116,15 @@ func (e *SearchEngine) getVQD(ctx context.Context, query string) (string, error)
 			vqd := string(matches[1])
 			// Update Cache
 			e.mu.Lock()
+			// Basic cleanup if over limit
+			if len(e.vqdCache) >= config.VQDCacheLimit {
+				// Simple flush if limit reached, better than OOM
+				slog.Warn("VQD cache limit reached; flushing", "limit", config.VQDCacheLimit)
+				e.vqdCache = make(map[string]cacheEntry)
+			}
 			e.vqdCache[query] = cacheEntry{
 				vqd:       vqd,
-				expiresAt: time.Now().Add(vqdCacheTTL),
+				expiresAt: time.Now().Add(config.VQDCacheTTL),
 			}
 			e.mu.Unlock()
 			return vqd, nil
@@ -132,4 +133,3 @@ func (e *SearchEngine) getVQD(ctx context.Context, query string) (string, error)
 
 	return "", fmt.Errorf("could not extract vqd")
 }
-
