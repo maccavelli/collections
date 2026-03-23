@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/PuerkitoBio/goquery"
+	"mcp-server-duckduckgo/internal/config"
 	"mcp-server-duckduckgo/internal/models"
 )
 
@@ -30,13 +31,13 @@ func (e *SearchEngine) WebSearch(ctx context.Context, query string, maxResults i
 	if err != nil {
 		return nil, fmt.Errorf("failed to perform web search: %w", err)
 	}
-	defer resp.Body.Close() //nolint:errcheck // error on read-only close is safe to ignore
+	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("search failed with status code: %d", resp.StatusCode)
 	}
 
-	doc, err := goquery.NewDocumentFromReader(io.LimitReader(resp.Body, maxBodyBytes))
+	doc, err := goquery.NewDocumentFromReader(io.LimitReader(resp.Body, config.MaxBodyBytes))
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse web search results: %w", err)
 	}
@@ -54,7 +55,7 @@ func (e *SearchEngine) WebSearch(ctx context.Context, query string, maxResults i
 			results = append(results, models.SearchResult{
 				Title:       title,
 				URL:         link,
-				Description: truncate(snippet, MaxSnippetLength),
+				Description: truncate(snippet, config.MaxSnippetLength),
 			})
 		}
 	})

@@ -1,133 +1,95 @@
-# DuckDuckGo MCP Server (Go)
+# DuckDuckGo Search Server
 
-A high-performance Model Context Protocol (MCP) server that provides
-comprehensive, structured search capabilities for AI agents.
+A high-performance MCP server providing secure, anonymous, and comprehensive web search capabilities, including news, media, and academic resources.
 
-## 🎯 Purpose and Capabilities
+## Overview
 
-The `mcp-server-duckduckgo` enables AI agents to stay grounded in real-world,
-real-time data by providing dedicated, high-performance tools for **Web**,
-**News**, **Images**, **Videos**, and **Books**. It is designed for speed, low
-memory overhead, and rich metadata extraction.
+The DuckDuckGo Search server empowers AI-driven agents and developers to integrate real-world awareness into their workflows without compromising privacy or security. It abstracts the complexities of search parsing and provides structured, token-efficient results.
 
-### Core Features
+### What it does (Core Pillars)
 
-- **Comprehensive Search Types**: Dedicated tools for five distinct data
-  domains.
-- **Rich Metadata Extraction**: Provides more than just links — includes
-  thumbnails, video durations, news sources, publication dates, and book
-  details (authors, file formats, mirrors).
-- **Concurrent Book Search**: Queries multiple Anna's Archive mirrors
-  (.gd, .gl, .pk) simultaneously for maximum resilience and speed.
-- **Optimized Data Model**: Uses a simplified `SearchResponse` structure and
-  automated **content truncation** to reduce token overhead for AI agents.
-- **Language**: Built with **Go 1.26.1+** for near-instant execution and
-  minimal system resource footprint.
+1.  **Web & News Search**: Real-time retrieval of relevant web pages and latest news articles.
+2.  **Media Discovery**: Search for high-quality images and video content with structured metadata.
+3.  **Academic & Reference Search**: Specialized search for books and educational materials.
+4.  **Token Efficiency**: Automatic truncation and intelligent summarization of results to maximize LLM context window efficiency.
 
-## ⚙️ How it Works
+### How it works (Architecture)
 
-1. **Protocol**: Implements the Model Context Protocol using `stdio` transport,
-   communicating via `JSON-RPC 2.0`.
-2. **Authentication**: Automatically extracts `vqd` (Verification Query Data)
-   tokens from DuckDuckGo to authenticate requests to internal JSON-based
-   search endpoints.
-3. **Scraping Architecture**:
-   - **Web Search**: Uses a high-quality HTML scraper with `goquery` for
-     reliable snippet extraction.
-   - **JSON Endpoints**: Interacts directly with optimized internal DDG
-     endpoints for News, Images, and Videos.
-   - **Concurrent Mirroring**: The Book Search uses a `cancel-on-first-success`
-     goroutine pattern to query multiple book mirrors concurrently.
-4. **Token Efficiency**: All search result descriptions are dynamically
-   truncated to ensure that AI agents receive the most relevant information
-   without exhausting context window limits.
+Built in Go for speed and concurrent processing, the server utilizes a distributed handler architecture:
 
-## 🧠 Why Go?
+-   **Modular Handler System**: Separate packages for `search` (web, news, books) and `media` (images, videos) allow for specialized processing and scaling.
+-   **Structured Result Engine**: Converts raw HTML/JSON search results into a clean, uniform schema optimized for AI consumption.
+-   **Concurrent Retrieval**: Uses Go's concurrency primitives to perform multi-source searches with minimal latency.
+-   **Privacy-Native**: Uses DuckDuckGo's anonymous endpoints to ensure no user-identifiable data is tracked or transmitted.
 
-- **Zero Runtime Dependencies**: Compiles to a single, statically linked binary.
-- **Concurrency**: Goroutines handle parallel scraping of book mirrors without
-  complex state management.
-- **Performance**: Near-zero startup time and minimal memory consumption
-  (typically <20MB RSS) make it ideal for frequent agentic tool invocations.
+### Why it exists (Rationale)
 
-## 🛠️ Installation
+LLMs are often limited by their training data cutoff. The DuckDuckGo server provides a bridge to current events and public domain data while:
 
-### 1. Requirements
+-   **Ensuring Privacy**: Standard search engines often track user queries. This server provides a proxy that protects user anonymity.
+-   **Optimizing Context**: Raw search results are often verbose and noisy. This server cleans and truncates data to ensure only the highest signal reaches the LLM.
 
-- **Go 1.26.1+** (if building from source)
-- An MCP host environment (e.g., Antigravity, Claude Desktop, or NotebookLM)
+## Tools
 
-### 2. Deployment
+### General Search
+-   `ddg_search_web(query, [max_results])`: Perform a broad web search. Returns structured titles, snippets, and URLs.
+-   `ddg_search_news(query, [max_results])`: Retrieve latest news articles related to the query.
+-   `ddg_search_books(query, [max_results])`: Search for published book titles and metadata.
 
-You can use the pre-built binaries in Releases, or build your own.
+### Media Search
+-   `ddg_search_images(query, [max_results])`: Find images related to the query, providing source URLs and titles.
+-   `ddg_search_videos(query, [max_results])`: Discover video content from across the web.
 
-**Pre-built Binaries**:
-If you use the included Linux binary:
-`./dist/mcp-server-duckduckgo-linux-amd64`
+### System Diagnostics
+-   `get_internal_logs(max_lines)`: Retrieves recent server activity logs for monitoring and debugging.
 
-**Build from Source**:
+## Installation
 
+### 1. Build the Binary
 ```bash
-make linux  # Compiles for Linux AMD64
-# or
-make build  # Compiles for your current OS/Arch
+make build
 ```
+The compiled binary will be located in the `dist` directory.
 
-### 3. Verification
+### 2. Configure for IDEs
 
-```bash
-./dist/mcp-server-duckduckgo-linux-amd64 --version
-```
-
-## 🚀 Usage Instructions
-
-Register the server in your MCP host configuration (`mcp_config.json`):
-
+#### **Antigravity**
+Add the server to your `mcpServers` configuration:
 ```json
 {
   "mcpServers": {
-    "ddg-search": {
-      "command": "/path/to/dist/mcp-server-duckduckgo-linux-amd64",
+    "duckduckgo": {
+      "command": "/usr/local/bin/mcp-server-duckduckgo",
       "args": [],
-      "env": {}
+      "env": {
+        "PATH": "/usr/local/go/bin:/usr/local/bin"
+      }
     }
   }
 }
 ```
 
-### Available Tools
+#### **VS Code (MCP Extension)**
+If using an MCP-compatible VS Code extension (like Claude Dev or Cline):
+1.  Navigate to the setting/config file for the extension.
+2.  Add the configuration entry:
+```json
+{
+  "mcpServers": {
+    "duckduckgo": {
+      "command": "/path/to/dist/mcp-server-duckduckgo",
+      "args": []
+    }
+  }
+}
+```
 
-| Tool | Description | Args (Default) |
-| :--- | :--- | :--- |
-| `ddg_search_web` | Web search results. | query, max_results (5) |
-| `ddg_search_news` | Recent news articles. | query, max_results (5) |
-| `ddg_search_images` | Visual image search. | query, max_results (5) |
-| `ddg_search_videos` | Video search & metadata. | query, max_results (5) |
-| `ddg_search_books` | Concurrent book search. | query, max_results (5) |
+## Use Cases
 
-## 🛠️ Development
+-   **Up-to-Date Research**: Use `ddg_search_news` to stay current on rapidly changing technical fields or news events.
+-   **Code Asset Discovery**: Use `ddg_search_images` to find UI icons or design inspirations while building applications.
+-   **Reference Verification**: Cross-verify claims or technical documentation using `ddg_search_web`.
 
-This project uses a standard `Makefile` for common tasks:
+---
 
-- `make build`: Build for the current platform.
-- `make build-all`: Cross-compile for Linux, macOS (Intel/M1), and Windows.
-- `make test`: Run unit tests for search logic.
-- `make fmt`: Format source code.
-- `make clean`: Remove build artifacts.
-
-## 💡 Best Practices
-
-- **Rate Limiting**: DuckDuckGo may temporarily block IPs after extremely
-  rapid-fire requests. Use reasonable intervals between intensive searches.
-- **Book Search Latency**: Book results may take 2-4 seconds as mirrors are
-  queried across different regions.
-- **Large Results**: Increasing `max_results` beyond 10 for images/videos can
-  lead to significantly larger payloads.
-
-## ⚖️ License
-
-MIT
-
-___________________________________________________________________________
-
-Created in Go for performance and efficiency.
+Created in Go for reliability and speed.

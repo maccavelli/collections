@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/PuerkitoBio/goquery"
+	"mcp-server-duckduckgo/internal/config"
 	"mcp-server-duckduckgo/internal/models"
 )
 
@@ -84,13 +85,13 @@ func (e *SearchEngine) fetchMirrorHTML(ctx context.Context, u string) ([]byte, e
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close() //nolint:errcheck // read-only close error is safe
+	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("mirror returned status %d", resp.StatusCode)
 	}
 
-	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxBodyBytes))
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, config.MaxBodyBytes))
 	if err != nil {
 		return nil, err
 	}
@@ -177,9 +178,8 @@ func (e *SearchEngine) extractMirrorResult(baseUrl string, s *goquery.Selection)
 	return models.SearchResult{
 		Title:       title,
 		URL:         href,
-		Description: truncate(description, MaxSnippetLength),
-		Author:      truncate(author, MaxSnippetLength),
-		Info:        truncate(infoLine, MaxSnippetLength),
+		Description: truncate(description, config.MaxSnippetLength),
+		Author:      truncate(author, config.MaxSnippetLength),
+		Info:        truncate(infoLine, config.MaxSnippetLength),
 	}
 }
-

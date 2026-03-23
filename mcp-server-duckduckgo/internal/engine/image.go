@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 
+	"mcp-server-duckduckgo/internal/config"
 	"mcp-server-duckduckgo/internal/models"
 )
 
@@ -29,7 +30,7 @@ func (e *SearchEngine) ImageSearch(ctx context.Context, query string, maxResults
 	if err != nil {
 		return nil, fmt.Errorf("image search failed: %w", err)
 	}
-	defer resp.Body.Close() //nolint:errcheck // error on read-only close is safe to ignore
+	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("image search failed with status code: %d", resp.StatusCode)
@@ -45,7 +46,7 @@ func (e *SearchEngine) ImageSearch(ctx context.Context, query string, maxResults
 		} `json:"results"`
 	}
 
-	if err := json.NewDecoder(io.LimitReader(resp.Body, maxBodyBytes)).Decode(&data); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, config.MaxBodyBytes)).Decode(&data); err != nil {
 		return nil, fmt.Errorf("failed to decode image search results: %w", err)
 	}
 

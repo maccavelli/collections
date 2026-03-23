@@ -2,94 +2,55 @@ package main
 
 import (
 	"context"
-	"fmt"
-	"os"
 	"testing"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"mcp-server-duckduckgo/internal/engine"
-	"mcp-server-duckduckgo/internal/models"
+	"mcp-server-duckduckgo/internal/handler/media"
+	"mcp-server-duckduckgo/internal/handler/search"
+	"mcp-server-duckduckgo/internal/registry"
 )
 
-const ddgSearchWeb = "ddg_search_web"
-
-func TestMain_Coverage(t *testing.T) {
-	// We can't easily test main() fully because ServeStdio blocks,
-	// but we can test the version flag path.
-	t.Run("version_flag", func(t *testing.T) {
-		oldArgs := os.Args
-		defer func() { os.Args = oldArgs }()
-		os.Args = []string{"cmd", "-version"}
-		
-		// Capture stdout
-		main()
-	})
-}
 
 
-func TestNewServer(t *testing.T) {
-	s := newServer(engine.NewSearchEngine())
-	if s == nil {
-		t.Fatal("expected server to be created")
-	}
-	// Check if tools are added
-	tools := s.ListTools()
+func TestRegistryToolLoading_Duck(t *testing.T) {
+	eng := engine.NewSearchEngine()
+	search.Register(eng)
+	media.Register(eng)
+
+	tools := registry.Global.List()
 	if len(tools) != 5 {
-		t.Errorf("expected 5 tools, got %d", len(tools))
+		t.Errorf("expected 5 tools in registry, got %d", len(tools))
+	}
+
+	for _, tool := range tools {
+		meta := tool.Metadata()
+		if meta.Name == "" {
+			t.Errorf("tool metadata name is empty")
+		}
 	}
 }
 
-func TestMakeSearchHandler(t *testing.T) {
-	t.Run("success", func(t *testing.T) {
-		mockSearch := func(ctx context.Context, query string, maxRes int) ([]models.SearchResult, error) {
-			return []models.SearchResult{{Title: "Result"}}, nil
-		}
-		handler := makeSearchHandler(mockSearch, "test")
+func TestSearchTool_Handle(t *testing.T) {
+	eng := engine.NewSearchEngine()
+	search.Register(eng)
 
-		// Manually construct the request as NewCallToolRequest is undefined
-		req := mcp.CallToolRequest{}
-		req.Params.Name = ddgSearchWeb
-		req.Params.Arguments = map[string]interface{}{"query": "test"}
-
-		res, err := handler(context.Background(), req)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if res.IsError {
-			t.Fatal("expected no error in result")
-		}
-	})
+	tool, ok := registry.Global.Get("ddg_search_web")
+	if !ok {
+		t.Fatal("ddg_search_web tool not registered")
+	}
 
 	t.Run("missing_query", func(t *testing.T) {
-		handler := makeSearchHandler(nil, "test")
 		req := mcp.CallToolRequest{}
-		req.Params.Name = ddgSearchWeb
+		req.Params.Name = "ddg_search_web"
 		req.Params.Arguments = map[string]interface{}{}
 
-		res, err := handler(context.Background(), req)
+		res, err := tool.Handle(context.Background(), req)
 		if err != nil {
 			t.Fatalf("unexpected handler error: %v", err)
 		}
 		if !res.IsError {
 			t.Error("expected error result due to missing query")
-		}
-	})
-
-	t.Run("engine_error", func(t *testing.T) {
-		mockSearch := func(ctx context.Context, query string, maxRes int) ([]models.SearchResult, error) {
-			return nil, fmt.Errorf("engine failure")
-		}
-		handler := makeSearchHandler(mockSearch, "test")
-		req := mcp.CallToolRequest{}
-		req.Params.Name = ddgSearchWeb
-		req.Params.Arguments = map[string]interface{}{"query": "test"}
-
-		res, err := handler(context.Background(), req)
-		if err != nil {
-			t.Fatalf("unexpected handler error: %v", err)
-		}
-		if !res.IsError {
-			t.Error("expected error result due to engine failure")
 		}
 	})
 }
