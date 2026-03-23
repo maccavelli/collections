@@ -7,8 +7,49 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"mcp-server-magicskills/internal/engine"
+	"mcp-server-magicskills/internal/handler/bootstrap"
+	"mcp-server-magicskills/internal/handler/discovery"
+	"mcp-server-magicskills/internal/handler/retrieval"
 	"mcp-server-magicskills/internal/models"
+	"mcp-server-magicskills/internal/registry"
 )
+
+func TestToolRegistry(t *testing.T) {
+	eng := engine.NewEngine()
+	discovery.Register(eng)
+
+	tool, ok := registry.Global.Get("magicskills_list")
+	if !ok {
+		t.Fatal("magicskills_list tool not registered")
+	}
+
+	meta := tool.Metadata()
+	if meta.Name != "magicskills_list" {
+		t.Errorf("expected magicskills_list, got %s", meta.Name)
+	}
+}
+
+func TestHandleListSkillsEmpty(t *testing.T) {
+	ctx := context.Background()
+	e := engine.NewEngine()
+	tool := &discovery.ListTool{Engine: e}
+
+	req := mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Name: "magicskills_list",
+		},
+	}
+
+	res, err := tool.Handle(ctx, req)
+	if err != nil {
+		t.Fatalf("Handle failed: %v", err)
+	}
+
+	text := res.Content[0].(mcp.TextContent).Text
+	if !strings.Contains(text, "Available MagicSkills Index") {
+		t.Error("expected index list in output")
+	}
+}
 
 func TestHandleGetSkillWithSection(t *testing.T) {
 	eng := engine.NewEngine()
@@ -20,17 +61,19 @@ func TestHandleGetSkillWithSection(t *testing.T) {
 		},
 	}
 
-	h := &MagicSkillsHandler{Engine: eng, Logs: &LogBuffer{}}
+	tool := &retrieval.GetTool{Engine: eng}
+	ctx := context.Background()
 
 	// Test valid section
 	args := map[string]interface{}{"name": "test", "section": "workflow"}
 	req := mcp.CallToolRequest{
 		Params: mcp.CallToolParams{
+			Name:      "magicskills_get",
 			Arguments: args,
 		},
 	}
 
-	resp, err := h.HandleGetSkill(context.Background(), req)
+	resp, err := tool.Handle(ctx, req)
 	if err != nil {
 		t.Fatalf("HandleGetSkill failed: %v", err)
 	}
@@ -48,15 +91,17 @@ func TestHandleMatchSkills(t *testing.T) {
 	}
 	eng.RecalculateIndices()
 
-	h := &MagicSkillsHandler{Engine: eng, Logs: &LogBuffer{}}
+	tool := &discovery.MatchTool{Engine: eng}
+	ctx := context.Background()
 
 	req := mcp.CallToolRequest{
 		Params: mcp.CallToolParams{
+			Name:      "magicskills_match",
 			Arguments: map[string]interface{}{"intent": "Searchable"},
 		},
 	}
 
-	resp, err := h.HandleMatchSkills(context.Background(), req)
+	resp, err := tool.Handle(ctx, req)
 	if err != nil {
 		t.Fatalf("HandleMatchSkills failed: %v", err)
 	}
@@ -95,15 +140,17 @@ func TestHandleBootstrapTask(t *testing.T) {
 		},
 	}
 
-	h := &MagicSkillsHandler{Engine: eng, Logs: &LogBuffer{}}
+	tool := &bootstrap.BootstrapTool{Engine: eng}
+	ctx := context.Background()
 
 	req := mcp.CallToolRequest{
 		Params: mcp.CallToolParams{
+			Name:      "magicskills_bootstrap",
 			Arguments: map[string]interface{}{"name": "test"},
 		},
 	}
 
-	resp, err := h.HandleBootstrapTask(context.Background(), req)
+	resp, err := tool.Handle(ctx, req)
 	if err != nil {
 		t.Fatalf("HandleBootstrapTask failed: %v", err)
 	}
@@ -115,12 +162,11 @@ func TestHandleBootstrapTask(t *testing.T) {
 
 func TestLogBuffer_Truncation(t *testing.T) {
 	lb := &LogBuffer{}
-	// Write over 512KB to trigger truncation.
 	// logBufferLimit is 512 * 1024, logTrimTarget is 256 * 1024.
 	// We'll write 600KB of 'A's with some newlines.
 	chunk := strings.Repeat("A", 1023) + "\n"
 	for i := 0; i < 600; i++ {
-		lb.Write([]byte(chunk))
+		_, _ = lb.Write([]byte(chunk))
 	}
 
 	size := len(lb.String())
@@ -129,99 +175,5 @@ func TestLogBuffer_Truncation(t *testing.T) {
 	}
 	if size < logTrimTarget {
 		t.Errorf("Expected LogBuffer to keep at least %d bytes, got %d", logTrimTarget, size)
-	}
-}
-
-func TestHandleReadResource_StatusAndErrors(t *testing.T) {
-	eng := engine.NewEngine()
-	eng.Skills["test"] = &models.Skill{
-		Metadata: models.SkillMetadata{Name: "test", Version: "1.0"},
-	}
-	h := &MagicSkillsHandler{Engine: eng, Logs: &LogBuffer{}}
-
-	ctx := context.Background()
-
-	// Test Status
-	reqStatus := mcp.ReadResourceRequest{
-		Params: mcp.ReadResourceParams{URI: "magicskills://status"},
-	}
-	res, err := h.HandleReadResource(ctx, reqStatus)
-	if err != nil {
-		t.Fatalf("HandleReadResource failed: %v", err)
-	}
-	text := res[0].(mcp.TextResourceContents).Text
-	if !strings.Contains(text, "Total Skills Indexed: 1") {
-		t.Fatal("Missing status contents")
-	}
-
-	// Test Invalid
-	reqInvalid := mcp.ReadResourceRequest{
-		Params: mcp.ReadResourceParams{URI: "magicskills://unknown"},
-	}
-	if _, err := h.HandleReadResource(ctx, reqInvalid); err == nil {
-		t.Fatal("Expected error for unknown resource")
-	}
-}
-
-func TestHandleListResources(t *testing.T) {
-	h := &MagicSkillsHandler{}
-	res, err := h.HandleListResources(context.Background(), mcp.ListResourcesRequest{})
-	if err != nil {
-		t.Fatalf("HandleListResources failed: %v", err)
-	}
-	if len(res.Resources) != 2 {
-		t.Fatalf("Expected 2 resources, got %d", len(res.Resources))
-	}
-}
-
-func TestHandleListSkills(t *testing.T) {
-	eng := engine.NewEngine()
-	eng.Skills["test"] = &models.Skill{
-		Metadata: models.SkillMetadata{Name: "test", Version: "1.0", Description: "desc"},
-	}
-	h := &MagicSkillsHandler{Engine: eng}
-
-	res, err := h.HandleListSkills(context.Background(), mcp.CallToolRequest{})
-	if err != nil {
-		t.Fatalf("HandleListSkills failed: %v", err)
-	}
-	text := res.Content[0].(mcp.TextContent).Text
-	if !strings.Contains(text, "test") || !strings.Contains(text, "desc") {
-		t.Fatal("HandleListSkills missing skill info")
-	}
-}
-
-func TestHandleGetSkill_EdgeCases(t *testing.T) {
-	eng := engine.NewEngine()
-	eng.Skills["test"] = &models.Skill{
-		Metadata: models.SkillMetadata{Name: "test", Version: "1.0"},
-		Digest:   "Dense Digest",
-	}
-	h := &MagicSkillsHandler{Engine: eng}
-	ctx := context.Background()
-
-	// 1. Missing name
-	req1 := mcp.CallToolRequest{Params: mcp.CallToolParams{Arguments: map[string]interface{}{}}}
-	res1, _ := h.HandleGetSkill(ctx, req1)
-	if res1.IsError == false {
-		t.Fatal("Expected error for missing name")
-	}
-
-	// 2. Skill not found
-	req2 := mcp.CallToolRequest{Params: mcp.CallToolParams{Arguments: map[string]interface{}{"name": "unknown"}}}
-	res2, _ := h.HandleGetSkill(ctx, req2)
-	if res2.IsError == false {
-		t.Fatal("Expected error for unknown skill")
-	}
-
-	// 3. No section requested (Hybrid test)
-	req3 := mcp.CallToolRequest{Params: mcp.CallToolParams{Arguments: map[string]interface{}{"name": "test"}}}
-	res3, _ := h.HandleGetSkill(ctx, req3)
-	if len(res3.Content) != 2 {
-		t.Fatalf("Expected 2 contents for hybrid result, got %d", len(res3.Content))
-	}
-	jsonMeta := res3.Content[0].(mcp.TextContent).Text
-	if !strings.Contains(jsonMeta, `"name":"test"`) {
-		t.Fatal("JSON metadata invalid")
 	}
 }

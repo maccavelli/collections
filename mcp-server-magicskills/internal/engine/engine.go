@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -24,7 +25,6 @@ const (
 )
 
 var (
-	// Pre-compile regexes for section parsing and formatting (idiomatic Go)
 	sectionRegex = regexp.MustCompile(`(?m)^##\s+(.*)$`)
 
 	builderPool = sync.Pool{
@@ -39,9 +39,8 @@ var (
 type Engine struct {
 	mu         sync.RWMutex
 	Skills     map[string]*models.Skill
-	PathToName map[string]string // Tracks which RawPath belongs to which Skill name
+	PathToName map[string]string
 
-	// Precomputed BM25 indices
 	DocFreq   map[string]float64
 	AvgDocLen float64
 	TotalDocs int
@@ -54,35 +53,40 @@ func NewEngine() *Engine {
 	}
 }
 
-func (e *Engine) Ingest(paths []string) error {
+// Ingest loads provided skill files into the engine in a context-aware manner.
+func (e *Engine) Ingest(ctx context.Context, paths []string) error {
 	var (
-		mu      sync.Mutex
-		parsed  = make(map[string]*models.Skill)
-		results = make(map[string]*models.Skill)
-		g       errgroup.Group
+		mu     sync.Mutex
+		parsed = make(map[string]*models.Skill)
 	)
-
-	// Limit concurrency to prevent OOM
+	g, gCtx := errgroup.WithContext(ctx)
 	g.SetLimit(10)
 
 	for _, path := range paths {
-		path := path
+		p := path
 		g.Go(func() error {
-			data, err := os.ReadFile(path)
+			data, err := os.ReadFile(p)
 			if err != nil {
 				return nil
 			}
-			skill, err := parseSkillFile(path, data)
+			skill, err := parseSkillFile(p, data)
 			if err != nil {
 				return nil
 			}
+
+			select {
+			case <-gCtx.Done():
+				return gCtx.Err()
+			default:
+			}
+
 			skill.Hash = hashContent(data)
 			skill.Digest = GenerateDigest(skill)
 			skill.UpdatedAt = time.Now()
 			skill.TokenEstimate = len(skill.Digest) / 4
 
 			mu.Lock()
-			parsed[path] = skill
+			parsed[p] = skill
 			mu.Unlock()
 			return nil
 		})
@@ -92,7 +96,7 @@ func (e *Engine) Ingest(paths []string) error {
 		return err
 	}
 
-	// Serial populate in original path order to ensure prioritization (last wins)
+	results := make(map[string]*models.Skill)
 	for _, path := range paths {
 		if s, ok := parsed[path]; ok {
 			results[s.Metadata.Name] = s
@@ -126,9 +130,7 @@ func (e *Engine) RecalculateIndices() {
 	}
 }
 
-// IngestSingle updates or adds a single skill file. (Incremental)
-func (e *Engine) IngestSingle(path string) error {
-	//nolint:gosec // ReadFile on discovered paths is intentional and safe
+func (e *Engine) IngestSingle(ctx context.Context, path string) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("read failed: %w", err)
@@ -139,7 +141,7 @@ func (e *Engine) IngestSingle(path string) error {
 
 	hash := hashContent(data)
 	if existing, ok := e.Skills[filepath.Base(filepath.Dir(path))]; ok && existing.Hash == hash {
-		return nil // No change
+		return nil
 	}
 
 	skill, err := parseSkillFile(path, data)
@@ -158,8 +160,7 @@ func (e *Engine) IngestSingle(path string) error {
 	return nil
 }
 
-// Remove removes a skill file from the index. (Incremental)
-func (e *Engine) Remove(path string) {
+func (e *Engine) Remove(ctx context.Context, path string) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
@@ -170,7 +171,6 @@ func (e *Engine) Remove(path string) {
 	}
 }
 
-// GetSkill returns a skill by name
 func (e *Engine) GetSkill(name string) (*models.Skill, bool) {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
@@ -178,7 +178,6 @@ func (e *Engine) GetSkill(name string) (*models.Skill, bool) {
 	return s, ok
 }
 
-// AllSkills returns an iterator over the indexed skills (Go 1.26 Idiom)
 func (e *Engine) AllSkills() iter.Seq[*models.Skill] {
 	return func(yield func(*models.Skill) bool) {
 		e.mu.RLock()
@@ -196,8 +195,8 @@ type scoredSkill struct {
 	score float64
 }
 
-// MatchSkills returns skills matched via weighted BM25 approximation (TF-IDF scoring)
-func (e *Engine) MatchSkills(intent string) []*models.Skill {
+// MatchSkills returns skills matched via BM25, respecting context deadline.
+func (e *Engine) MatchSkills(ctx context.Context, intent string) []*models.Skill {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
@@ -209,7 +208,6 @@ func (e *Engine) MatchSkills(intent string) []*models.Skill {
 		return nil
 	}
 
-	// Calculate Inverse Document Frequency (IDF) for keywords
 	idf := make(map[string]float64, len(keywords))
 	for _, kw := range keywords {
 		if df := e.DocFreq[kw]; df > 0 {
@@ -221,8 +219,13 @@ func (e *Engine) MatchSkills(intent string) []*models.Skill {
 
 	matches := make([]scoredSkill, 0, len(e.Skills))
 	for _, s := range e.Skills {
+		select {
+		case <-ctx.Done():
+			return nil
+		default:
+		}
+
 		score := 0.0
-		// Weight mapping: Name(5), Tags(3), Description(2), Body(0.5)
 		weights := map[string]float64{
 			strings.ToLower(s.Metadata.Name):        5.0,
 			strings.ToLower(s.Metadata.Description): 2.0,
@@ -242,13 +245,11 @@ func (e *Engine) MatchSkills(intent string) []*models.Skill {
 				}
 			}
 
-			// Add exact keyword count from TermFreq
 			if count, ok := s.TermFreq[kw]; ok {
 				tf += float64(count) * 0.1
 			}
 
 			if tf > 0 {
-				// BM25 scoring with k1=1.5, b=0.75
 				score += idf[kw] * (tf * (1.5 + 1.0)) / (tf + 1.5*(1.0-0.75+0.75*(float64(len(s.TermFreq))/e.AvgDocLen)))
 			}
 		}
@@ -257,7 +258,6 @@ func (e *Engine) MatchSkills(intent string) []*models.Skill {
 		}
 	}
 
-	// Use modern context-safe sorting from slices package
 	slices.SortFunc(matches, func(a, b scoredSkill) int {
 		if b.score > a.score {
 			return 1
@@ -275,8 +275,7 @@ func (e *Engine) MatchSkills(intent string) []*models.Skill {
 	return result
 }
 
-// Summarize returns a 300-char pruned version for token efficiency
-func (e *Engine) Summarize(name string) (string, bool) {
+func (e *Engine) Summarize(ctx context.Context, name string) (string, bool) {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 	s, ok := e.Skills[name]
@@ -284,14 +283,12 @@ func (e *Engine) Summarize(name string) (string, bool) {
 		return "", false
 	}
 
-	// Priority mapping for directive sections
 	for _, key := range []string{"magic directive", "directive", "summary"} {
 		if dir, ok := s.Sections[key]; ok {
 			return dir, true
 		}
 	}
 
-	// Fallback with fixed allocation
 	full := s.Sections["full"]
 	if len(full) > 300 {
 		return full[:300] + "...", true
@@ -300,7 +297,6 @@ func (e *Engine) Summarize(name string) (string, bool) {
 }
 
 func parseSkillFile(path string, data []byte) (*models.Skill, error) {
-	// Split with single byte allocation check
 	parts := strings.SplitN(string(data), "---", 3)
 	if len(parts) < 3 {
 		return nil, fmt.Errorf("invalid skill format: missing YAML frontmatter")
@@ -343,7 +339,6 @@ func hashContent(data []byte) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// GenerateDigest creates a densely formatted markdown content optimized for LLM context.
 func GenerateDigest(s *models.Skill) string {
 	b := builderPool.Get().(*strings.Builder)
 	defer func() {
@@ -356,7 +351,6 @@ func GenerateDigest(s *models.Skill) string {
 		fmt.Fprintf(b, "> %s\n\n", s.Metadata.Description)
 	}
 
-	// Priority Section Mapping with Domain Focus
 	mapping := map[string][]string{
 		"DIRECTIVE": {"magic directive", "directive", "persona", "objective"},
 		"WORKFLOW":  {"workflow", "routine", "steps", "usage"},
@@ -386,7 +380,6 @@ func Densify(text string) string {
 	lines := strings.Split(text, "\n")
 	var dense []string
 
-	// Filler removal phrases to maximize token density
 	fillers := []string{
 		"you should", "please ensure", "it is important to", "the user needs to",
 		"make sure to", "keep in mind that", "as a result of", "note that",
@@ -404,7 +397,6 @@ func Densify(text string) string {
 			lowered = strings.ReplaceAll(lowered, f, "")
 		}
 
-		// Context Pruning: Remove definitive articles for extreme density
 		lowered = strings.ReplaceAll(lowered, " the ", " ")
 		lowered = strings.ReplaceAll(lowered, " an ", " ")
 		lowered = strings.ReplaceAll(lowered, " a ", " ")
@@ -414,12 +406,10 @@ func Densify(text string) string {
 			continue
 		}
 
-		// Higher Density mapping
 		trimmed = strings.ReplaceAll(trimmed, "followed by", "->")
 		trimmed = strings.ReplaceAll(trimmed, "resulting in", "=>")
 		trimmed = strings.ReplaceAll(trimmed, "requires", "!")
 
-		// Recapitulation of first char (Agent Preference)
 		if trimmed != "" {
 			trimmed = strings.ToUpper(trimmed[:1]) + trimmed[1:]
 		}

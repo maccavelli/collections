@@ -1,6 +1,7 @@
 package scanner
 
 import (
+	"context"
 	"fmt"
 	"io/fs"
 	"log/slog"
@@ -14,12 +15,13 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-// Scanner handles discovery and monitoring of .agent/skills directories
+// Scanner handles discovery and monitoring of .agent/skills directories.
 type Scanner struct {
 	Roots   []string
 	Watcher *fsnotify.Watcher
 }
 
+// NewScanner initializes a new scanner with the provided root directories.
 func NewScanner(roots []string) (*Scanner, error) {
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
@@ -32,7 +34,6 @@ func NewScanner(roots []string) (*Scanner, error) {
 }
 
 // FindProjectSkillsRoots looks for .agent/skills starting from CWD and walking up.
-// It prioritizes these local directories over any global candidates.
 func FindProjectSkillsRoots() []string {
 	var roots []string
 	cwd, err := os.Getwd()
@@ -42,7 +43,6 @@ func FindProjectSkillsRoots() []string {
 
 	searchCwd := cwd
 	for {
-		// Local Project Candidates
 		for _, name := range []string{".agents/skills", ".agent/skills", ".gemini/skills", ".claude/rules", ".claude/skills", ".cursor/rules", ".github/skills", ".github/instructions"} {
 			target := filepath.Join(searchCwd, name)
 			if info, err := os.Stat(target); err == nil && info.IsDir() {
@@ -58,7 +58,6 @@ func FindProjectSkillsRoots() []string {
 		}
 		searchCwd = parent
 	}
-
 	return roots
 }
 
@@ -71,28 +70,33 @@ func contains(slice []string, val string) bool {
 	return false
 }
 
-// Discover finds all SKILL.md files in the configured roots using parallel walking and shallow scanning
-func (s *Scanner) Discover() ([]string, error) {
+// Discover finds all SKILL.md files using parallel walking.
+func (s *Scanner) Discover(ctx context.Context) ([]string, error) {
 	var (
 		mu         sync.Mutex
 		skillFiles []string
-		g          errgroup.Group
 	)
+	g, gCtx := errgroup.WithContext(ctx)
 
 	for _, root := range s.Roots {
 		if root == "" {
 			continue
 		}
 
+		r := root
 		g.Go(func() error {
-			// Shallow Walk: MagicSkills usually reside in root/skill-name/SKILL.md
-			// We skip very deep directories to enhance performance
-			err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+			return filepath.WalkDir(r, func(path string, d fs.DirEntry, err error) error {
 				if err != nil {
-					return nil //nolint:nilerr // Skip inaccessible subtrees
+					return nil
 				}
 
-				rel, err := filepath.Rel(root, path)
+				select {
+				case <-gCtx.Done():
+					return gCtx.Err()
+				default:
+				}
+
+				rel, err := filepath.Rel(r, path)
 				if err != nil {
 					return fs.SkipDir
 				}
@@ -110,25 +114,25 @@ func (s *Scanner) Discover() ([]string, error) {
 				}
 				return nil
 			})
-			return err
 		})
 	}
 
 	if err := g.Wait(); err != nil {
-		slog.Warn("Discovery warning: some roots failed to scan", "error", err)
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		slog.Warn("Discovery produced some root errors", "error", err)
 	}
 
-	// Sort files to ensure Local skill files (within CWD) are processed after Global ones.
-	// This allows Ingest to overwrite global skills with local ones correctly.
 	cwd, _ := os.Getwd()
 	slices.SortFunc(skillFiles, func(a, b string) int {
 		aLocal := strings.HasPrefix(a, cwd)
 		bLocal := strings.HasPrefix(b, cwd)
 		if aLocal && !bLocal {
-			return 1 // a is local, should come after global b
+			return 1
 		}
 		if !aLocal && bLocal {
-			return -1 // a is global, should come before local b
+			return -1
 		}
 		return strings.Compare(a, b)
 	})
@@ -136,16 +140,17 @@ func (s *Scanner) Discover() ([]string, error) {
 	return skillFiles, nil
 }
 
-// Listen starts a callback when skill changes occur, supporting incremental updates
-func (s *Scanner) Listen(onUpdate func(path string), onDelete func(path string)) {
+// Listen starts a callback loop for incremental updates.
+func (s *Scanner) Listen(ctx context.Context, onUpdate func(path string), onDelete func(path string)) {
 	go func() {
 		for {
 			select {
+			case <-ctx.Done():
+				return
 			case event, ok := <-s.Watcher.Events:
 				if !ok {
 					return
 				}
-
 				if strings.HasSuffix(event.Name, "SKILL.md") {
 					if event.Has(fsnotify.Write | fsnotify.Create) {
 						onUpdate(event.Name)

@@ -1,157 +1,97 @@
-# 🪄 MagicSkills Server (v2.2.0) 🪄
+# MagicSkills Server
 
-A high-performance, modular Model Context Protocol (MCP) server built in Go for
-orchestrating and optimizing `.agent/skills` workflows.
+A specialized MCP server for high-density knowledge retrieval, skill discovery, and automated workflow bootstrapping.
 
-## ❓ What is MagicSkills?
+## Overview
 
-MagicSkills is a specialized orchestration layer between your AI coding agent
-(like Antigravity or VS Code Copilot) and your skill libraries. It treats your
-`.agent/skills` directory as a high-speed, indexed database of expert directions,
-allowing the agent to discover, match, and surgically retrieve exactly the
-instructions it needs for any task.
+The MagicSkills server manages a sophisticated repository of expert-level "skills"—complex, multi-step procedures and domain knowledge. It is designed to act as a long-term memory and procedural accelerator for developers and AI agents.
 
-## 🚀 Why use this?
+### What it does (Core Pillars)
 
-- **Token Efficiency**: Instead of loading 5,000-token instruction files, the
-  server allows agents to fetch 300-token summaries or specific sections
-  (e.g., `## Workflow`).
-- **Workspace Intelligence**: Automatically discovers local project-specific
-  skills and prioritizes them over global defaults.
-- **Performance**: Zero-latency in-memory caching with `fsnotify`
-  file-watching and **Parallel Ingestion** via `errgroup` worker pools.
-- **Weighted Discovery**: Intents are matched against Skill Name, Description,
-  and Tags with a deterministic scoring system.
-- **JSON 2.0 Metadata**: Returns structured metadata including schema versions
-  and token estimates.
+1.  **Skill Discovery & Matching**: Intelligent searching for relevant procedures using semantic matching (BM25) and tag filtering.
+2.  **Density & Compression**: Refines large, verbose documentation into "Dense Summaries" optimized for LLM context windows.
+3.  **Workflow Bootstrapping**: Automatically extracts checklists and validation steps from skill definitions.
+4.  **Host Verification**: Audits and validates the necessary environment dependencies (binaries, permissions) required for a specific skill.
 
----
+### How it works (Architecture)
 
-## 🏗️ Structure of a Skill File (`SKILL.md`)
+Built in Go for maximum performance and memory efficiency, MagicSkills follows a robust, repository-based architecture:
 
-MagicSkills expects skills to be written in Markdown with **YAML frontmatter**
-and **Sectioned Headers**.
+-   **Multi-Root Knowledge Index**: Can index and serve skills from multiple local or remote directories, allowing for partitioned knowledge bases (e.g., internal corp vs. public community).
+-   **Advanced Scoring Engine**: Uses a BM25-based similarity engine to find the most relevant skill for a given user intent, even if keywords aren't exact.
+-   **Structured Extraction**: Tools like `magicskills_bootstrap` use AST-like parsing to pull actionable task lists directly from YAML/Markdown skill definitions.
+-   **Dynamic Resource Loading**: Skills are treated as dynamic resources that can be updated in real-time without server restarts.
 
-### ✨ The "Magic Directive" Section
+### Why it exists (Rationale)
 
-The `magicskills_summarize` tool is optimized for high-density guidance. It
-follows a specific priority when generating a summary:
+LLMs are excellent at reasoning but struggle to remember company-specific workflows, complex internal setup guides, or precise semantic patterns. MagicSkills provides:
 
-1. **`## Magic Directive`**: The absolute distilled essence of the skill
-   (Max 300 chars).
-2. **`## Directive`**: Secondary guidance section.
-3. **`## Summary`**: General overview.
-4. **Fallback**: First 300 characters of the full content.
+-   **Expertise Persistence**: Captures senior developer knowledge into a machine-readable format.
+-   **Automated Assurance**: Reduces "hallucination" by providing the LLM with direct, validated checklists.
+-   **Rapid Onboarding**: New developers or agents can immediately "bootstrap" into a complex project with all dependencies verified.
 
-Integrating a `## Magic Directive` section into your `SKILL.md` files allows
-agents to understand complex instructions instantly without loading the full
-file.
+## Tools
 
-### 📄 Skill Template
+### Skill Navigation
+-   `magicskills_list()`: Provides a comprehensive list of all skills available in the current index.
+-   `magicskills_match(intent)`: Automatically finds the best-matching skills for a given goal and returns a dense digest.
+-   `magicskills_get(name, [section], [version])`: Fetches high-relevance expert knowledge for a specific skill.
 
-```markdown
----
-name: go-refactoring
-description: Expert Go performance and idiom refinement
-tags: ["go", "refactoring", "gc-optimizations"]
-version: 2.1.0
----
+### Operational Support
+-   `magicskills_bootstrap(name)`: Generates a structured task checklist directly from a skill's defined workflow.
+-   `magicskills_validate_deps(name)`: Checks the host environment for required binary dependencies.
+-   `magicskills_add_root(path)`: Dynamically adds and indexes a new skill directory to the server's knowledge base.
 
-## Magic Directive
-Always prioritize Go 1.26 iterators and slices.SortFunc over legacy sort.Slice.
+### System Support
+-   `get_internal_logs(max_lines)`: Accesses the server's internal logs for auditing and debugging.
 
-## Workflow
-- [ ] Analyze target module
-- [ ] Run benchmark
-- [ ] Implement iterative optimizations
-- [ ] Verify test parity
+## Installation
 
-## Best Practices
-- Use strings.Builder.Grow() for strings.
-- Avoid large heap pointers in hot loops.
-```
-
----
-
-## 🛠️ Installation & Setup
-
-### 1. Build & Install
-
+### 1. Build the Binary
 ```bash
-# Clone and navigate to scripts/go/mcp-server-magicskills
-make install
+make build
 ```
+The compiled binary will be located in the `dist` directory.
 
-This builds and installs the binary to `~/.local/bin/mcp-server-magicskills`.
+### 2. Configure for IDEs
 
-### 2. Configure Environment Variables
-
-MagicSkills uses a hierarchical discovery process:
-
-- **`MAGIC_SKILLS_PATH`**: (Optional) Set this to your global skill library root.
-- **Local Discovery**: The server automatically searches upward from CWD to
-  find the `.agent/skills` folder in your project.
-
-### 3. Add to `mcp_config.json`
-
+#### **Antigravity**
+Add the server to your `mcpServers` configuration:
 ```json
 {
   "mcpServers": {
     "magicskills": {
-      "command": "/home/adm_saxsmith/.local/bin/mcp-server-magicskills",
+      "command": "/usr/local/bin/mcp-server-magicskills",
       "args": [],
       "env": {
-        "MAGIC_SKILLS_PATH": "absolute/path/to/your/skills"
+        "PATH": "/usr/local/go/bin:/usr/local/bin"
       }
     }
   }
 }
 ```
 
----
+#### **VS Code (MCP Extension)**
+If using an MCP-compatible VS Code extension (like Claude Dev or Cline):
+1.  Navigate to the setting/config file for the extension.
+2.  Add the configuration entry:
+```json
+{
+  "mcpServers": {
+    "magicskills": {
+      "command": "/path/to/dist/mcp-server-magicskills",
+      "args": []
+    }
+  }
+}
+```
 
-## 🔍 Tool Reference
+## Use Cases
 
-### **Discovery & Intent**
-
-- `magicskills_list`: Lists all available skills in the authoritative index with
-  metadata and tags.
-- `magicskills_match(intent)`: Finds matching skills based on your goal and
-  returns a dense digest immediately using weighted scoring.
-
-### **Retrieval & Automation**
-
-- `magicskills_get(name, section, version)`: Retrieves high-relevance knowledge.
-  Use `section` to surgically pull specific headers (e.g., "Workflow"), or leave
-  empty for a dense, context-optimized summary.
-- `magicskills_bootstrap(name)`: Extracts the "Workflow" section from a skill
-  and formats it as a task checklist.
-- `magicskills_validate_deps(name)`: Validates host dependencies (binaries)
-  required by a specific skill's workflow.
-
-### **Index Management**
-
-- `magicskills_add_root(path)`: Dynamically adds and indexes a new skill
-  directory root for the current session.
-
-### **Resources**
-
-- `magicskills://status`: A real-time dashboard showing indexing health, skill
-  counts, and root directory status.
+-   **Standardized Deployments**: Use `magicskills_bootstrap` to ensure every deployment follows the EXACT company-approved steps.
+-   **Intent-Based Assistance**: When a user says "I need to fix the database," the system calls `magicskills_match` to suggest the right troubleshooting skill.
+-   **Knowledge Transfer**: Document a complex migration as a skill, and any future agent can follow it exactly.
 
 ---
 
-## 🛑 Production Constraints
-
-- **Concurrency**: High-speed parallel ingestion using `errgroup` worker pools
-  (max 10 concurrent) for rapid startup.
-- **Observability**: Structured `slog` logging with an in-memory circular buffer
-  for tool-based log retrieval.
-- **Memory**: Optimized for low footprint, typically using <15MB RSS.
-- **Safety**: Built-in OS signal handling for graceful shutdown and resource
-  cleanup.
-
----
-
-Created in Go for performance and efficiency.
-Built for Antigravity and VS Code context optimization.
+Created in Go for flexibility and speed.
