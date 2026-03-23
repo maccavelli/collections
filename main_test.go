@@ -6,37 +6,26 @@ import (
 	"os"
 	"testing"
 
-
 	"github.com/mark3labs/mcp-go/mcp"
 	"mcp-server-duckduckgo/internal/engine"
 	"mcp-server-duckduckgo/internal/models"
 )
 
+const ddgSearchWeb = "ddg_search_web"
+
 func TestMain_Coverage(t *testing.T) {
-	// We can't easily test main() because of ServeStdio blocking and os.Exit.
-	// But we can test run() with --version which covers the main logic.
-	t.Run("main_version", func(t *testing.T) {
+	// We can't easily test main() fully because ServeStdio blocks,
+	// but we can test the version flag path.
+	t.Run("version_flag", func(t *testing.T) {
 		oldArgs := os.Args
 		defer func() { os.Args = oldArgs }()
-		os.Args = []string{"cmd", "--version"}
+		os.Args = []string{"cmd", "-version"}
+		
+		// Capture stdout
 		main()
 	})
 }
 
-
-func TestRun(t *testing.T) {
-	t.Run("version", func(t *testing.T) {
-		if err := run(context.Background(), []string{"cmd", "--version"}); err != nil {
-			t.Errorf("run --version failed: %v", err)
-		}
-	})
-
-	t.Run("flag_error", func(t *testing.T) {
-		if err := run(context.Background(), []string{"cmd", "--invalid"}); err == nil {
-			t.Error("expected error for invalid flag")
-		}
-	})
-}
 
 func TestNewServer(t *testing.T) {
 	s := newServer(engine.NewSearchEngine())
@@ -52,16 +41,16 @@ func TestNewServer(t *testing.T) {
 
 func TestMakeSearchHandler(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
-		mockSearch := func(ctx context.Context, query string, max int) ([]models.SearchResult, error) {
+		mockSearch := func(ctx context.Context, query string, maxRes int) ([]models.SearchResult, error) {
 			return []models.SearchResult{{Title: "Result"}}, nil
 		}
 		handler := makeSearchHandler(mockSearch, "test")
-		
+
 		// Manually construct the request as NewCallToolRequest is undefined
 		req := mcp.CallToolRequest{}
-		req.Params.Name = "ddg_search_web"
+		req.Params.Name = ddgSearchWeb
 		req.Params.Arguments = map[string]interface{}{"query": "test"}
-		
+
 		res, err := handler(context.Background(), req)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -74,9 +63,9 @@ func TestMakeSearchHandler(t *testing.T) {
 	t.Run("missing_query", func(t *testing.T) {
 		handler := makeSearchHandler(nil, "test")
 		req := mcp.CallToolRequest{}
-		req.Params.Name = "ddg_search_web"
+		req.Params.Name = ddgSearchWeb
 		req.Params.Arguments = map[string]interface{}{}
-		
+
 		res, err := handler(context.Background(), req)
 		if err != nil {
 			t.Fatalf("unexpected handler error: %v", err)
@@ -87,14 +76,14 @@ func TestMakeSearchHandler(t *testing.T) {
 	})
 
 	t.Run("engine_error", func(t *testing.T) {
-		mockSearch := func(ctx context.Context, query string, max int) ([]models.SearchResult, error) {
+		mockSearch := func(ctx context.Context, query string, maxRes int) ([]models.SearchResult, error) {
 			return nil, fmt.Errorf("engine failure")
 		}
 		handler := makeSearchHandler(mockSearch, "test")
 		req := mcp.CallToolRequest{}
-		req.Params.Name = "ddg_search_web"
+		req.Params.Name = ddgSearchWeb
 		req.Params.Arguments = map[string]interface{}{"query": "test"}
-		
+
 		res, err := handler(context.Background(), req)
 		if err != nil {
 			t.Fatalf("unexpected handler error: %v", err)

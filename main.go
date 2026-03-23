@@ -4,7 +4,10 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"log/slog"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -13,29 +16,41 @@ import (
 )
 
 func main() {
-	if err := run(context.Background(), os.Args); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+	versionFlag := flag.Bool("version", false, "Print version and exit")
+	flag.Parse()
+
+	if *versionFlag {
+		fmt.Printf("mcp-server-duckduckgo version %s\n", Version)
+		os.Exit(0)
+	}
+
+	setupLogging()
+	slog.Info("starting mcp-server-duckduckgo", "version", Version)
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	if err := run(ctx); err != nil {
+		slog.Error("server fatal error", "error", err)
 		os.Exit(1)
 	}
 }
 
-func run(ctx context.Context, args []string) error {
-	fs := flag.NewFlagSet("mcp-server-duckduckgo", flag.ContinueOnError)
-	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage of %s:\n", args[0])
-		fmt.Fprintf(os.Stderr, "  --version    Print the version and exit\n")
-	}
-	versionFlag := fs.Bool("version", false, "Print the version and exit")
-	if err := fs.Parse(args[1:]); err != nil {
-		return err
-	}
+func setupLogging() {
+	handler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+	})
+	slog.SetDefault(slog.New(handler))
+}
 
-	if *versionFlag {
-		printVersion()
-		return nil
-	}
-
+func run(ctx context.Context) error {
 	s := newServer(engine.NewSearchEngine())
+	
+	go func() {
+		<-ctx.Done()
+		slog.Info("shutdown signal received; stopping server")
+	}()
+
 	return server.ServeStdio(s)
 }
 
@@ -92,8 +107,10 @@ func makeSearchHandler(
 		}
 		maxResults := request.GetInt("max_results", 5)
 
+		slog.Info("executing search", "type", resultType, "query", query, "maxResults", maxResults)
 		results, err := searchFn(ctx, query, maxResults)
 		if err != nil {
+			slog.Error("search failed", "type", resultType, "query", query, "error", err)
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 

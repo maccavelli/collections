@@ -28,7 +28,7 @@ func TestBookSearch_Coverage(t *testing.T) {
 				Body:       io.NopCloser(strings.NewReader(mockHTML)),
 			}, nil
 		})
-		e := &SearchEngine{Client: client}
+		e := NewSearchEngine(); e.Client = client
 		results, err := e.BookSearch(context.Background(), "test", 10)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -51,7 +51,7 @@ func TestBookSearch_Coverage(t *testing.T) {
 				Body:       io.NopCloser(strings.NewReader(mockHTML)),
 			}, nil
 		})
-		e := &SearchEngine{Client: client}
+		e := NewSearchEngine(); e.Client = client
 		results, err := e.BookSearch(context.Background(), "test", 10)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -65,7 +65,7 @@ func TestBookSearch_Coverage(t *testing.T) {
 		client := newMockClient(func(req *http.Request) (*http.Response, error) {
 			return nil, http.ErrHandlerTimeout
 		})
-		e := &SearchEngine{Client: client}
+		e := NewSearchEngine(); e.Client = client
 		_, err := e.BookSearch(context.Background(), "test", 10)
 		if err == nil || !strings.Contains(err.Error(), "book search failed across all mirrors") {
 			t.Errorf("expected total failure error, got %v", err)
@@ -76,19 +76,21 @@ func TestBookSearch_Coverage(t *testing.T) {
 		client := newMockClient(func(req *http.Request) (*http.Response, error) {
 			return &http.Response{StatusCode: 404, Body: io.NopCloser(strings.NewReader(""))}, nil
 		})
-		e := &SearchEngine{Client: client}
+		e := NewSearchEngine(); e.Client = client
 		_, err := e.BookSearch(context.Background(), "test", 10)
-		if err == nil { t.Error("expected error") }
+		if err == nil {
+			t.Error("expected error")
+		}
 	})
 
 	t.Run("query_mirror_read_error", func(t *testing.T) {
 		client := newMockClient(func(req *http.Request) (*http.Response, error) {
 			return &http.Response{StatusCode: 200, Body: io.NopCloser(&errorReader{})}, nil
 		})
-		e := &SearchEngine{Client: client}
+		e := NewSearchEngine(); e.Client = client
 		_, err := e.BookSearch(context.Background(), "test", 10)
-		if err == nil { t.Error("expected error") }
+		if err == nil {
+			t.Error("expected error")
+		}
 	})
 }
-
-

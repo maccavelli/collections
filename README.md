@@ -19,8 +19,8 @@ memory overhead, and rich metadata extraction.
   details (authors, file formats, mirrors).
 - **Concurrent Book Search**: Queries multiple Anna's Archive mirrors
   (.gd, .gl, .pk) simultaneously for maximum resilience and speed.
-- **Optimized Data Model**: Uses a simplified `SearchResponse` structure to
-  reduce token overhead for AI agents.
+- **Optimized Data Model**: Uses a simplified `SearchResponse` structure and
+  automated **content truncation** to reduce token overhead for AI agents.
 - **Language**: Built with **Go 1.26.1+** for near-instant execution and
   minimal system resource footprint.
 
@@ -38,6 +38,9 @@ memory overhead, and rich metadata extraction.
      endpoints for News, Images, and Videos.
    - **Concurrent Mirroring**: The Book Search uses a `cancel-on-first-success`
      goroutine pattern to query multiple book mirrors concurrently.
+4. **Token Efficiency**: All search result descriptions are dynamically
+   truncated to ensure that AI agents receive the most relevant information
+   without exhausting context window limits.
 
 ## 🧠 Why Go?
 
