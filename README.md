@@ -1,4 +1,4 @@
-# 🪄 MagicSkills Server (v2.1.0) 🪄
+# 🪄 MagicSkills Server (v2.2.0) 🪄
 
 A high-performance, modular Model Context Protocol (MCP) server built in Go for
 orchestrating and optimizing `.agent/skills` workflows.
@@ -19,9 +19,11 @@ instructions it needs for any task.
 - **Workspace Intelligence**: Automatically discovers local project-specific
   skills and prioritizes them over global defaults.
 - **Performance**: Zero-latency in-memory caching with `fsnotify`
-  file-watching for instant indexing.
+  file-watching and **Parallel Ingestion** via `errgroup` worker pools.
 - **Weighted Discovery**: Intents are matched against Skill Name, Description,
   and Tags with a deterministic scoring system.
+- **JSON 2.0 Metadata**: Returns structured metadata including schema versions
+  and token estimates.
 
 ---
 
@@ -112,34 +114,42 @@ MagicSkills uses a hierarchical discovery process:
 
 ### **Discovery & Intent**
 
-- `magicskills_list`: Lists all indexed global and local skills with metadata.
-- `magicskills_match(intent)`: Suggests the best skill for your current task
-  using weighted keyword scoring.
+- `magicskills_list`: Lists all available skills in the authoritative index with
+  metadata and tags.
+- `magicskills_match(intent)`: Finds matching skills based on your goal and
+  returns a dense digest immediately using weighted scoring.
 
 ### **Retrieval & Automation**
 
-- `magicskills_summarize(name)`: Returns a high-level "Magic Directive" or
-  300-char summary (saves context window).
-- `magicskills_get(name)`: Retrieves the full skill contents.
-- `magicskills_get_section(name, section)`: surgically retrieves a specific
-  section (e.g., "Best Practices").
-- `magicskills_bootstrap(name)`: Extracts the "Workflow" section and formats
-  it as a checklist for your `task.md`.
+- `magicskills_get(name, section, version)`: Retrieves high-relevance knowledge.
+  Use `section` to surgically pull specific headers (e.g., "Workflow"), or leave
+  empty for a dense, context-optimized summary.
+- `magicskills_bootstrap(name)`: Extracts the "Workflow" section from a skill
+  and formats it as a task checklist.
+- `magicskills_validate_deps(name)`: Validates host dependencies (binaries)
+  required by a specific skill's workflow.
 
-### **Observability & Status**
+### **Index Management**
 
-- `magicskills_get_logs`: Fetches the last 512KB of internal server logs
-  for debugging.
-- `magicskills://status`: (Resource) A real-time dashboard showing indexing health.
+- `magicskills_add_root(path)`: Dynamically adds and indexes a new skill
+  directory root for the current session.
+
+### **Resources**
+
+- `magicskills://status`: A real-time dashboard showing indexing health, skill
+  counts, and root directory status.
 
 ---
 
 ## 🛑 Production Constraints
 
-- **Concurrency**: Thread-safe with `RWMutex` for all index access.
-- **Memory**: Circular log buffer ensures the server never exceeds 1MB
-  of memory usage for logs.
-- **Safety**: Built-in OS signal handling for graceful shutdown.
+- **Concurrency**: High-speed parallel ingestion using `errgroup` worker pools
+  (max 10 concurrent) for rapid startup.
+- **Observability**: Structured `slog` logging with an in-memory circular buffer
+  for tool-based log retrieval.
+- **Memory**: Optimized for low footprint, typically using <15MB RSS.
+- **Safety**: Built-in OS signal handling for graceful shutdown and resource
+  cleanup.
 
 ---
 
