@@ -25,8 +25,8 @@ func GatherInfo() (*Info, error) {
 
 	info := &Info{}
 
-	// 1. Get file names and statuses
-	cmd := exec.Command(gitBin, "diff", "--cached", "--name-status")
+	// 1. Get additions, deletions, and file names via numstat
+	cmd := exec.Command(gitBin, "diff", "--cached", "--numstat")
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, nil // No staged changes or not a repo
@@ -43,10 +43,17 @@ func GatherInfo() (*Info, error) {
 
 	for _, line := range lines {
 		parts := strings.Fields(line)
-		if len(parts) < 2 {
+		if len(parts) < 3 {
 			continue
 		}
-		f := parts[1]
+		var addVal, delVal int
+		fmt.Sscanf(parts[0], "%d", &addVal)
+		fmt.Sscanf(parts[1], "%d", &delVal)
+		
+		info.Additions += addVal
+		info.Deletions += delVal
+
+		f := parts[2]
 		info.Files = append(info.Files, f)
 
 		lower := strings.ToLower(f)
@@ -75,14 +82,7 @@ func GatherInfo() (*Info, error) {
 	if counts.other > 0 { stats = append(stats, fmt.Sprintf("Other: %d", counts.other)) }
 	info.Stats = strings.Join(stats, ", ")
 
-	// 2. Get additions/deletions
-	cmd = exec.Command(gitBin, "diff", "--cached", "--shortstat")
-	out, _ = cmd.Output()
-	statLine := string(out)
-	info.Additions = parseShortStat(statLine, "insertion")
-	info.Deletions = parseShortStat(statLine, "deletion")
-
-	// 3. Get actual diff (truncated to avoid blowing LLM token limits)
+	// 2. Get actual diff (truncated to avoid blowing LLM token limits)
 	const maxDiffBytes = 32_000
 	cmd = exec.Command(gitBin, "diff", "--cached", "--unified=3")
 	out, err = cmd.Output()

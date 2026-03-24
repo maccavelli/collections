@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"flag"
 	"fmt"
@@ -114,7 +113,7 @@ func runAnalyzer(file string, conf *config.Config) error {
 		return err
 	}
 
-	msg = cleanLLMOutput(msg)
+	msg = llm.Clean(msg)
 	if len(msg) < 5 {
 		return fmt.Errorf("AI message too short or empty after cleaning")
 	}
@@ -122,45 +121,6 @@ func runAnalyzer(file string, conf *config.Config) error {
 	return writeMessage(file, msg, info)
 }
 
-func cleanLLMOutput(out string) string {
-	out = strings.TrimSpace(out)
-	if out == "" {
-		return ""
-	}
-
-	var sb strings.Builder
-	scanner := bufio.NewScanner(strings.NewReader(out))
-	
-	// Skip markdown code fences if present
-	inFence := false
-	firstLine := true
-	
-	for scanner.Scan() {
-		line := scanner.Text()
-		tl := strings.TrimSpace(line)
-		
-		if strings.HasPrefix(tl, "```") {
-			inFence = !inFence
-			continue
-		}
-		
-		if inFence || (!strings.HasPrefix(tl, "Based on") && 
-		   !strings.HasPrefix(tl, "Generate") && 
-		   !strings.HasPrefix(tl, "Here is") && 
-		   tl != "---") {
-			if tl == "" && firstLine {
-				continue
-			}
-			if !firstLine {
-				sb.WriteString("\n")
-			}
-			sb.WriteString(line)
-			firstLine = false
-		}
-	}
-	
-	return strings.TrimSpace(sb.String())
-}
 
 
 func buildPrompt(info *git.Info) string {
@@ -182,18 +142,28 @@ Body: Concise bullet points of technical changes.`, strings.Join(info.Files, "\n
 }
 
 func writeMessage(path, msg string, info *git.Info) error {
-	existing, _ := os.ReadFile(path)
+	existing, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to read existing message: %w", err)
+	}
 
-	f, err := os.Create(path)
+	tmpPath := path + ".tmp"
+	f, err := os.Create(tmpPath)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
 
 	fmt.Fprintln(f, strings.TrimSpace(msg))
 	fmt.Fprintln(f, "")
 	fmt.Fprintf(f, "# AI-generated (%d files: +%d -%d)\n", len(info.Files), info.Additions, info.Deletions)
 	fmt.Fprintf(f, "# %s\n\n", info.Stats)
 	_, err = f.Write(existing)
-	return err
+	f.Close()
+
+	if err != nil {
+		os.Remove(tmpPath)
+		return err
+	}
+
+	return os.Rename(tmpPath, path)
 }

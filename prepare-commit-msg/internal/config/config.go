@@ -40,7 +40,10 @@ func Load() (*Config, error) {
 	if err != nil {
 		if os.IsNotExist(err) {
 			// Migration check
-			home, _ := os.UserHomeDir()
+			home, err := os.UserHomeDir()
+			if err != nil {
+				return &Config{Providers: make(map[string]ProviderConfig)}, nil
+			}
 			oldPath := filepath.Join(home, ".config", "prepare-commit-msg-embedded", "config.json")
 			if oldData, err := os.ReadFile(oldPath); err == nil {
 				return migrateConfig(oldData, path)
@@ -104,7 +107,10 @@ func migrateConfig(data []byte, newPath string) (*Config, error) {
 	if err := os.MkdirAll(filepath.Dir(newPath), 0755); err == nil {
 		if err := os.WriteFile(newPath, data, 0600); err == nil {
 			// Succeeded migrating file, now try to clean up old dir
-			home, _ := os.UserHomeDir()
+			home, err := os.UserHomeDir()
+			if err != nil {
+				return &conf, nil
+			}
 			oldDir := filepath.Join(home, ".config", "prepare-commit-msg-embedded")
 			os.RemoveAll(oldDir)
 		}
