@@ -9,34 +9,47 @@ import (
 	"mcp-server-go-refactor/internal/registry"
 	"strings"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // Tool implements the context propagation analyzer tool.
 type Tool struct{}
+
+func (t *Tool) Name() string {
+	return "go_context_analyzer"
+}
+
+func (t *Tool) Register(s *mcp.Server) {
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        t.Name(),
+		Description: "RELIABILITY MANDATE / PROPAGATION AUDIT: Audits call chains to ensure robust context propagation, identifying where parent contexts are dropped. Call this before implementing async patterns or distributed traces to ensure system stability.",
+	}, t.Handle)
+}
 
 // Register adds the context propagation analyzer tool to the registry.
 func Register() {
 	registry.Global.Register(&Tool{})
 }
 
-func (t *Tool) Metadata() mcp.Tool {
-	return mcp.NewTool("go_context_analyzer",
-		mcp.WithDescription("Audits call chains to ensure robust context propagation, identifying where parent contexts are dropped in favor of context.Background() or context.TODO(). This is critical for ensuring proper cancellation, timeouts, and tracing across distributed systems or concurrent operations."),
-		mcp.WithString("pkg", mcp.Description("The package path"), mcp.Required()),
-	)
+type ContextInput struct {
+	Pkg string `json:"pkg" jsonschema:"The package path"`
 }
 
-func (t *Tool) Handle(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	pkg := request.GetString("pkg", "")
-	findings, err := AnalyzeContext(ctx, pkg)
+func (t *Tool) Handle(ctx context.Context, req *mcp.CallToolRequest, input ContextInput) (*mcp.CallToolResult, any, error) {
+	findings, err := AnalyzeContext(ctx, input.Pkg)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		res := &mcp.CallToolResult{}
+		res.SetError(err)
+		return res, nil, nil
 	}
 	if len(findings) == 0 {
-		return mcp.NewToolResultText("No context propagation issues found."), nil
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: "No context propagation issues found."}},
+		}, nil, nil
 	}
-	return mcp.NewToolResultText(fmt.Sprintf("%+v", findings)), nil
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("%+v", findings)}},
+	}, nil, nil
 }
 
 type Finding struct {

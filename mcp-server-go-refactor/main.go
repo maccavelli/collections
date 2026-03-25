@@ -14,8 +14,7 @@ import (
 	"mcp-server-go-refactor/internal/handler"
 	"mcp-server-go-refactor/internal/handler/system"
 
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // Version is the build version of the application
@@ -46,45 +45,47 @@ func main() {
 
 func setupLogging(buffer *system.LogBuffer) {
 	mw := io.MultiWriter(os.Stderr, buffer)
-	handler := slog.NewTextHandler(mw, &slog.HandlerOptions{
+	h := slog.NewTextHandler(mw, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
 	})
-	slog.SetDefault(slog.New(handler))
+	slog.SetDefault(slog.New(h))
 }
 
 func run(ctx context.Context, buffer *system.LogBuffer) error {
 	// Register all tools explicitly
 	handler.RegisterAllTools(buffer)
 
-	s := server.NewMCPServer(
-		config.Platform+" Analyzer",
-		Version,
-		server.WithLogging(),
+	// Create official MCP server
+	s := mcp.NewServer(
+		&mcp.Implementation{
+			Name:    config.Platform + " Analyzer",
+			Version: Version,
+		},
+		&mcp.ServerOptions{},
 	)
 
 	// Load registered tools into the server
 	handler.LoadToolsFromRegistry(s)
 
 	// Register resources
-	s.AddResource(mcp.NewResource("go-refactor://logs", "Active server logs",
-		mcp.WithResourceDescription("Active server logs"),
-		mcp.WithMIMEType("text/plain"),
-	), func(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
-		return []mcp.ResourceContents{
-			mcp.TextResourceContents{
-				URI:      "go-refactor://logs",
-				Text:     buffer.String(),
-				MIMEType: "text/plain",
+	s.AddResource(&mcp.Resource{
+		URI:         "go-refactor://logs",
+		Name:        "Active server logs",
+		Description: "Active server logs",
+		MIMEType:    "text/plain",
+	}, func(ctx context.Context, req *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+		return &mcp.ReadResourceResult{
+			Contents: []*mcp.ResourceContents{
+				{
+					URI:      "go-refactor://logs",
+					MIMEType: "text/plain",
+					Text:     buffer.String(),
+				},
 			},
 		}, nil
 	})
 
-	go func() {
-		<-ctx.Done()
-		slog.Info("shutdown signal received; stopping server")
-	}()
-
-	return server.ServeStdio(s)
+	return s.Run(ctx, &mcp.StdioTransport{})
 }
 
 func printVersion() {

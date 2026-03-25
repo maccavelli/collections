@@ -10,31 +10,42 @@ import (
 	"mcp-server-go-refactor/internal/registry"
 	"time"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // Tool implements the coverage tracer tool.
 type Tool struct{}
+
+func (t *Tool) Name() string {
+	return "go_test_coverage_tracer"
+}
+
+func (t *Tool) Register(s *mcp.Server) {
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        t.Name(),
+		Description: "VERIFICATION MANDATE / TDD ACCELERATOR: Executes a package-level test suite and intelligently filters the output to surface only actionable failures and their corresponding logs. Call this after ANY change to verify correctness. Mandatory gate before completing any task.",
+	}, t.Handle)
+}
 
 // Register adds the coverage tracer tool to the registry.
 func Register() {
 	registry.Global.Register(&Tool{})
 }
 
-func (t *Tool) Metadata() mcp.Tool {
-	return mcp.NewTool("go_test_coverage_tracer",
-		mcp.WithDescription("Executes a package-level test suite and intelligently filters the output to surface only actionable failures and their corresponding logs. This tool drastically reduces noise during TDD cycles by focusing the developer's attention on breaking changes."),
-		mcp.WithString("pkg", mcp.Description("The package path to test"), mcp.Required()),
-	)
+type CoverageInput struct {
+	Pkg string `json:"pkg" jsonschema:"The package path to test"`
 }
 
-func (t *Tool) Handle(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	pkg := request.GetString("pkg", "")
-	result, err := Trace(ctx, pkg)
+func (t *Tool) Handle(ctx context.Context, req *mcp.CallToolRequest, input CoverageInput) (*mcp.CallToolResult, any, error) {
+	result, err := Trace(ctx, input.Pkg)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		res := &mcp.CallToolResult{}
+		res.SetError(err)
+		return res, nil, nil
 	}
-	return mcp.NewToolResultText(fmt.Sprintf("%+v", result)), nil
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("%+v", result)}},
+	}, nil, nil
 }
 
 // TestEvent represents a single JSON event from 'go test -json'

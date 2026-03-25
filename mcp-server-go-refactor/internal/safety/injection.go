@@ -8,31 +8,42 @@ import (
 	"mcp-server-go-refactor/internal/registry"
 	"strings"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // Tool implements the SQL injection guard tool.
 type Tool struct{}
+
+func (t *Tool) Name() string {
+	return "go_sql_injection_guard"
+}
+
+func (t *Tool) Register(s *mcp.Server) {
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        t.Name(),
+		Description: "SECURITY MANDATE / INJECTION GUARD: Performs safety-focused AST analysis to detect unsafe dynamic SQL string construction. Use this to identify potential SQL injection vectors where user input might be concatenated into queries. Essential for security audits of API and DB layers.",
+	}, t.Handle)
+}
 
 // Register adds the injection guard tool to the registry.
 func Register() {
 	registry.Global.Register(&Tool{})
 }
 
-func (t *Tool) Metadata() mcp.Tool {
-	return mcp.NewTool("go_sql_injection_guard",
-		mcp.WithDescription("Performs safety-focused AST analysis to detect unsafe dynamic SQL string construction. Use this to identify potential SQL injection vectors where user input might be concatenated into queries instead of using parameterized placeholders."),
-		mcp.WithString("pkg", mcp.Description("The package path to scan"), mcp.Required()),
-	)
+type InjectionInput struct {
+	Pkg string `json:"pkg" jsonschema:"The package path to scan"`
 }
 
-func (t *Tool) Handle(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	pkg := request.GetString("pkg", "")
-	result, err := DetectInjections(ctx, pkg)
+func (t *Tool) Handle(ctx context.Context, req *mcp.CallToolRequest, input InjectionInput) (*mcp.CallToolResult, any, error) {
+	result, err := DetectInjections(ctx, input.Pkg)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		res := &mcp.CallToolResult{}
+		res.SetError(err)
+		return res, nil, nil
 	}
-	return mcp.NewToolResultText(fmt.Sprintf("%+v", result)), nil
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("%+v", result)}},
+	}, nil, nil
 }
 
 // SQLInjectionResult details suspected injection vulnerabilities.

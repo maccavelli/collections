@@ -8,31 +8,42 @@ import (
 	"mcp-server-go-refactor/internal/registry"
 	"strings"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // Tool implements the dead code pruner tool.
 type Tool struct{}
+
+func (t *Tool) Name() string {
+	return "go_dead_code_pruner"
+}
+
+func (t *Tool) Register(s *mcp.Server) {
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        t.Name(),
+		Description: "HYGIENE MANDATE / PRUNING ENGINE: Conducts a comprehensive semantic scan to detect unreferenced package-level functions, variables, and constants. Use this to reduce maintenance surface area and binary size. Cascades to go_package_cycler for architecture cleanup.",
+	}, t.Handle)
+}
 
 // Register adds the dead code pruner tool to the registry.
 func Register() {
 	registry.Global.Register(&Tool{})
 }
 
-func (t *Tool) Metadata() mcp.Tool {
-	return mcp.NewTool("go_dead_code_pruner",
-		mcp.WithDescription("Conducts a comprehensive semantic scan to detect unreferenced package-level functions, variables, and constants. This tool helps reduce the maintenance surface area and binary size by flagging code that is no longer reachable or utilized in the current module."),
-		mcp.WithString("pkg", mcp.Description("The package path to scan"), mcp.Required()),
-	)
+type PruneInput struct {
+	Pkg string `json:"pkg" jsonschema:"The package path to scan"`
 }
 
-func (t *Tool) Handle(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	pkg := request.GetString("pkg", "")
-	result, err := PruneDeadCode(ctx, pkg)
+func (t *Tool) Handle(ctx context.Context, req *mcp.CallToolRequest, input PruneInput) (*mcp.CallToolResult, any, error) {
+	result, err := PruneDeadCode(ctx, input.Pkg)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		res := &mcp.CallToolResult{}
+		res.SetError(err)
+		return res, nil, nil
 	}
-	return mcp.NewToolResultText(fmt.Sprintf("%+v", result)), nil
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("%+v", result)}},
+	}, nil, nil
 }
 
 // DeadCodeResult contains identified unused functions and variables.

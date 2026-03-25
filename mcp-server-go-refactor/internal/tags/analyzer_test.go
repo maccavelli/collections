@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 type TagStruct struct {
@@ -86,22 +86,20 @@ func TestApplyTags(t *testing.T) {
 
 func TestTool(t *testing.T) {
 	tool := &Tool{}
-	meta := tool.Metadata()
-	if meta.Name != "go_tag_manager" {
-		t.Errorf("expected go_tag_manager, got %s", meta.Name)
+	if tool.Name() != "go_tag_manager" {
+		t.Errorf("expected go_tag_manager, got %s", tool.Name())
 	}
 
 	// Test Handle
-	args := map[string]interface{}{
-		"pkg":        ".",
-		"structName": "TagStruct",
-		"caseFormat": "snake",
-		"targetTag":  "json",
+	input := TagInput{
+		Pkg:        ".",
+		StructName: "TagStruct",
+		CaseFormat: "snake",
+		TargetTag:  "json",
 	}
-	req := mcp.CallToolRequest{}
-	req.Params.Arguments = args
+	req := &mcp.CallToolRequest{}
 
-	res, err := tool.Handle(context.Background(), req)
+	res, _, err := tool.Handle(context.Background(), req, input)
 	if err != nil {
 		t.Fatalf("Handle failed: %v", err)
 	}
@@ -115,12 +113,11 @@ func TestTool(t *testing.T) {
 	_ = os.WriteFile(filepath.Join(tmp, "go.mod"), []byte("module tags-handle\n\ngo 1.21\n"), 0644)
 	_ = os.WriteFile(filepath.Join(tmp, "example.go"), []byte("package h\ntype MyS struct { F string }\n"), 0644)
 	
-	args["pkg"] = tmp
-	args["structName"] = "MyS"
-	args["rewrite"] = true
-	req.Params.Arguments = args
+	input.Pkg = tmp
+	input.StructName = "MyS"
+	input.Rewrite = true
 
-	_, err = tool.Handle(context.Background(), req)
+	_, _, err = tool.Handle(context.Background(), req, input)
 	if err != nil {
 		t.Fatalf("Handle rewrite failed: %v", err)
 	}

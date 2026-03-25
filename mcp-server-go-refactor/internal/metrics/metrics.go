@@ -12,34 +12,43 @@ import (
 	"mcp-server-go-refactor/internal/registry"
 
 	"github.com/fzipp/gocyclo"
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/uudashr/gocognit"
 )
 
 // Tool implements the complexity analyzer tool.
 type Tool struct{}
 
+func (t *Tool) Name() string {
+	return "go_complexity_analyzer"
+}
+
+func (t *Tool) Register(s *mcp.Server) {
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        t.Name(),
+		Description: "ORIENTATION MANDATE / COMPLEXITY AUDIT: Performs deep static analysis to calculate cyclomatic and cognitive complexity scores for every function in a package. Use this as an entry point to identify \"God functions\" and deeply nested logic. Cascades to go_modernizer or go_interface_discovery for refactoring targets.",
+	}, t.Handle)
+}
+
 // Register adds the complexity analyzer tool to the registry.
 func Register() {
 	registry.Global.Register(&Tool{})
 }
 
-func (t *Tool) Metadata() mcp.Tool {
-	return mcp.NewTool("go_complexity_analyzer",
-		mcp.WithDescription("Performs deep static analysis to calculate cyclomatic and cognitive complexity scores for every function in a package. Use this to identify \"God functions\" and deeply nested logic that hinders maintainability. It provides specific refactoring targets based on industry-standard complexity thresholds."),
-		mcp.WithString("pkg", mcp.Description("The package path to analyze"), mcp.Required()),
-	)
+type ComplexityInput struct {
+	Pkg string `json:"pkg" jsonschema:"The package path to analyze"`
 }
 
-func (t *Tool) Handle(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	pkg := request.GetString("pkg", "")
-	result, err := CalculateComplexity(ctx, pkg)
+func (t *Tool) Handle(ctx context.Context, req *mcp.CallToolRequest, input ComplexityInput) (*mcp.CallToolResult, any, error) {
+	result, err := CalculateComplexity(ctx, input.Pkg)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		res := &mcp.CallToolResult{}
+		res.SetError(err)
+		return res, nil, nil
 	}
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("Complexity analysis for package: %s\n", pkg))
+	sb.WriteString(fmt.Sprintf("Complexity analysis for package: %s\n", input.Pkg))
 	sb.WriteString(fmt.Sprintf("Targets: Cyclomatic <= %d, Cognitive <= %d\n\n",
 		config.CyclomaticComplexityTarget, config.CognitiveComplexityTarget))
 
@@ -73,7 +82,9 @@ func (t *Tool) Handle(ctx context.Context, request mcp.CallToolRequest) (*mcp.Ca
 		sb.WriteString("\n")
 	}
 
-	return mcp.NewToolResultText(sb.String()), nil
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{&mcp.TextContent{Text: sb.String()}},
+	}, nil, nil
 }
 
 // FunctionMetrics stores the calculated complexity scores for a function.

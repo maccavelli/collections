@@ -8,45 +8,57 @@ import (
 	"mcp-server-go-refactor/internal/registry"
 	"strings"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"golang.org/x/tools/go/packages"
 )
 
 // Tool implements the interface analyzer tool.
 type Tool struct{}
 
+func (t *Tool) Name() string {
+	return "go_interface_tool"
+}
+
+func (t *Tool) Register(s *mcp.Server) {
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        t.Name(),
+		Description: "REFACTOR MANDATE / INTERFACE ENGINE: Extracts interface definitions from structs or verifies struct-to-interface compatibility. Use this to automate new service layers or verify refactored contracts. Cascades to go_modernizer.",
+	}, t.Handle)
+}
+
 // Register adds the interface analytical tool to the registry.
 func Register() {
 	registry.Global.Register(&Tool{})
 }
 
-func (t *Tool) Metadata() mcp.Tool {
-	return mcp.NewTool("go_interface_tool",
-		mcp.WithDescription("A dual-purpose utility for interface management. It can either extract a complete interface definition from an existing struct or perform a rigorous compatibility check between a struct and an interface. Use this when defining new service layers or verifying that a refactored struct still satisfies its expected contracts."),
-		mcp.WithString("pkg", mcp.Description("The package path"), mcp.Required()),
-		mcp.WithString("structName", mcp.Description("The name of the struct"), mcp.Required()),
-		mcp.WithString("ifaceName", mcp.Description("The name of the interface to check against (optional). If omitted, extracts a new interface from the struct.")),
-	)
+type InterfaceInput struct {
+	Pkg        string `json:"pkg" jsonschema:"The package path"`
+	StructName string `json:"structName" jsonschema:"The name of the struct"`
+	IfaceName  string `json:"ifaceName" jsonschema:"The name of the interface to check against (optional). If omitted, extracts a new interface from the struct."`
 }
 
-func (t *Tool) Handle(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	pkg := request.GetString("pkg", "")
-	structName := request.GetString("structName", "")
-	ifaceName := request.GetString("ifaceName", "")
-
-	if ifaceName != "" {
-		result, err := AnalyzeInterface(ctx, pkg, structName, ifaceName)
+func (t *Tool) Handle(ctx context.Context, req *mcp.CallToolRequest, input InterfaceInput) (*mcp.CallToolResult, any, error) {
+	if input.IfaceName != "" {
+		result, err := AnalyzeInterface(ctx, input.Pkg, input.StructName, input.IfaceName)
 		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
+			res := &mcp.CallToolResult{}
+			res.SetError(err)
+			return res, nil, nil
 		}
-		return mcp.NewToolResultText(fmt.Sprintf("Interface Compatibility Analysis for %s:%s\n%+v", structName, ifaceName, result)), nil
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Interface Compatibility Analysis for %s:%s\n%+v", input.StructName, input.IfaceName, result)}},
+		}, nil, nil
 	}
 
-	result, err := ExtractInterface(ctx, pkg, structName)
+	result, err := ExtractInterface(ctx, input.Pkg, input.StructName)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		res := &mcp.CallToolResult{}
+		res.SetError(err)
+		return res, nil, nil
 	}
-	return mcp.NewToolResultText(fmt.Sprintf("Extracted Interface Definition:\n%+v", result)), nil
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Extracted Interface Definition:\n%+v", result)}},
+	}, nil, nil
 }
 
 type Analysis struct {

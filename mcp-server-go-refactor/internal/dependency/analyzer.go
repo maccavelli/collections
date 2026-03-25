@@ -8,34 +8,42 @@ import (
 	"mcp-server-go-refactor/internal/loader"
 	"mcp-server-go-refactor/internal/registry"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // Tool implements the dependency impact tool.
 type Tool struct{}
+
+func (t *Tool) Name() string {
+	return "go_dependency_impact"
+}
+
+func (t *Tool) Register(s *mcp.Server) {
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        t.Name(),
+		Description: "RISK MANDATE / BLAST RADIUS: Evaluates impact of updating external dependencies. Call this before upgrading core libraries to map transitive influence and identify required regression testing. Cascades to go_test_coverage_tracer.",
+	}, t.Handle)
+}
 
 // Register adds the dependency impact tool to the registry.
 func Register() {
 	registry.Global.Register(&Tool{})
 }
 
-func (t *Tool) Metadata() mcp.Tool {
-	return mcp.NewTool("go_dependency_impact",
-		mcp.WithDescription("Evaluates the \"blast radius\" of updating external dependencies by checking for available updates and mapping their transitive influence. Use this before upgrading core libraries to understand which parts of your system might require regression testing."),
-		mcp.WithString("pkg", mcp.Description("The package path to analyze"), mcp.Required()),
-	)
+type ImpactInput struct {
+	Pkg string `json:"pkg" jsonschema:"The package path to analyze"`
 }
 
-func (t *Tool) Handle(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	pkg := request.GetString("pkg", "")
-	if pkg == "" {
-		return nil, fmt.Errorf("argument 'pkg' is required")
-	}
-	impact, err := Analyze(ctx, pkg)
+func (t *Tool) Handle(ctx context.Context, req *mcp.CallToolRequest, input ImpactInput) (*mcp.CallToolResult, any, error) {
+	impact, err := Analyze(ctx, input.Pkg)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		res := &mcp.CallToolResult{}
+		res.SetError(err)
+		return res, nil, nil
 	}
-	return mcp.NewToolResultText(fmt.Sprintf("%+v", impact)), nil
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("%+v", impact)}},
+	}, nil, nil
 }
 
 // Module represents the JSON output from go list.

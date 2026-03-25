@@ -7,34 +7,47 @@ import (
 	"mcp-server-go-refactor/internal/loader"
 	"mcp-server-go-refactor/internal/registry"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // Tool implements the interface discovery tool.
 type Tool struct{}
+
+func (t *Tool) Name() string {
+	return "go_interface_discovery"
+}
+
+func (t *Tool) Register(s *mcp.Server) {
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        t.Name(),
+		Description: "ABSTRACTION MANDATE / INTERFACE DISCOVERY: Analyzes structural signatures to find common method patterns across multiple structs. Call this to suggest new interface definitions that decouple components. Cascades to go_interface_tool for extraction.",
+	}, t.Handle)
+}
 
 // Register adds the interface discovery tool to the registry.
 func Register() {
 	registry.Global.Register(&Tool{})
 }
 
-func (t *Tool) Metadata() mcp.Tool {
-	return mcp.NewTool("go_interface_discovery",
-		mcp.WithDescription("Analyzes the structural signatures of exported types to find common method patterns across multiple structs. Use this to discover hidden abstractions and suggest new interface definitions that can decouple components and improve testability via mocking."),
-		mcp.WithString("pkg", mcp.Description("The package path"), mcp.Required()),
-	)
+type DiscoveryInput struct {
+	Pkg string `json:"pkg" jsonschema:"The package path"`
 }
 
-func (t *Tool) Handle(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	pkg := request.GetString("pkg", "")
-	suggestions, err := DiscoverSharedInterfaces(ctx, pkg)
+func (t *Tool) Handle(ctx context.Context, req *mcp.CallToolRequest, input DiscoveryInput) (*mcp.CallToolResult, any, error) {
+	suggestions, err := DiscoverSharedInterfaces(ctx, input.Pkg)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		res := &mcp.CallToolResult{}
+		res.SetError(err)
+		return res, nil, nil
 	}
 	if len(suggestions) == 0 {
-		return mcp.NewToolResultText("No shared structural signatures discovered."), nil
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: "No shared structural signatures discovered."}},
+		}, nil, nil
 	}
-	return mcp.NewToolResultText(fmt.Sprintf("%+v", suggestions)), nil
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("%+v", suggestions)}},
+	}, nil, nil
 }
 
 type interfaceSuggestion struct {

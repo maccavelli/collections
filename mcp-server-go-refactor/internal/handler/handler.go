@@ -1,6 +1,8 @@
 package handler
 
 import (
+	contextanalysis "mcp-server-go-refactor/internal/analysis/context"
+	interfaceanalysis "mcp-server-go-refactor/internal/analysis/interface"
 	"mcp-server-go-refactor/internal/astutil"
 	"mcp-server-go-refactor/internal/coverage"
 	"mcp-server-go-refactor/internal/dependency"
@@ -11,13 +13,11 @@ import (
 	"mcp-server-go-refactor/internal/metrics"
 	"mcp-server-go-refactor/internal/modernizer"
 	"mcp-server-go-refactor/internal/pruner"
-	contextanalysis "mcp-server-go-refactor/internal/analysis/context"
-	interfaceanalysis "mcp-server-go-refactor/internal/analysis/interface"
 	"mcp-server-go-refactor/internal/registry"
 	"mcp-server-go-refactor/internal/safety"
 	"mcp-server-go-refactor/internal/tags"
 
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // RegisterAllTools centralizes the registration of all refactoring domain tools.
@@ -39,8 +39,8 @@ func RegisterAllTools(buffer *system.LogBuffer) {
 }
 
 // LoadToolsFromRegistry maps registered tools to the MCP server instance.
-func LoadToolsFromRegistry(s *server.MCPServer) {
+func LoadToolsFromRegistry(s *mcp.Server) {
 	for _, t := range registry.Global.List() {
-		s.AddTool(t.Metadata(), t.Handle)
+		t.Register(s)
 	}
 }

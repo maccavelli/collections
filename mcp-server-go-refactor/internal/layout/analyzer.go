@@ -8,33 +8,43 @@ import (
 	"mcp-server-go-refactor/internal/registry"
 	"sort"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // Tool implements the struct alignment analyzer tool.
 type Tool struct{}
+
+func (t *Tool) Name() string {
+	return "go_struct_alignment_optimizer"
+}
+
+func (t *Tool) Register(s *mcp.Server) {
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        t.Name(),
+		Description: "PERFORMANCE MANDATE / MEMORY OPTIMIZER: Analyzes the memory layout of Go structs to identify wasted space. Provides an optimized field order that minimizes footprint. Highly valuable for high-throughput applications processing millions of objects in-memory.",
+	}, t.Handle)
+}
 
 // Register adds the struct alignment tool to the registry.
 func Register() {
 	registry.Global.Register(&Tool{})
 }
 
-func (t *Tool) Metadata() mcp.Tool {
-	return mcp.NewTool("go_struct_alignment_optimizer",
-		mcp.WithDescription("Analyzes the memory layout of Go structs to identify wasted space caused by field alignment padding. It provides an optimized field order that minimizes the struct's memory footprint—highly valuable for high-throughput applications processing millions of objects in-memory."),
-		mcp.WithString("pkg", mcp.Description("The package path"), mcp.Required()),
-		mcp.WithString("structName", mcp.Description("The name of the struct"), mcp.Required()),
-	)
+type AlignmentInput struct {
+	Pkg        string `json:"pkg" jsonschema:"The package path"`
+	StructName string `json:"structName" jsonschema:"The name of the struct"`
 }
 
-func (t *Tool) Handle(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	pkg := request.GetString("pkg", "")
-	structName := request.GetString("structName", "")
-	result, err := AnalyzeStructAlignment(ctx, structName, pkg)
+func (t *Tool) Handle(ctx context.Context, req *mcp.CallToolRequest, input AlignmentInput) (*mcp.CallToolResult, any, error) {
+	result, err := AnalyzeStructAlignment(ctx, input.StructName, input.Pkg)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		res := &mcp.CallToolResult{}
+		res.SetError(err)
+		return res, nil, nil
 	}
-	return mcp.NewToolResultText(fmt.Sprintf("%+v", result)), nil
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("%+v", result)}},
+	}, nil, nil
 }
 
 // AlignmentResult contains memory analysis for a struct.

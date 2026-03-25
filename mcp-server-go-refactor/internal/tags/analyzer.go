@@ -11,48 +11,58 @@ import (
 	"strings"
 
 	"github.com/dave/dst"
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // Tool implements the tag manager tool.
 type Tool struct{}
+
+func (t *Tool) Name() string {
+	return "go_tag_manager"
+}
+
+func (t *Tool) Register(s *mcp.Server) {
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        t.Name(),
+		Description: "TRANSFORMATION MANDATE / TAG ENGINE: Automated transformation of struct tags (json, yaml). Use this for bulk case conversion to standardize API models or migrates serialization formats. Cascades to go_modernizer.",
+	}, t.Handle)
+}
 
 // Register adds the tag manager tool to the registry.
 func Register() {
 	registry.Global.Register(&Tool{})
 }
 
-func (t *Tool) Metadata() mcp.Tool {
-	return mcp.NewTool("go_tag_manager",
-		mcp.WithDescription("Provides automated transformation of struct field tags (e.g., json, yaml, mapstructure) across an entire type. It supports bulk case conversion (snake_case, camelCase, etc.) and is essential for standardizing API data models or migrating between different serialization formats."),
-		mcp.WithString("pkg", mcp.Description("The package path"), mcp.Required()),
-		mcp.WithString("structName", mcp.Description("The name of the struct"), mcp.Required()),
-		mcp.WithString("caseFormat", mcp.Description("Target case format (e.g., camel, snake)"), mcp.Required()),
-		mcp.WithString("targetTag", mcp.Description("The tag key to transform (e.g., json, yaml)"), mcp.Required()),
-		mcp.WithBoolean("rewrite", mcp.Description("If true, automatically updates the source code (comment-safe).")),
-	)
+type TagInput struct {
+	Pkg        string `json:"pkg" jsonschema:"The package path"`
+	StructName string `json:"structName" jsonschema:"The name of the struct"`
+	CaseFormat string `json:"caseFormat" jsonschema:"Target case format (e.g., camel, snake)"`
+	TargetTag  string `json:"targetTag" jsonschema:"The tag key to transform (e.g., json, yaml)"`
+	Rewrite    bool   `json:"rewrite" jsonschema:"If true, automatically updates the source code (comment-safe)."`
 }
 
-func (t *Tool) Handle(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	pkg := request.GetString("pkg", "")
-	structName := request.GetString("structName", "")
-	caseFormat := request.GetString("caseFormat", "")
-	targetTag := request.GetString("targetTag", "")
-	rewrite := request.GetBool("rewrite", false)
-
-	if rewrite {
-		err := ApplyTags(ctx, pkg, structName, caseFormat, targetTag)
+func (t *Tool) Handle(ctx context.Context, req *mcp.CallToolRequest, input TagInput) (*mcp.CallToolResult, any, error) {
+	if input.Rewrite {
+		err := ApplyTags(ctx, input.Pkg, input.StructName, input.CaseFormat, input.TargetTag)
 		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
+			res := &mcp.CallToolResult{}
+			res.SetError(err)
+			return res, nil, nil
 		}
-		return mcp.NewToolResultText(fmt.Sprintf("Successfully updated struct %s tags in %s", structName, pkg)), nil
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Successfully updated struct %s tags in %s", input.StructName, input.Pkg)}},
+		}, nil, nil
 	}
 
-	result, err := AnalyzeTags(ctx, pkg, structName, caseFormat, targetTag)
+	result, err := AnalyzeTags(ctx, input.Pkg, input.StructName, input.CaseFormat, input.TargetTag)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		res := &mcp.CallToolResult{}
+		res.SetError(err)
+		return res, nil, nil
 	}
-	return mcp.NewToolResultText(fmt.Sprintf("%+v", result)), nil
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("%+v", result)}},
+	}, nil, nil
 }
 
 // TagModification describes a single field's tag transformation.

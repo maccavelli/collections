@@ -6,14 +6,13 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 func TestDependencyTool(t *testing.T) {
 	tool := &Tool{}
-	meta := tool.Metadata()
-	if meta.Name != "go_dependency_impact" {
-		t.Errorf("expected go_dependency_impact, got %s", meta.Name)
+	if tool.Name() != "go_dependency_impact" {
+		t.Errorf("expected go_dependency_impact, got %s", tool.Name())
 	}
 
 	// Create temp module
@@ -22,13 +21,12 @@ func TestDependencyTool(t *testing.T) {
 	_ = os.WriteFile(filepath.Join(tmp, "go.mod"), []byte("module dep-test\n\ngo 1.21\n"), 0644)
 
 	// Test Handle
-	args := map[string]interface{}{
-		"pkg": tmp,
+	input := ImpactInput{
+		Pkg: tmp,
 	}
-	req := mcp.CallToolRequest{}
-	req.Params.Arguments = args
+	req := &mcp.CallToolRequest{}
 
-	res, err := tool.Handle(context.Background(), req)
+	res, _, err := tool.Handle(context.Background(), req, input)
 	if err != nil {
 		t.Fatalf("Handle failed: %v", err)
 	}
