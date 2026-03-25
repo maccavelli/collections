@@ -2,10 +2,8 @@ package decision
 
 import (
 	"context"
-	"fmt"
-	"log/slog"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"mcp-server-brainstorm/internal/engine"
 	"mcp-server-brainstorm/internal/registry"
 )
@@ -15,30 +13,30 @@ type CaptureDecisionTool struct {
 	Engine *engine.Engine
 }
 
-func (t *CaptureDecisionTool) Metadata() mcp.Tool {
-	return mcp.NewTool("capture_decision_logic",
-		mcp.WithDescription("Formalizes the architectural decision-making process by generating structured Architecture Decision Records (ADRs) that document the context, rationale, and discarded alternatives for a specific choice. This ensures long-term maintainability by providing future developers with the \"why\" behind the code. Use this immediately after making a key design choice to preserve institutional knowledge."),
-		mcp.WithString("decision", mcp.Description("The decision being made"), mcp.Required()),
-		mcp.WithString("alternatives", mcp.Description("The considered alternatives"), mcp.Required()),
-	)
+func (t *CaptureDecisionTool) Name() string {
+	return "capture_decision_logic"
 }
 
-func (t *CaptureDecisionTool) Handle(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	decision, err := req.RequireString("decision")
-	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("missing 'decision': %v", err)), nil
-	}
-	alternatives, err := req.RequireString("alternatives")
-	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("missing 'alternatives': %v", err)), nil
-	}
+func (t *CaptureDecisionTool) Register(s *mcp.Server) {
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        t.Name(),
+		Description: "ADR SYNTHESIS: Formalizes the architectural decision-making process by generating structured ADRs. Call this immediately after making a key design choice to preserve institutional knowledge and the 'why' behind the code.",
+	}, t.Handle)
+}
 
-	slog.Info("executing decision capture")
-	adr, err := t.Engine.CaptureDecisionLogic(ctx, decision, alternatives)
+type DecisionInput struct {
+	Decision     string `json:"decision" jsonschema:"The decision being made"`
+	Alternatives string `json:"alternatives" jsonschema:"The considered alternatives"`
+}
+
+func (t *CaptureDecisionTool) Handle(ctx context.Context, req *mcp.CallToolRequest, input DecisionInput) (*mcp.CallToolResult, any, error) {
+	adr, err := t.Engine.CaptureDecisionLogic(ctx, input.Decision, input.Alternatives)
 	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("capture decision: %v", err)), nil
+		res := &mcp.CallToolResult{}
+		res.SetError(err)
+		return res, nil, nil
 	}
-	return mcp.NewToolResultJSON(adr)
+	return &mcp.CallToolResult{}, adr, nil
 }
 
 // Register adds the decision tools to the registry.

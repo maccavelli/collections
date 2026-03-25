@@ -7,13 +7,12 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"mcp-server-brainstorm/internal/config"
 	"mcp-server-brainstorm/internal/registry"
 )
 
-// LogBuffer stores recent server logs in memory with
-// ring-buffer semantics.
+// LogBuffer stores recent server logs in memory.
 type LogBuffer struct {
 	mu  sync.Mutex
 	buf bytes.Buffer
@@ -56,21 +55,29 @@ type GetInternalLogsTool struct {
 	Buffer *LogBuffer
 }
 
-func (t *GetInternalLogsTool) Metadata() mcp.Tool {
-	return mcp.NewTool("get_internal_logs",
-		mcp.WithDescription("Provides access to the server's internal diagnostic stream and audit trail, including detailed engine logs and tool execution metadata. This is vital for troubleshooting unexpected tool behavior or auditing the decision-making steps taken by the AI. Use this for debugging and verifying internal server state."),
-		mcp.WithNumber("max_lines", mcp.Description("Max log lines to return (default 25).")),
-	)
+func (t *GetInternalLogsTool) Name() string {
+	return "get_internal_logs"
 }
 
-func (t *GetInternalLogsTool) Handle(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (t *GetInternalLogsTool) Register(s *mcp.Server) {
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        t.Name(),
+		Description: "DIAGNOSTIC AUDIT: Provides access to the server's internal diagnostic stream and audit trail. Call this for troubleshooting or auditing AI decision-making steps.",
+	}, t.Handle)
+}
+
+type LogsInput struct {
+	MaxLines int `json:"max_lines" jsonschema:"Max log lines to return (default 25)."`
+}
+
+func (t *GetInternalLogsTool) Handle(_ context.Context, req *mcp.CallToolRequest, input LogsInput) (*mcp.CallToolResult, any, error) {
 	maxLines := config.DefaultLogLines
-	if v := req.GetInt("max_lines", 0); v > 0 {
-		maxLines = v
+	if input.MaxLines > 0 {
+		maxLines = input.MaxLines
 	}
-	return mcp.NewToolResultText(
-		tailLines(t.Buffer.String(), maxLines),
-	), nil
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{&mcp.TextContent{Text: tailLines(t.Buffer.String(), maxLines)}},
+	}, nil, nil
 }
 
 // tailLines returns the last n lines of s.

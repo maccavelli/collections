@@ -1,19 +1,18 @@
 package registry
 
 import (
-	"context"
 	"sync"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// Tool defines the interface for an MCP tool.
+// Tool defines the interface for an MCP tool compatible with the official SDK.
 type Tool interface {
-	Metadata() mcp.Tool
-	Handle(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error)
+	Name() string
+	Register(s *mcp.Server)
 }
 
-// Registry manages tool registration and retrieval.
+// Registry manages tool registration.
 type Registry struct {
 	mu    sync.RWMutex
 	tools map[string]Tool
@@ -28,15 +27,7 @@ var Global = &Registry{
 func (r *Registry) Register(t Tool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.tools[t.Metadata().Name] = t
-}
-
-// Get finds a tool by name.
-func (r *Registry) Get(name string) (Tool, bool) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	t, ok := r.tools[name]
-	return t, ok
+	r.tools[t.Name()] = t
 }
 
 // List returns all registered tools.
