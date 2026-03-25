@@ -3,9 +3,8 @@ package search
 import (
 	"context"
 	"fmt"
-	"log/slog"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"mcp-server-duckduckgo/internal/models"
 	"mcp-server-duckduckgo/internal/registry"
 )
@@ -25,58 +24,58 @@ type SearchTool struct {
 	Desc       string
 }
 
-func (t *SearchTool) Metadata() mcp.Tool {
-	name := fmt.Sprintf("ddg_search_%s", t.Type)
-	return mcp.NewTool(name,
-		mcp.WithDescription(t.Desc),
-		mcp.WithString("query", mcp.Description("The search keywords"), mcp.Required()),
-		mcp.WithNumber("max_results", mcp.Description("Maximum results to return (default 5). Low counts are faster and more token-efficient."), mcp.DefaultNumber(5)),
-		mcp.WithString("format", mcp.Description("Output format: 'hybrid' (JSON metadata + markdown content), 'json' (pure structured data), or 'markdown' (pure narrative string)."), mcp.Enum("hybrid", "json", "markdown"), mcp.DefaultString("hybrid")),
-	)
+func (t *SearchTool) Name() string {
+	return fmt.Sprintf("ddg_search_%s", t.Type)
 }
 
-func (t *SearchTool) Handle(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	query, err := request.RequireString("query")
-	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
-	}
-	maxResults := request.GetInt("max_results", 5)
-	format := request.GetString("format", "hybrid")
+type SearchInput struct {
+	Query      string `json:"query" jsonschema:"The search keywords"`
+	MaxResults int    `json:"max_results" jsonschema:"Maximum results to return (default 5). Low counts are faster and more token-efficient."`
+	Format     string `json:"format" jsonschema:"Output format: 'hybrid' (JSON metadata + markdown content), 'json' (pure structured data), or 'markdown' (pure narrative string).,enum=hybrid,enum=json,enum=markdown"`
+}
 
-	slog.Info("executing search", "type", t.Type, "query", query, "maxResults", maxResults, "format", format)
-	results, err := t.SearchFunc(ctx, query, maxResults)
+func (t *SearchTool) Register(s *mcp.Server) {
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        t.Name(),
+		Description: t.Desc,
+	}, t.Handle)
+}
+
+func (t *SearchTool) Handle(ctx context.Context, request *mcp.CallToolRequest, input SearchInput) (*mcp.CallToolResult, any, error) {
+	if input.MaxResults <= 0 {
+		input.MaxResults = 5
+	}
+	if input.Format == "" {
+		input.Format = "hybrid"
+	}
+
+	results, err := t.SearchFunc(ctx, input.Query, input.MaxResults)
 	if err != nil {
-		slog.Error("search failed", "type", t.Type, "query", query, "error", err)
-		return mcp.NewToolResultError(err.Error()), nil
+		res := &mcp.CallToolResult{}
+		res.SetError(err)
+		return res, nil, nil
 	}
 
 	response := models.SearchResponse{
 		Type: t.Type,
 		Metadata: &models.SearchMetadata{
-			Query:      query,
+			Query:      input.Query,
 			TotalCount: len(results),
 			SearchType: t.Type,
 		},
 		Results: results,
 	}
 
-	switch format {
+	switch input.Format {
 	case "markdown":
-		return mcp.NewToolResultText(response.ToMarkdown()), nil
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: response.ToMarkdown()}},
+		}, nil, nil
 	case "json":
-		res, err := mcp.NewToolResultJSON(response)
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-		return res, nil
+		return &mcp.CallToolResult{}, response, nil
 	default: // hybrid
 		response.ResultsMD = response.ToMarkdown()
-		// For hybrid, we keep original results but prioritize MD for ingestion
-		res, err := mcp.NewToolResultJSON(response)
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-		return res, nil
+		return &mcp.CallToolResult{}, response, nil
 	}
 }
 
@@ -86,18 +85,18 @@ func Register(engine SearchEngine) {
 		Engine:     engine,
 		Type:       "web",
 		SearchFunc: engine.WebSearch,
-		Desc:       "Executes a high-concurrency web search to retrieve prioritized, high-relevance results. This tool leverages parallel provider querying to bypass SEO-saturated results and provide a clean set of web data. Use this for general information retrieval, verifying technical documentation, and cross-referencing facts during a research task.",
+		Desc:       "PRIMARY RESEARCH MANDATE: High-concurrency entry point for general intelligence. Call this FIRST for any information retrieval task. Cascades to ddg_search_news for current events or ddg_search_images for visual assets.",
 	})
 	registry.Global.Register(&SearchTool{
 		Engine:     engine,
 		Type:       "news",
 		SearchFunc: engine.NewsSearch,
-		Desc:       "Conducts a targeted search across global news outlets for the most recent articles and reports. It is optimized for timeliness, ensuring that breaking developments and current events are prioritized over static content. Use this for monitoring live updates, gathering recent sentiment on a topic, or fact-checking news stories.",
+		Desc:       "TIMELINESS MANDATE: Targeted search for breaking developments and live updates. Call this if ddg_search_web returns stale data or when investigating specific current events. Cascades to ddg_search_web for historical context.",
 	})
 	registry.Global.Register(&SearchTool{
 		Engine:     engine,
 		Type:       "books",
 		SearchFunc: engine.BookSearch,
-		Desc:       "Performs a specialized search for literary and academic works, including authors, publishing dates, and ISBN-level metadata. This tool is essential for academic research and verifying citations in formal documentation. Use this to locate primary sources, research book summaries, or build comprehensive bibliographies.",
+		Desc:       "ACADEMIC AUDIT: Specialized retrieval for authoritative sources, citations, and literary metadata. Call this to verify facts found in ddg_search_web or when performing deep scholarly research. Cascades to ddg_search_web for broader context.",
 	})
 }

@@ -55,15 +55,38 @@ LLMs are often limited by their training data cutoff. The DuckDuckGo server prov
 ## Installation
 
 ### 1. Build the Binary
+
+Ensure you have Go installed, then build the binary:
+
 ```bash
-make build
+go build -o dist/mcp-server-duckduckgo main.go
 ```
+
 The compiled binary will be located in the `dist` directory.
 
-### 2. Configure for IDEs
+### 2. Configuration for AI Agents (Antigravity, Claude, Cline)
 
-#### **Antigravity**
-Add the server to your `mcpServers` configuration:
+To use this server with an MCP-compatible agent, add it to your `mcpServers` configuration file.
+
+#### **Windows**
+> [!IMPORTANT]
+> On Windows, you **MUST** include the `.exe` extension in the command path for the agent to correctly invoke the binary.
+
+```json
+{
+  "mcpServers": {
+    "duckduckgo": {
+      "command": "C:\\path\\to\\mcp-server-duckduckgo.exe",
+      "args": [],
+      "env": {
+        "PATH": "C:\\Program Files\\Go\\bin;C:\\Windows\\system32"
+      }
+    }
+  }
+}
+```
+
+#### **Linux / MacOS**
 ```json
 {
   "mcpServers": {
@@ -71,23 +94,8 @@ Add the server to your `mcpServers` configuration:
       "command": "/usr/local/bin/mcp-server-duckduckgo",
       "args": [],
       "env": {
-        "PATH": "/usr/local/go/bin:/usr/local/bin"
+        "PATH": "/usr/local/go/bin:/usr/local/bin:/usr/bin"
       }
-    }
-  }
-}
-```
-
-#### **VS Code (MCP Extension)**
-If using an MCP-compatible VS Code extension (like Claude Dev or Cline):
-1.  Navigate to the setting/config file for the extension.
-2.  Add the configuration entry:
-```json
-{
-  "mcpServers": {
-    "duckduckgo": {
-      "command": "/path/to/dist/mcp-server-duckduckgo",
-      "args": []
     }
   }
 }
@@ -95,9 +103,9 @@ If using an MCP-compatible VS Code extension (like Claude Dev or Cline):
 
 ## Use Cases
 
--   **Up-to-Date Research**: Use `ddg_search_news` to stay current on rapidly changing technical fields or news events.
--   **Code Asset Discovery**: Use `ddg_search_images` to find UI icons or design inspirations while building applications.
--   **Reference Verification**: Cross-verify claims or technical documentation using `ddg_search_web`.
+- **Up-to-Date Research**: Use `ddg_search_news` to stay current on rapidly changing technical fields or news events.
+- **Code Asset Discovery**: Use `ddg_search_images` to find UI icons or design inspirations while building applications.
+- **Reference Verification**: Cross-verify claims or technical documentation using `ddg_search_web`.
 
 ---
 

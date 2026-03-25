@@ -3,9 +3,8 @@ package media
 import (
 	"context"
 	"fmt"
-	"log/slog"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"mcp-server-duckduckgo/internal/models"
 	"mcp-server-duckduckgo/internal/registry"
 )
@@ -24,27 +23,32 @@ type MediaTool struct {
 	Desc       string
 }
 
-func (t *MediaTool) Metadata() mcp.Tool {
-	name := fmt.Sprintf("ddg_search_%s", t.Type)
-	return mcp.NewTool(name,
-		mcp.WithDescription(t.Desc),
-		mcp.WithString("query", mcp.Description("The search keywords"), mcp.Required()),
-		mcp.WithNumber("max_results", mcp.Description("Maximum results to return (default 5). Low counts are faster and more token-efficient."), mcp.DefaultNumber(5)),
-	)
+func (t *MediaTool) Name() string {
+	return fmt.Sprintf("ddg_search_%s", t.Type)
 }
 
-func (t *MediaTool) Handle(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	query, err := request.RequireString("query")
-	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
-	}
-	maxResults := request.GetInt("max_results", 5)
+type MediaInput struct {
+	Query      string `json:"query" jsonschema:"The search keywords"`
+	MaxResults int    `json:"max_results" jsonschema:"Maximum results to return (default 5). Low counts are faster and more token-efficient."`
+}
 
-	slog.Info("executing media search", "type", t.Type, "query", query, "maxResults", maxResults)
-	results, err := t.SearchFunc(ctx, query, maxResults)
+func (t *MediaTool) Register(s *mcp.Server) {
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        t.Name(),
+		Description: t.Desc,
+	}, t.Handle)
+}
+
+func (t *MediaTool) Handle(ctx context.Context, request *mcp.CallToolRequest, input MediaInput) (*mcp.CallToolResult, any, error) {
+	if input.MaxResults <= 0 {
+		input.MaxResults = 5
+	}
+
+	results, err := t.SearchFunc(ctx, input.Query, input.MaxResults)
 	if err != nil {
-		slog.Error("media search failed", "type", t.Type, "query", query, "error", err)
-		return mcp.NewToolResultError(err.Error()), nil
+		res := &mcp.CallToolResult{}
+		res.SetError(err)
+		return res, nil, nil
 	}
 
 	mediaResults := make([]models.MediaResult20, 0, len(results))
@@ -67,18 +71,14 @@ func (t *MediaTool) Handle(ctx context.Context, request mcp.CallToolRequest) (*m
 	response := models.SearchResponse20{
 		Version: "2.0",
 		Metadata: &models.SearchMetadata{
-			Query:      query,
+			Query:      input.Query,
 			TotalCount: len(results),
 			SearchType: t.Type,
 		},
 		Results: mediaResults,
 	}
 
-	res, err := mcp.NewToolResultJSON(response)
-	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
-	}
-	return res, nil
+	return &mcp.CallToolResult{}, response, nil
 }
 
 // Register adds the media tools to the registry.
@@ -87,12 +87,12 @@ func Register(engine SearchEngine) {
 		Engine:     engine,
 		Type:       "images",
 		SearchFunc: engine.ImageSearch,
-		Desc:       "Retrieves visual assets and media metadata from the web. This tool is designed for asset discovery, providing high-quality image URLs and source information while maintaining a low-latency response profile. Use this for UI/UX design inspiration, finding technical diagrams, or sourcing creative assets for projects.",
+		Desc:       "VISUAL DISCOVERY: High-priority asset retrieval. Call this when the task requires UI/UX inspiration, technical diagrams, or creative assets. Cascades to ddg_search_videos for demonstrations.",
 	})
 	registry.Global.Register(&MediaTool{
 		Engine:     engine,
 		Type:       "videos",
 		SearchFunc: engine.VideoSearch,
-		Desc:       "Searches for video content, including tutorials, demonstrations, and multimedia reports. It extracts key metadata such as durations and publishers to help filter for the most relevant content quickly. Use this for locating \"how-to\" guides, technical walkthroughs, or verifying video-based news sources.",
+		Desc:       "DEMONSTRATION RETRIEVAL: Targeted search for tutorials, walkthroughs, and multimedia reports. Call this when a text-based explanation is insufficient. Cascades to ddg_search_web for written documentation.",
 	})
 }
