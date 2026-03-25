@@ -22,7 +22,7 @@ func Register() {
 
 func (t *Tool) Metadata() mcp.Tool {
 	return mcp.NewTool("go_interface_tool",
-		mcp.WithDescription("Comprehensive tool for Go interface analysis and extraction. Checks implementation compatibility or extracts interfaces from structs."),
+		mcp.WithDescription("A dual-purpose utility for interface management. It can either extract a complete interface definition from an existing struct or perform a rigorous compatibility check between a struct and an interface. Use this when defining new service layers or verifying that a refactored struct still satisfies its expected contracts."),
 		mcp.WithString("pkg", mcp.Description("The package path"), mcp.Required()),
 		mcp.WithString("structName", mcp.Description("The name of the struct"), mcp.Required()),
 		mcp.WithString("ifaceName", mcp.Description("The name of the interface to check against (optional). If omitted, extracts a new interface from the struct.")),

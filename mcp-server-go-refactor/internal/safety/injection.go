@@ -21,7 +21,7 @@ func Register() {
 
 func (t *Tool) Metadata() mcp.Tool {
 	return mcp.NewTool("go_sql_injection_guard",
-		mcp.WithDescription("Detects dynamic SQL string construction vulnerabilities."),
+		mcp.WithDescription("Performs safety-focused AST analysis to detect unsafe dynamic SQL string construction. Use this to identify potential SQL injection vectors where user input might be concatenated into queries instead of using parameterized placeholders."),
 		mcp.WithString("pkg", mcp.Description("The package path to scan"), mcp.Required()),
 	)
 }

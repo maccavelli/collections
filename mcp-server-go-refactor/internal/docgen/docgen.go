@@ -6,7 +6,6 @@ import (
 	"go/ast"
 	"mcp-server-go-refactor/internal/loader"
 	"mcp-server-go-refactor/internal/registry"
-	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
 )
@@ -21,14 +20,13 @@ func Register() {
 
 func (t *Tool) Metadata() mcp.Tool {
 	return mcp.NewTool("go_doc_generator",
-		mcp.WithDescription("Audits missing documentation for exported identifiers."),
+		mcp.WithDescription("Audits the codebase for exported types, functions, and variables that lack proper Go documentation comments. Use this as a quality gate to ensure that the public API of a package remains well-documented and accessible to other developers."),
 		mcp.WithString("pkg", mcp.Description("The package path to audit"), mcp.Required()),
 	)
 }
 
 func (t *Tool) Handle(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	pkg := request.GetString("pkg", "")
-	_ = EnsureValidPkgPath(pkg)
 	docs, err := GenerateDocs(ctx, pkg)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
@@ -77,10 +75,3 @@ func GenerateDocs(ctx context.Context, pkgPath string) (*DocSummary, error) {
 	}, nil
 }
 
-// EnsureValidPkgPath formats a package path for Go analysis.
-func EnsureValidPkgPath(p string) string {
-	if !strings.HasPrefix(p, "./") && !strings.Contains(p, ".") {
-		return "./" + p
-	}
-	return p
-}

@@ -20,7 +20,7 @@ func Register() {
 
 func (t *Tool) Metadata() mcp.Tool {
 	return mcp.NewTool("go_package_cycler",
-		mcp.WithDescription("Detects cyclic imports in the module."),
+		mcp.WithDescription("Maps the module's internal dependency graph to identify cyclic imports that prevent compilation or lead to brittle architecture. Essential for large-scale refactors where packages are being moved or merged, ensuring a clean, unidirectional dependency flow."),
 		mcp.WithString("pkg", mcp.Description("The root package to analyze"), mcp.Required()),
 	)
 }

@@ -1,0 +1,25 @@
+mode: set
+mcp-server-go-refactor/internal/dependency/analyzer.go:18.17,20.2 1 1
+mcp-server-go-refactor/internal/dependency/analyzer.go:22.36,27.2 1 1
+mcp-server-go-refactor/internal/dependency/analyzer.go:29.102,31.15 2 1
+mcp-server-go-refactor/internal/dependency/analyzer.go:31.15,33.3 1 0
+mcp-server-go-refactor/internal/dependency/analyzer.go:34.2,35.16 2 1
+mcp-server-go-refactor/internal/dependency/analyzer.go:35.16,37.3 1 0
+mcp-server-go-refactor/internal/dependency/analyzer.go:38.2,38.63 1 1
+mcp-server-go-refactor/internal/dependency/analyzer.go:56.64,58.16 2 1
+mcp-server-go-refactor/internal/dependency/analyzer.go:58.16,60.3 1 0
+mcp-server-go-refactor/internal/dependency/analyzer.go:64.2,65.14 2 1
+mcp-server-go-refactor/internal/dependency/analyzer.go:65.14,67.3 1 0
+mcp-server-go-refactor/internal/dependency/analyzer.go:68.2,69.16 2 1
+mcp-server-go-refactor/internal/dependency/analyzer.go:69.16,71.3 1 0
+mcp-server-go-refactor/internal/dependency/analyzer.go:73.2,74.25 2 1
+mcp-server-go-refactor/internal/dependency/analyzer.go:74.25,76.18 2 0
+mcp-server-go-refactor/internal/dependency/analyzer.go:76.18,78.43 2 0
+mcp-server-go-refactor/internal/dependency/analyzer.go:78.43,80.5 1 0
+mcp-server-go-refactor/internal/dependency/analyzer.go:84.2,84.20 1 1
+mcp-server-go-refactor/internal/dependency/analyzer.go:84.20,87.17 2 1
+mcp-server-go-refactor/internal/dependency/analyzer.go:87.17,89.59 2 1
+mcp-server-go-refactor/internal/dependency/analyzer.go:89.59,91.5 1 1
+mcp-server-go-refactor/internal/dependency/analyzer.go:95.2,95.20 1 1
+mcp-server-go-refactor/internal/dependency/analyzer.go:95.20,97.3 1 0
+mcp-server-go-refactor/internal/dependency/analyzer.go:99.2,102.8 1 1

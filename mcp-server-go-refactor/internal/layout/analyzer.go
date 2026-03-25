@@ -21,7 +21,7 @@ func Register() {
 
 func (t *Tool) Metadata() mcp.Tool {
 	return mcp.NewTool("go_struct_alignment_optimizer",
-		mcp.WithDescription("Detects wasted padding in structs and recommends optimal field ordering."),
+		mcp.WithDescription("Analyzes the memory layout of Go structs to identify wasted space caused by field alignment padding. It provides an optimized field order that minimizes the struct's memory footprint—highly valuable for high-throughput applications processing millions of objects in-memory."),
 		mcp.WithString("pkg", mcp.Description("The package path"), mcp.Required()),
 		mcp.WithString("structName", mcp.Description("The name of the struct"), mcp.Required()),
 	)

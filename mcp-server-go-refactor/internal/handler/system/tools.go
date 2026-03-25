@@ -58,7 +58,7 @@ type GetInternalLogsTool struct {
 
 func (t *GetInternalLogsTool) Metadata() mcp.Tool {
 	return mcp.NewTool("get_internal_logs",
-		mcp.WithDescription("Retrieves recent internal server logs."),
+		mcp.WithDescription("Provides a diagnostic window into the MCP server's internal operations and background processing. This is vital for auditing refactoring decisions, debugging complex multi-tool workflows, and ensuring the server is operating within its expected parameters."),
 		mcp.WithNumber("max_lines", mcp.Description("Max log lines to return (default 25).")),
 	)
 }
