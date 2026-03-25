@@ -21,7 +21,7 @@ type GetTool struct {
 
 func (t *GetTool) Metadata() mcp.Tool {
 	return mcp.NewTool("magicskills_get",
-		mcp.WithDescription("Retrieves high-relevance knowledge. Use 'section' to drill down, or leave empty for a dense summary."),
+		mcp.WithDescription("Provides deep-dive access into a specific skill's core knowledge base. It supports version pinning and granular section retrieval (e.g., 'workflow', 'architecture', 'examples'). Use this to extract detailed instructions, logic rules, or best practices once a relevant skill has been identified."),
 		mcp.WithString("name", mcp.Description("The name of the skill to retrieve"), mcp.Required()),
 		mcp.WithString("section", mcp.Description("Optional granular section to retrieve")),
 		mcp.WithString("version", mcp.Description("Optional minimum semver bound (e.g. 1.2.0)")),

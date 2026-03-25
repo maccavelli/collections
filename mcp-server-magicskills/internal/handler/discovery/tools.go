@@ -17,7 +17,7 @@ type ListTool struct {
 
 func (t *ListTool) Metadata() mcp.Tool {
 	return mcp.NewTool("magicskills_list",
-		mcp.WithDescription("Lists all available skills in the authoritative index."),
+		mcp.WithDescription("Retrieves the complete manifest of agentic skills available in the local authoritative index. Use this to conduct an initial survey of the system's current capabilities, including versioning and high-level descriptions for each skill."),
 	)
 }
 
@@ -40,7 +40,7 @@ type MatchTool struct {
 
 func (t *MatchTool) Metadata() mcp.Tool {
 	return mcp.NewTool("magicskills_match",
-		mcp.WithDescription("Finds matching skills based on your goal and returns a dense digest immediately."),
+		mcp.WithDescription("Performs a semantic search against the skill index to identify the most relevant workflows for a specific user intent. It returns a prioritized list of skills along with a \"Best Match Digest,\" enabling immediate action without deep manual searching. Use this when you have a goal but aren't sure which specific skill or workflow is required to achieve it."),
 		mcp.WithString("intent", mcp.Description("Your goal"), mcp.Required()),
 	)
 }

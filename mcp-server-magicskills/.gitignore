@@ -11,5 +11,4 @@ mcp-server-magicskills-windows-amd64.exe
 .DS_Store
 
 # Go
-go.sum
 vendor/
