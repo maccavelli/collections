@@ -13,8 +13,30 @@ import (
 	"mcp-server-duckduckgo/internal/models"
 )
 
-// NewsSearch performs a news search.
+// NewsSearch performs a high-concurrency news search across multiple providers.
 func (e *SearchEngine) NewsSearch(ctx context.Context, query string, maxResults int) ([]models.SearchResult, error) {
+	providers := []providerFunc{
+		func(c context.Context, q string, m int) ([]models.SearchResult, error) {
+			return e.ddgNewsSearch(c, q, m)
+		},
+		func(c context.Context, q string, m int) ([]models.SearchResult, error) {
+			return e.GoogleSearch(c, q, "nws", m)
+		},
+	}
+
+	dedupeKey := func(r models.SearchResult) string {
+		return r.URL
+	}
+
+	results, err := e.runProviders(ctx, query, maxResults, dedupeKey, providers...)
+	if err == nil {
+		return results, nil
+	}
+
+	return e.BingWebSearch(ctx, query, maxResults)
+}
+
+func (e *SearchEngine) ddgNewsSearch(ctx context.Context, query string, maxResults int) ([]models.SearchResult, error) {
 	vqd, err := e.getVQD(ctx, query)
 	if err != nil {
 		return nil, err
@@ -23,18 +45,18 @@ func (e *SearchEngine) NewsSearch(ctx context.Context, query string, maxResults 
 	u := fmt.Sprintf("https://duckduckgo.com/news.js?q=%s&vqd=%s&l=us-en&o=json&p=-1", url.QueryEscape(query), vqd)
 	req, err := e.newRequest(ctx, http.MethodGet, u, http.NoBody)
 	if err != nil {
-		return nil, fmt.Errorf("news search request creation failed: %w", err)
+		return nil, err
 	}
 	req.Header.Set("Referer", "https://duckduckgo.com/")
 
 	resp, err := e.Client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("news search failed: %w", err)
+		return nil, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("news search failed with status code: %d", resp.StatusCode)
+		return nil, fmt.Errorf("ddg news search failed with status %d", resp.StatusCode)
 	}
 
 	var data struct {
@@ -49,7 +71,7 @@ func (e *SearchEngine) NewsSearch(ctx context.Context, query string, maxResults 
 	}
 
 	if err := json.NewDecoder(io.LimitReader(resp.Body, config.MaxBodyBytes)).Decode(&data); err != nil {
-		return nil, fmt.Errorf("failed to decode news search results: %w", err)
+		return nil, err
 	}
 
 	results := make([]models.SearchResult, 0, maxResults)

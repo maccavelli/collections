@@ -47,10 +47,38 @@ func (t *MediaTool) Handle(ctx context.Context, request mcp.CallToolRequest) (*m
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 
-	return mcp.NewToolResultJSON(models.SearchResponse{
-		Type:    t.Type,
-		Results: results,
-	})
+	mediaResults := make([]models.MediaResult20, 0, len(results))
+	for _, r := range results {
+		mediaURL := r.ImageURL
+		if mediaURL == "" && t.Type == "videos" {
+			mediaURL = r.URL
+		}
+		mediaResults = append(mediaResults, models.MediaResult20{
+			Title:        r.Title,
+			PageURL:      r.URL,
+			MediaURL:     mediaURL,
+			ThumbnailURL: r.Thumbnail,
+			Duration:     r.Duration,
+			Publisher:    r.Publisher,
+			Source:       r.Source,
+		})
+	}
+
+	response := models.SearchResponse20{
+		Version: "2.0",
+		Metadata: &models.SearchMetadata{
+			Query:      query,
+			TotalCount: len(results),
+			SearchType: t.Type,
+		},
+		Results: mediaResults,
+	}
+
+	res, err := mcp.NewToolResultJSON(response)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	return res, nil
 }
 
 // Register adds the media tools to the registry.
@@ -59,12 +87,12 @@ func Register(engine SearchEngine) {
 		Engine:     engine,
 		Type:       "images",
 		SearchFunc: engine.ImageSearch,
-		Desc:       "Search for images using DuckDuckGo. Use lower max_results for efficiency.",
+		Desc:       "Retrieves visual assets and media metadata from the web. This tool is designed for asset discovery, providing high-quality image URLs and source information while maintaining a low-latency response profile. Use this for UI/UX design inspiration, finding technical diagrams, or sourcing creative assets for projects.",
 	})
 	registry.Global.Register(&MediaTool{
 		Engine:     engine,
 		Type:       "videos",
 		SearchFunc: engine.VideoSearch,
-		Desc:       "Search for videos using DuckDuckGo. Use lower max_results for efficiency.",
+		Desc:       "Searches for video content, including tutorials, demonstrations, and multimedia reports. It extracts key metadata such as durations and publishers to help filter for the most relevant content quickly. Use this for locating \"how-to\" guides, technical walkthroughs, or verifying video-based news sources.",
 	})
 }
