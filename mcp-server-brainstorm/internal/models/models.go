@@ -96,3 +96,19 @@ type CritiqueResponse struct {
 	Metrics    []QualityMetric    `json:"metrics"`
 	RedTeam    []RedTeamChallenge `json:"red_team"`
 }
+
+// DecisionFork represents an architectural choice with options.
+type DecisionFork struct {
+	Component      string            `json:"component"`      // e.g., "Queue", "Storage", "Auth"
+	SocraticPrompt string            `json:"socraticPrompt"` // e.g., "What is the primary requirement for event ordering?"
+	Options        map[string]string `json:"options"`        // e.g., {"Strict": "FIFO", "Best-Effort": "Standard"}
+	Impact         string            `json:"impact"`         // Why this choice matters
+	Recommendation string            `json:"recommendation"` // A grounded suggestion for an MVP
+}
+
+// ClarificationResponse is the result of a requirement analysis.
+type ClarificationResponse struct {
+	Narrative string         `json:"narrative"`
+	Forks     []DecisionFork `json:"forks"`
+	SummaryMD string         `json:"summary_md"`
+}

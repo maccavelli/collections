@@ -19,7 +19,7 @@ type DiscoverProjectTool struct {
 
 func (t *DiscoverProjectTool) Metadata() mcp.Tool {
 	return mcp.NewTool("discover_project",
-		mcp.WithDescription("Performs a unified discovery scan, identifying gaps and suggesting the next logical step."),
+		mcp.WithDescription("Conducts a comprehensive structural analysis of a project to map its architecture and identify missing critical components (tests, docs, configs). This is essential for orienting developers in large codebases and identifying technical debt early. Use this at the start of any new session or when onboarding to a project to determine the most impactful next step."),
 		mcp.WithString("path", mcp.Description("Optional absolute path to the project root.")),
 	)
 }

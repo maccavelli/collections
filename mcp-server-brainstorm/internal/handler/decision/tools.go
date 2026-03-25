@@ -17,7 +17,7 @@ type CaptureDecisionTool struct {
 
 func (t *CaptureDecisionTool) Metadata() mcp.Tool {
 	return mcp.NewTool("capture_decision_logic",
-		mcp.WithDescription("Generates a structured ADR capturing context and alternatives."),
+		mcp.WithDescription("Formalizes the architectural decision-making process by generating structured Architecture Decision Records (ADRs) that document the context, rationale, and discarded alternatives for a specific choice. This ensures long-term maintainability by providing future developers with the \"why\" behind the code. Use this immediately after making a key design choice to preserve institutional knowledge."),
 		mcp.WithString("decision", mcp.Description("The decision being made"), mcp.Required()),
 		mcp.WithString("alternatives", mcp.Description("The considered alternatives"), mcp.Required()),
 	)

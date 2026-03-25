@@ -17,7 +17,7 @@ type CritiqueDesignTool struct {
 
 func (t *CritiqueDesignTool) Metadata() mcp.Tool {
 	return mcp.NewTool("critique_design",
-		mcp.WithDescription("Provides a consolidated, multi-dimensional assessment of a design (Socratic, Red Team, Quality)."),
+		mcp.WithDescription("Subjects an architectural or technical design to a rigorous, multi-perspective review including Socratic inquiry for hidden assumptions, Red Team evaluation for failure modes, and a quality audit against industry best practices. This hardens your architecture before a single line of code is written, preventing costly downstream revisions. Use this for RFCs, design docs, or complex feature specifications."),
 		mcp.WithString("design", mcp.Description("The design text to critique"), mcp.Required()),
 	)
 }
@@ -43,7 +43,7 @@ type AnalyzeEvolutionTool struct {
 
 func (t *AnalyzeEvolutionTool) Metadata() mcp.Tool {
 	return mcp.NewTool("analyze_evolution",
-		mcp.WithDescription("Identifies risks in proposed project changes."),
+		mcp.WithDescription("Evaluates the blast radius and potential risks associated with a proposed architectural change or system expansion. It identifies upstream dependencies, potential regressions, and structural instabilities that could arise from the evolution. Use this when planning major refactors or adding high-impact features to assess feasibility and safety."),
 		mcp.WithString("proposal", mcp.Description("The proposed change or extension"), mcp.Required()),
 	)
 }
@@ -62,8 +62,35 @@ func (t *AnalyzeEvolutionTool) Handle(ctx context.Context, req mcp.CallToolReque
 	return mcp.NewToolResultJSON(result)
 }
 
+// ClarifyRequirementsTool handles requirement grounding.
+type ClarifyRequirementsTool struct {
+	Engine *engine.Engine
+}
+
+func (t *ClarifyRequirementsTool) Metadata() mcp.Tool {
+	return mcp.NewTool("clarify_requirements",
+		mcp.WithDescription("Analyzes high-level requirements to detect architectural \"decision forks\" where ambiguity could lead to diverging implementations. It generates targeted Socratic questions that force a precise definition of constraints and intent. Use this during the initial scoping of a requirement to ensure the technical foundation matches the user's ultimate goal."),
+		mcp.WithString("requirements", mcp.Description("The requirement text to analyze"), mcp.Required()),
+	)
+}
+
+func (t *ClarifyRequirementsTool) Handle(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	requirements, err := req.RequireString("requirements")
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("missing 'requirements': %v", err)), nil
+	}
+
+	slog.Info("executing requirement clarification")
+	resp, err := t.Engine.ClarifyRequirements(ctx, requirements)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("clarify requirements: %v", err)), nil
+	}
+	return mcp.NewToolResultJSON(resp)
+}
+
 // Register adds the design tools to the registry.
 func Register(eng *engine.Engine) {
 	registry.Global.Register(&CritiqueDesignTool{Engine: eng})
 	registry.Global.Register(&AnalyzeEvolutionTool{Engine: eng})
+	registry.Global.Register(&ClarifyRequirementsTool{Engine: eng})
 }
