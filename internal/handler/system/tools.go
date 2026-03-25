@@ -21,7 +21,7 @@ type ValidateDepsTool struct {
 
 func (t *ValidateDepsTool) Metadata() mcp.Tool {
 	return mcp.NewTool("magicskills_validate_deps",
-		mcp.WithDescription("Validate host dependencies (binaries) required by a skill workflow."),
+		mcp.WithDescription("Audits the local host environment to verify the presence of specialized binary dependencies required by a skill (e.g., specific linters, runtimes, or CLI tools). Use this before attempting to execute a skill's workflow to prevent runtime failures and ensure the host environment is correctly provisioned."),
 		mcp.WithString("name", mcp.Description("The skill name"), mcp.Required()),
 	)
 }
@@ -81,7 +81,7 @@ type AddRootTool struct {
 
 func (t *AddRootTool) Metadata() mcp.Tool {
 	return mcp.NewTool("magicskills_add_root",
-		mcp.WithDescription("Adds and indexes a new skill directory root."),
+		mcp.WithDescription("Dynamically expands the MagicSkills knowledge base by adding a new directory root for discovery and indexing. Use this when new capability-folders are added to a workspace, ensuring that any contained workflows are immediately made available for discovery and matching."),
 		mcp.WithString("path", mcp.Description("Absolute path to index"), mcp.Required()),
 	)
 }

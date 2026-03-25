@@ -17,7 +17,7 @@ type BootstrapTool struct {
 
 func (t *BootstrapTool) Metadata() mcp.Tool {
 	return mcp.NewTool("magicskills_bootstrap",
-		mcp.WithDescription("Extracts a task checklist from a skill's workflow."),
+		mcp.WithDescription("Synthesizes an actionable markdown task checklist from a skill's defined workflow or requirements. This is a critical bridge between documentation and execution, allowing an agent to track progress through a multi-step procedure. Use this at the start of any complex task to ensure all required steps are identified and tracked."),
 		mcp.WithString("name", mcp.Description("The skill name"), mcp.Required()),
 	)
 }
