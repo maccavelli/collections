@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"mcp-server-magicskills/internal/config"
 	"mcp-server-magicskills/internal/engine"
 	"mcp-server-magicskills/internal/handler"
@@ -46,13 +46,19 @@ func TestResolveRoots_Config(t *testing.T) {
 }
 
 func TestRegistryToolLoading(t *testing.T) {
-	mcpSrv := server.NewMCPServer("test", "1.0", server.WithLogging())
+	mcpSrv := mcp.NewServer(
+		&mcp.Implementation{
+			Name:    "test",
+			Version: "1.0",
+		},
+		&mcp.ServerOptions{},
+	)
 	eng := engine.NewEngine()
 	discovery.Register(eng)
 
 	// In the refactored main, we iterate over it
-	for _, t := range registry.Global.List() {
-		mcpSrv.AddTool(t.Metadata(), t.Handle)
+	for _, tool := range registry.Global.List() {
+		tool.Register(mcpSrv)
 	}
 
 	t.Log("Tools registered successfully from global registry")
@@ -72,3 +78,4 @@ func TestExecute_Cancel_Main(t *testing.T) {
 	case <-errCh:
 	}
 }
+
