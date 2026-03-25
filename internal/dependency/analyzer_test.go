@@ -2,17 +2,41 @@ package dependency
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
+
+	"github.com/mark3labs/mcp-go/mcp"
 )
 
-func TestAnalyzeImpact(t *testing.T) {
-	// Not testing an actual external network request in unit tests usually, 
-	// but we'll try something that's already in our module like mcp-go
-	impact, err := Analyze(context.Background(), "github.com/mark3labs/mcp-go")
+func TestDependencyTool(t *testing.T) {
+	tool := &Tool{}
+	meta := tool.Metadata()
+	if meta.Name != "go_dependency_impact" {
+		t.Errorf("expected go_dependency_impact, got %s", meta.Name)
+	}
+
+	// Create temp module
+	tmp, _ := os.MkdirTemp("", "dep-test")
+	defer os.RemoveAll(tmp)
+	_ = os.WriteFile(filepath.Join(tmp, "go.mod"), []byte("module dep-test\n\ngo 1.21\n"), 0644)
+
+	// Test Handle
+	args := map[string]interface{}{
+		"pkg": tmp,
+	}
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = args
+
+	res, err := tool.Handle(context.Background(), req)
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("Handle failed: %v", err)
 	}
-	if impact == nil {
-		t.Fatal("expected impact data")
+	if res.IsError {
+		t.Errorf("Handle result is error: %v", res.Content)
 	}
+}
+
+func TestRegister(t *testing.T) {
+	Register()
 }

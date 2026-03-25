@@ -2,28 +2,134 @@ package metrics
 
 import (
 	"context"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/mark3labs/mcp-go/mcp"
 )
 
-func TestCalculateComplexity(t *testing.T) {
-	// Using "." for relative package path
-	result, err := CalculateComplexity(context.Background(), ".")
+func TestTool_Metadata(t *testing.T) {
+	tool := &Tool{}
+	meta := tool.Metadata()
+
+	if meta.Name != "go_complexity_analyzer" {
+		t.Errorf("expected name go_complexity_analyzer, got %s", meta.Name)
+	}
+
+	// Case-sensitive check to match exactly what's in metrics.go
+	if !strings.Contains(meta.Description, "cyclomatic") {
+		t.Errorf("description should contain cyclomatic: %s", meta.Description)
+	}
+}
+
+func TestTool_Handle(t *testing.T) {
+	tool := &Tool{}
+	ctx := context.Background()
+
+	// Case 1: Valid package
+	req := mcp.CallToolRequest{}
+	req.Params.Name = "go_complexity_analyzer"
+	req.Params.Arguments = map[string]interface{}{
+		"pkg": ".",
+	}
+
+	resp, err := tool.Handle(ctx, req)
 	if err != nil {
-		t.Fatalf("failed to calculate complexity: %v", err)
+		t.Fatalf("Handle failed unexpectedly: %v", err)
+	}
+	if resp.IsError {
+		t.Errorf("expected success, got error content")
 	}
 
-	if result == nil {
-		t.Fatal("expected result, got nil")
-	}
-
-	foundCalculateComplexity := false
-	for name := range result.Functions {
-		if name == "CalculateComplexity" {
-			foundCalculateComplexity = true
+	// Verify header in output
+	headerFound := false
+	for _, c := range resp.Content {
+		text := ""
+		switch v := c.(type) {
+		case mcp.TextContent:
+			text = v.Text
+		case *mcp.TextContent:
+			text = v.Text
+		default:
+			text = fmt.Sprintf("%v", v)
+		}
+		
+		if strings.Contains(text, "Complexity analysis for package") {
+			headerFound = true
 			break
 		}
 	}
-	if !foundCalculateComplexity {
-		t.Errorf("expected CalculateComplexity in function complexity list; got %v", result.Functions)
+	if !headerFound {
+		t.Error("response content missing complexity analysis header")
+	}
+
+	// Case 2: Missing package (error handling)
+	reqErr := mcp.CallToolRequest{}
+	reqErr.Params.Name = "go_complexity_analyzer"
+	reqErr.Params.Arguments = map[string]interface{}{
+		"pkg": "./non-existent-dir-12345",
+	}
+	respErr, err := tool.Handle(ctx, reqErr)
+	if err != nil {
+		t.Fatalf("Handle failed unexpectedly: %v", err)
+	}
+	if !respErr.IsError {
+		t.Error("expected error for non-existent directory, got success")
+	}
+}
+
+func TestCalculateComplexity_Table(t *testing.T) {
+	// Create a temporary directory with Go files of varying complexity
+	tmp, err := os.MkdirTemp("", "metrics-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmp)
+
+	// Simple module scaffold
+	os.WriteFile(filepath.Join(tmp, "go.mod"), []byte("module testmetrics\n\ngo 1.20\n"), 0644)
+	
+	code := `
+package testmetrics
+
+func Simple() int {
+	return 1
+}
+
+func ComplexFlow(a, b bool) int {
+	if a {
+		if b {
+			return 2
+		}
+		return 3
+	}
+	return 4
+}
+`
+	os.WriteFile(filepath.Join(tmp, "main.go"), []byte(code), 0644)
+
+	result, err := CalculateComplexity(context.Background(), tmp)
+	if err != nil {
+		t.Fatalf("CalculateComplexity failed: %v", err)
+	}
+
+	// Verify we got results
+	if len(result.Functions) < 2 {
+		t.Errorf("expected at least 2 functions, got %d", len(result.Functions))
+	}
+
+	// Check ComplexFlow specifically
+	if m, ok := result.Functions["ComplexFlow"]; ok {
+		if m.Cyclomatic != 3 {
+			t.Errorf("ComplexFlow: expected cyclomatic 3, got %d", m.Cyclomatic)
+		}
+		if m.Cognitive != 3 {
+			t.Errorf("ComplexFlow: expected cognitive 3, got %d", m.Cognitive)
+		}
+	} else {
+		t.Error("ComplexFlow not found in results")
 	}
 }

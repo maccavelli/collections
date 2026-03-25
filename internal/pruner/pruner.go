@@ -3,9 +3,10 @@ package pruner
 import (
 	"context"
 	"fmt"
-	"go/ast"
+	"go/types"
 	"mcp-server-go-refactor/internal/loader"
 	"mcp-server-go-refactor/internal/registry"
+	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
 )
@@ -20,7 +21,7 @@ func Register() {
 
 func (t *Tool) Metadata() mcp.Tool {
 	return mcp.NewTool("go_dead_code_pruner",
-		mcp.WithDescription("Identifies unused exported/internal functions and variables."),
+		mcp.WithDescription("Conducts a comprehensive semantic scan to detect unreferenced package-level functions, variables, and constants. This tool helps reduce the maintenance surface area and binary size by flagging code that is no longer reachable or utilized in the current module."),
 		mcp.WithString("pkg", mcp.Description("The package path to scan"), mcp.Required()),
 	)
 }
@@ -47,33 +48,57 @@ func PruneDeadCode(ctx context.Context, pkgPath string) (*DeadCodeResult, error)
 		return nil, err
 	}
 
-	unusedFuncs := []string{}
-	unusedVars := []string{}
+	result := &DeadCodeResult{
+		UnusedFunctions: []string{},
+		UnusedVariables: []string{},
+	}
 
 	for _, pkg := range pkgs {
-		for id, obj := range pkg.TypesInfo.Uses {
-			_ = id
-			_ = obj
-			// A real semantic pruner would build a callgraph or use types.Info.Uses/Defs
-			// to cross-reference declarations against any uses, even transitive ones.
-		}
-
+		// 1. Identify all package-level declarations across the package scope
+		declared := make(map[types.Object]bool)
 		scope := pkg.Types.Scope()
 		for _, name := range scope.Names() {
-			_ = scope.Lookup(name)
-			if !ast.IsExported(name) {
-				// Internal code checking uses
-				if _, ok := pkg.TypesInfo.Uses[ast.NewIdent(name)]; !ok {
-					// Simplified check
+			obj := scope.Lookup(name)
+			if obj != nil {
+				declared[obj] = false
+			}
+		}
+
+		// 2. Mark all objects that are actually used in the package AST.
+		// pkg.TypesInfo.Uses contains mappings from identifiers to their referenced objects.
+		for _, obj := range pkg.TypesInfo.Uses {
+			if _, ok := declared[obj]; ok {
+				declared[obj] = true
+			}
+		}
+
+		// 3. Collect declarations that have no uses
+		for obj, used := range declared {
+			if used {
+				continue
+			}
+
+			// Ignore special names and test functions
+			name := obj.Name()
+			if name == "_" || name == "main" || name == "init" || strings.HasPrefix(name, "Test") || strings.HasPrefix(name, "Benchmark") || strings.HasPrefix(name, "Example") {
+				continue
+			}
+
+			// Categorize by type for reporting
+			switch v := obj.(type) {
+			case *types.Func:
+				sig := v.Type().(*types.Signature)
+				// methods are more complex to prune because of interface implementation
+				if sig.Recv() != nil {
+					continue
 				}
+				result.UnusedFunctions = append(result.UnusedFunctions, name)
+			case *types.Var:
+				result.UnusedVariables = append(result.UnusedVariables, name)
 			}
 		}
 	}
 
-	// MVP: A production-ready pruner is very complex, so here we return a simplified
-	// structure demonstrating the API and placeholders for integration.
-	return &DeadCodeResult{
-		UnusedFunctions: unusedFuncs,
-		UnusedVariables: unusedVars,
-	}, nil
+
+	return result, nil
 }

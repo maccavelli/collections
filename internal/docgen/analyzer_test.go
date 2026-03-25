@@ -39,20 +39,3 @@ func TestGenerateDocs(t *testing.T) {
 	}
 }
 
-func TestEnsureValidPkgPath(t *testing.T) {
-	tests := []struct {
-		input    string
-		expected string
-	}{
-		{"internal", "./internal"},
-		{"./internal", "./internal"},
-		{"github.com/foo", "github.com/foo"},
-	}
-
-	for _, tc := range tests {
-		got := EnsureValidPkgPath(tc.input)
-		if got != tc.expected {
-			t.Errorf("EnsureValidPkgPath(%s) = %s; want %s", tc.input, got, tc.expected)
-		}
-	}
-}

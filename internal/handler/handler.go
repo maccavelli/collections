@@ -9,7 +9,10 @@ import (
 	"mcp-server-go-refactor/internal/handler/system"
 	"mcp-server-go-refactor/internal/layout"
 	"mcp-server-go-refactor/internal/metrics"
+	"mcp-server-go-refactor/internal/modernizer"
 	"mcp-server-go-refactor/internal/pruner"
+	contextanalysis "mcp-server-go-refactor/internal/analysis/context"
+	interfaceanalysis "mcp-server-go-refactor/internal/analysis/interface"
 	"mcp-server-go-refactor/internal/registry"
 	"mcp-server-go-refactor/internal/safety"
 	"mcp-server-go-refactor/internal/tags"
@@ -26,9 +29,12 @@ func RegisterAllTools(buffer *system.LogBuffer) {
 	graph.Register()
 	layout.Register()
 	metrics.Register()
+	modernizer.Register()
 	pruner.Register()
 	safety.Register()
 	tags.Register()
+	contextanalysis.Register()
+	interfaceanalysis.Register()
 	system.Register(buffer)
 }
 

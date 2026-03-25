@@ -6,8 +6,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"mcp-server-go-refactor/internal/loader"
 	"mcp-server-go-refactor/internal/registry"
-	"os/exec"
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -23,7 +23,7 @@ func Register() {
 
 func (t *Tool) Metadata() mcp.Tool {
 	return mcp.NewTool("go_test_coverage_tracer",
-		mcp.WithDescription("Runs 'go test -json' and condenses failures to failures only."),
+		mcp.WithDescription("Executes a package-level test suite and intelligently filters the output to surface only actionable failures and their corresponding logs. This tool drastically reduces noise during TDD cycles by focusing the developer's attention on breaking changes."),
 		mcp.WithString("pkg", mcp.Description("The package path to test"), mcp.Required()),
 	)
 }
@@ -60,20 +60,19 @@ type Failure struct {
 
 // Trace executes 'go test -json' and condenses the massive output to failures only.
 func Trace(ctx context.Context, pkgPath string) (*TraceResult, error) {
-	tctx, cancel := context.WithTimeout(ctx, 120*time.Second)
-	defer cancel()
-
-	cmd := exec.CommandContext(tctx, "go", "test", "-json", pkgPath)
-	stdout, err := cmd.StdoutPipe()
+	res, err := loader.Discover(ctx, pkgPath)
 	if err != nil {
 		return nil, err
 	}
 
-	if err := cmd.Start(); err != nil {
-		return nil, err
+	out, err := res.Runner.RunGo(ctx, "test", "-json", res.Pattern)
+	if err != nil && len(out.Stdout) == 0 {
+		return nil, fmt.Errorf("go test execution failed: %w: %s", err, string(out.Stderr))
 	}
+	// We check for out.Err if we have no stdout, but if we have stdout, we proceed
+	// to parse JSON even if tests failed (exit code 1).
 
-	scanner := bufio.NewScanner(stdout)
+	scanner := bufio.NewScanner(bytes.NewReader(out.Stdout))
 	var failures []Failure
 	outputTracker := make(map[string]*bytes.Buffer)
 
@@ -100,6 +99,5 @@ func Trace(ctx context.Context, pkgPath string) (*TraceResult, error) {
 		}
 	}
 
-	_ = cmd.Wait() // Ignore error as we expect it on test failure
 	return &TraceResult{Failures: failures}, nil
 }
