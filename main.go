@@ -24,7 +24,7 @@ import (
 )
 
 // Version is the build version of the application.
-var Version = "2.3.0"
+var Version = "3.1.2"
 
 func main() {
 	versionFlag := flag.Bool("version", false, "Print version and exit")
