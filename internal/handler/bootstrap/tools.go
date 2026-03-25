@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"mcp-server-magicskills/internal/engine"
 	"mcp-server-magicskills/internal/registry"
 )
@@ -15,22 +15,31 @@ type BootstrapTool struct {
 	Engine *engine.Engine
 }
 
-func (t *BootstrapTool) Metadata() mcp.Tool {
-	return mcp.NewTool("magicskills_bootstrap",
-		mcp.WithDescription("Synthesizes an actionable markdown task checklist from a skill's defined workflow or requirements. This is a critical bridge between documentation and execution, allowing an agent to track progress through a multi-step procedure. Use this at the start of any complex task to ensure all required steps are identified and tracked."),
-		mcp.WithString("name", mcp.Description("The skill name"), mcp.Required()),
-	)
+func (t *BootstrapTool) Name() string { return "magicskills_bootstrap" }
+
+type BootstrapInput struct {
+	Name string `json:"name" jsonschema:"The skill name"`
 }
 
-func (t *BootstrapTool) Handle(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	name := request.GetString("name", "")
-	if name == "" {
-		return mcp.NewToolResultError("missing 'name' argument"), nil
+func (t *BootstrapTool) Register(s *mcp.Server) {
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        t.Name(),
+		Description: "PLAN SYNTHESIS: Call this to synthesize an actionable markdown task checklist for the current goal. Required before starting any development or refactoring work to ensure progress tracking. Cascades to magicskills_validate_deps.",
+	}, t.Handle)
+}
+
+func (t *BootstrapTool) Handle(ctx context.Context, request *mcp.CallToolRequest, input BootstrapInput) (*mcp.CallToolResult, any, error) {
+	if input.Name == "" {
+		res := &mcp.CallToolResult{}
+		res.SetError(fmt.Errorf("missing 'name' argument"))
+		return res, nil, nil
 	}
 
-	skill, ok := t.Engine.GetSkill(name)
+	skill, ok := t.Engine.GetSkill(input.Name)
 	if !ok {
-		return mcp.NewToolResultError(fmt.Sprintf("skill not found: %s", name)), nil
+		res := &mcp.CallToolResult{}
+		res.SetError(fmt.Errorf("skill not found: %s", input.Name))
+		return res, nil, nil
 	}
 
 	content, ok := skill.Sections["workflow"]
@@ -38,7 +47,9 @@ func (t *BootstrapTool) Handle(ctx context.Context, request mcp.CallToolRequest)
 		content, ok = skill.Sections["checklist"]
 	}
 	if !ok {
-		return mcp.NewToolResultText("No workflow or checklist found in skill."), nil
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: "No workflow or checklist found in skill."}},
+		}, nil, nil
 	}
 
 	var checklist strings.Builder
@@ -54,13 +65,18 @@ func (t *BootstrapTool) Handle(ctx context.Context, request mcp.CallToolRequest)
 	}
 
 	if checklist.Len() == 0 {
-		return mcp.NewToolResultText("Found workflow section but no bullet points to bootstrap."), nil
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: "Found workflow section but no bullet points to bootstrap."}},
+		}, nil, nil
 	}
 
-	return mcp.NewToolResultText("# Tasks\n\n" + checklist.String()), nil
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{&mcp.TextContent{Text: "# Tasks\n\n" + checklist.String()}},
+	}, nil, nil
 }
 
 // Register registers bootstrap tools with the global registry.
 func Register(eng *engine.Engine) {
 	registry.Global.Register(&BootstrapTool{Engine: eng})
 }
+

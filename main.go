@@ -10,8 +10,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"mcp-server-magicskills/internal/config"
 	"mcp-server-magicskills/internal/engine"
@@ -47,7 +46,7 @@ func main() {
 
 func execute(ctx context.Context) error {
 	logBuffer := &handler.LogBuffer{}
-	setupLogging(logBuffer)
+	logger := setupLogging(logBuffer)
 
 	// Phase 1: Configuration & Discovery
 	roots := config.ResolveRoots()
@@ -90,19 +89,23 @@ func execute(ctx context.Context) error {
 	slog.Info("engine ready", "skillsCount", len(eng.Skills), "version", Version, "rootsCount", len(roots))
 
 	// Setup MCP Server
-	mcpSrv := server.NewMCPServer("mcp-server-magicskills", Version, server.WithLogging())
-	
+	mcpSrv := mcp.NewServer(
+		&mcp.Implementation{
+			Name:    "mcp-server-magicskills",
+			Version: Version,
+		},
+		&mcp.ServerOptions{
+			Logger: logger,
+		},
+	)
+
 	// Register tools from global registry
 	for _, t := range registry.Global.List() {
-		mcpSrv.AddTool(t.Metadata(), t.Handle)
+		t.Register(mcpSrv)
 	}
 
 	// Register Static Resources
-	mcpSrv.AddResource(mcp.NewResource("magicskills://status", "Skill Status Dashboard",
-		mcp.WithResourceDescription("Index health dashboard."), mcp.WithMIMEType("text/markdown")), h.HandleReadResource)
-	
-	mcpSrv.AddResource(mcp.NewResource("magicskills://logs", "Internal Logs",
-		mcp.WithResourceDescription("Internal server logs."), mcp.WithMIMEType("text/plain")), h.HandleReadResource)
+	h.RegisterResources(mcpSrv)
 
 	// Background Incremental Watcher
 	scn.Listen(ctx, func(path string) {
@@ -121,11 +124,13 @@ func execute(ctx context.Context) error {
 		slog.Info("shutdown signal received; stopping server")
 	}()
 
-	return server.ServeStdio(mcpSrv)
+	return mcpSrv.Run(ctx, &mcp.StdioTransport{})
 }
 
-func setupLogging(logBuffer *handler.LogBuffer) {
+func setupLogging(logBuffer *handler.LogBuffer) *slog.Logger {
 	mw := io.MultiWriter(os.Stderr, logBuffer)
 	logger := slog.New(slog.NewTextHandler(mw, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	slog.SetDefault(logger)
+	return logger
 }
+

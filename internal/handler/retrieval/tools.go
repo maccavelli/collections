@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"golang.org/x/mod/semver"
 	"mcp-server-magicskills/internal/engine"
 	"mcp-server-magicskills/internal/models"
@@ -19,30 +19,37 @@ type GetTool struct {
 	Engine *engine.Engine
 }
 
-func (t *GetTool) Metadata() mcp.Tool {
-	return mcp.NewTool("magicskills_get",
-		mcp.WithDescription("Provides deep-dive access into a specific skill's core knowledge base. It supports version pinning and granular section retrieval (e.g., 'workflow', 'architecture', 'examples'). Use this to extract detailed instructions, logic rules, or best practices once a relevant skill has been identified."),
-		mcp.WithString("name", mcp.Description("The name of the skill to retrieve"), mcp.Required()),
-		mcp.WithString("section", mcp.Description("Optional granular section to retrieve")),
-		mcp.WithString("version", mcp.Description("Optional minimum semver bound (e.g. 1.2.0)")),
-	)
+func (t *GetTool) Name() string { return "magicskills_get" }
+
+type GetInput struct {
+	Name    string `json:"name" jsonschema:"The name of the skill to retrieve"`
+	Section string `json:"section" jsonschema:"Optional granular section to retrieve"`
+	Version string `json:"version" jsonschema:"Optional minimum semver bound (e.g. 1.2.0)"`
 }
 
-func (t *GetTool) Handle(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	name := request.GetString("name", "")
-	section := strings.ToLower(request.GetString("section", ""))
-	versionBound := request.GetString("version", "")
-	if name == "" {
-		return mcp.NewToolResultError("missing 'name' argument"), nil
+func (t *GetTool) Register(s *mcp.Server) {
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        t.Name(),
+		Description: "KNOWLEDGE DEEP-DIVE: Primary retrieval for skill-defined logic and workflows. Call this after magicskills_match to extract granular architectural details. Essential for planning. Cascades to magicskills_bootstrap.",
+	}, t.Handle)
+}
+
+func (t *GetTool) Handle(ctx context.Context, request *mcp.CallToolRequest, input GetInput) (*mcp.CallToolResult, any, error) {
+	if input.Name == "" {
+		res := &mcp.CallToolResult{}
+		res.SetError(fmt.Errorf("missing 'name' argument"))
+		return res, nil, nil
 	}
 
-	skill, ok := t.Engine.GetSkill(name)
+	skill, ok := t.Engine.GetSkill(input.Name)
 	if !ok {
-		return mcp.NewToolResultError(fmt.Sprintf("skill not found: %s", name)), nil
+		res := &mcp.CallToolResult{}
+		res.SetError(fmt.Errorf("skill not found: %s", input.Name))
+		return res, nil, nil
 	}
 
-	if versionBound != "" && skill.Metadata.Version != "" {
-		vBound := versionBound
+	if input.Version != "" && skill.Metadata.Version != "" {
+		vBound := input.Version
 		vSkill := skill.Metadata.Version
 		if !strings.HasPrefix(vBound, "v") {
 			vBound = "v" + vBound
@@ -52,11 +59,14 @@ func (t *GetTool) Handle(ctx context.Context, request mcp.CallToolRequest) (*mcp
 		}
 		if semver.IsValid(vBound) && semver.IsValid(vSkill) {
 			if semver.Compare(vSkill, vBound) < 0 {
-				return mcp.NewToolResultError(fmt.Sprintf("skill version %s is older than requested bound %s", skill.Metadata.Version, versionBound)), nil
+				res := &mcp.CallToolResult{}
+				res.SetError(fmt.Errorf("skill version %s is older than requested bound %s", skill.Metadata.Version, input.Version))
+				return res, nil, nil
 			}
 		}
 	}
 
+	section := strings.ToLower(input.Section)
 	if section != "" {
 		content, found := skill.Sections[section]
 		if !found {
@@ -69,11 +79,13 @@ func (t *GetTool) Handle(ctx context.Context, request mcp.CallToolRequest) (*mcp
 			}
 		}
 		if found {
-			return mcp.NewToolResultText(fmt.Sprintf("### %s: %s\n\n%s", name, section, engine.Densify(content))), nil
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("### %s: %s\n\n%s", input.Name, section, engine.Densify(content))}},
+			}, nil, nil
 		}
 	}
 
-	return newHybridResult(skill), nil
+	return newHybridResult(skill), nil, nil
 }
 
 func newHybridResult(skill *models.Skill) *mcp.CallToolResult {
@@ -102,8 +114,8 @@ func newHybridResult(skill *models.Skill) *mcp.CallToolResult {
 
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{
-			mcp.TextContent{Type: "text", Text: string(metaJSON)},
-			mcp.TextContent{Type: "text", Text: skill.Digest},
+			&mcp.TextContent{Text: string(metaJSON)},
+			&mcp.TextContent{Text: skill.Digest},
 		},
 	}
 }
@@ -112,3 +124,4 @@ func newHybridResult(skill *models.Skill) *mcp.CallToolResult {
 func Register(eng *engine.Engine) {
 	registry.Global.Register(&GetTool{Engine: eng})
 }
+

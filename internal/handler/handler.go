@@ -7,7 +7,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"mcp-server-magicskills/internal/engine"
 )
 
@@ -61,7 +61,7 @@ type MagicSkillsHandler struct {
 }
 
 // HandleReadResource handles dashboard and log resource requests.
-func (h *MagicSkillsHandler) HandleReadResource(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+func (h *MagicSkillsHandler) HandleReadResource(ctx context.Context, request *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
 	switch request.Params.URI {
 	case "magicskills://status":
 		var b strings.Builder
@@ -74,37 +74,44 @@ func (h *MagicSkillsHandler) HandleReadResource(ctx context.Context, request mcp
 			b.WriteString(fmt.Sprintf("- **%s** (v%s)\n", s.Metadata.Name, s.Metadata.Version))
 		}
 
-		return []mcp.ResourceContents{
-			mcp.TextResourceContents{
-				URI:      request.Params.URI,
-				MIMEType: "text/markdown",
-				Text:     b.String(),
+		return &mcp.ReadResourceResult{
+			Contents: []*mcp.ResourceContents{
+				{
+					URI:      request.Params.URI,
+					MIMEType: "text/markdown",
+					Text:     b.String(),
+				},
 			},
 		}, nil
 	case "magicskills://logs":
-		return []mcp.ResourceContents{
-			mcp.TextResourceContents{
-				URI:      request.Params.URI,
-				MIMEType: "text/plain",
-				Text:     h.Logs.String(),
+		return &mcp.ReadResourceResult{
+			Contents: []*mcp.ResourceContents{
+				{
+					URI:      request.Params.URI,
+					MIMEType: "text/plain",
+					Text:     h.Logs.String(),
+				},
 			},
 		}, nil
 	default:
-		return nil, fmt.Errorf("resource not found: %s", request.Params.URI)
+		return nil, mcp.ResourceNotFoundError(request.Params.URI)
 	}
 }
 
-// HandleListResources lists available static resources.
-func (h *MagicSkillsHandler) HandleListResources(ctx context.Context, request mcp.ListResourcesRequest) (*mcp.ListResourcesResult, error) {
-	resources := []mcp.Resource{
-		mcp.NewResource("magicskills://status", "Skill Status Dashboard",
-			mcp.WithResourceDescription("Overview of currently indexed and active skills."),
-			mcp.WithMIMEType("text/markdown"),
-		),
-		mcp.NewResource("magicskills://logs", "Internal Logs",
-			mcp.WithResourceDescription("Internal server logs for monitoring."),
-			mcp.WithMIMEType("text/plain"),
-		),
-	}
-	return &mcp.ListResourcesResult{Resources: resources}, nil
+// RegisterResources registers static resources with the server.
+func (h *MagicSkillsHandler) RegisterResources(s *mcp.Server) {
+	s.AddResource(&mcp.Resource{
+		Name:        "Skill Status Dashboard",
+		URI:         "magicskills://status",
+		Description: "Overview of currently indexed and active skills.",
+		MIMEType:    "text/markdown",
+	}, h.HandleReadResource)
+
+	s.AddResource(&mcp.Resource{
+		Name:        "Internal Logs",
+		URI:         "magicskills://logs",
+		Description: "Internal server logs for monitoring.",
+		MIMEType:    "text/plain",
+	}, h.HandleReadResource)
 }
+

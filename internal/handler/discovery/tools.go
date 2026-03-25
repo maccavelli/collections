@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"mcp-server-magicskills/internal/engine"
 	"mcp-server-magicskills/internal/registry"
 )
@@ -15,13 +15,16 @@ type ListTool struct {
 	Engine *engine.Engine
 }
 
-func (t *ListTool) Metadata() mcp.Tool {
-	return mcp.NewTool("magicskills_list",
-		mcp.WithDescription("Retrieves the complete manifest of agentic skills available in the local authoritative index. Use this to conduct an initial survey of the system's current capabilities, including versioning and high-level descriptions for each skill."),
-	)
+func (t *ListTool) Name() string { return "magicskills_list" }
+
+func (t *ListTool) Register(s *mcp.Server) {
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        t.Name(),
+		Description: "SYSTEM ORIENTATION MANDATE: High-priority initialization tool. Call this FIRST to map available skills, dependencies, and versions. Use this before starting any task to ensure the environment is correctly understood. Cascades to magicskills_match or magicskills_bootstrap.",
+	}, t.Handle)
 }
 
-func (t *ListTool) Handle(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (t *ListTool) Handle(ctx context.Context, request *mcp.CallToolRequest, input struct{}) (*mcp.CallToolResult, any, error) {
 	var b strings.Builder
 	b.Grow(1024)
 	b.WriteString("Available MagicSkills Index:\n\n")
@@ -30,7 +33,9 @@ func (t *ListTool) Handle(ctx context.Context, request mcp.CallToolRequest) (*mc
 		b.WriteString(fmt.Sprintf("- **%s**: %s (v%s)\n", skill.Metadata.Name, skill.Metadata.Description, skill.Metadata.Version))
 	}
 
-	return mcp.NewToolResultText(b.String()), nil
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{&mcp.TextContent{Text: b.String()}},
+	}, nil, nil
 }
 
 // MatchTool implements the magicskills_match tool.
@@ -38,27 +43,36 @@ type MatchTool struct {
 	Engine *engine.Engine
 }
 
-func (t *MatchTool) Metadata() mcp.Tool {
-	return mcp.NewTool("magicskills_match",
-		mcp.WithDescription("Performs a semantic search against the skill index to identify the most relevant workflows for a specific user intent. It returns a prioritized list of skills along with a \"Best Match Digest,\" enabling immediate action without deep manual searching. Use this when you have a goal but aren't sure which specific skill or workflow is required to achieve it."),
-		mcp.WithString("intent", mcp.Description("Your goal"), mcp.Required()),
-	)
+func (t *MatchTool) Name() string { return "magicskills_match" }
+
+type MatchInput struct {
+	Intent string `json:"intent" jsonschema:"Your goal"`
 }
 
-func (t *MatchTool) Handle(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	intent := request.GetString("intent", "")
-	if intent == "" {
-		return mcp.NewToolResultError("missing 'intent' argument"), nil
+func (t *MatchTool) Register(s *mcp.Server) {
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        t.Name(),
+		Description: "SEMANTIC DISCOVERY: Deep context matching for user intent. Use this to find the most relevant skill for a specific goal. Once a match is confirmed, call magicskills_get for implementation details or magicskills_bootstrap to start the plan. Cascades to magicskills_get.",
+	}, t.Handle)
+}
+
+func (t *MatchTool) Handle(ctx context.Context, request *mcp.CallToolRequest, input MatchInput) (*mcp.CallToolResult, any, error) {
+	if input.Intent == "" {
+		res := &mcp.CallToolResult{}
+		res.SetError(fmt.Errorf("missing 'intent' argument"))
+		return res, nil, nil
 	}
 
-	matches := t.Engine.MatchSkills(ctx, intent)
+	matches := t.Engine.MatchSkills(ctx, input.Intent)
 	if len(matches) == 0 {
-		return mcp.NewToolResultText("No matching skills found for your intent."), nil
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: "No matching skills found for your intent."}},
+		}, nil, nil
 	}
 
 	var b strings.Builder
 	b.Grow(1024)
-	b.WriteString(fmt.Sprintf("### Matches for '%s'\n", intent))
+	b.WriteString(fmt.Sprintf("### Matches for '%s'\n", input.Intent))
 	for i, m := range matches {
 		indicator := ""
 		if i == 0 {
@@ -71,7 +85,9 @@ func (t *MatchTool) Handle(ctx context.Context, request mcp.CallToolRequest) (*m
 	b.WriteString("### Best Match Digest\n")
 	b.WriteString(matches[0].Digest)
 
-	return mcp.NewToolResultText(b.String()), nil
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{&mcp.TextContent{Text: b.String()}},
+	}, nil, nil
 }
 
 // Register registers discovery tools with the global registry.
@@ -79,3 +95,4 @@ func Register(eng *engine.Engine) {
 	registry.Global.Register(&ListTool{Engine: eng})
 	registry.Global.Register(&MatchTool{Engine: eng})
 }
+

@@ -1,17 +1,15 @@
 package registry
 
 import (
-	"context"
-
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // Tool defines the unified interface for MagicSkills MCP tools.
 type Tool interface {
-	// Metadata returns the tool specification.
-	Metadata() mcp.Tool
-	// Handle executes the tool logic with the provided context and request.
-	Handle(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error)
+	// Name returns the unique name of the tool.
+	Name() string
+	// Register adds the tool to the provided MCP server.
+	Register(s *mcp.Server)
 }
 
 // Registry manages a central collection of available MagicSkills tools.
@@ -31,7 +29,7 @@ func NewRegistry() *Registry {
 
 // Register adds a tool to the registry.
 func (r *Registry) Register(tool Tool) {
-	r.tools[tool.Metadata().Name] = tool
+	r.tools[tool.Name()] = tool
 }
 
 // Get retrieves a tool by its name.
@@ -48,3 +46,4 @@ func (r *Registry) List() []Tool {
 	}
 	return list
 }
+
