@@ -9,65 +9,74 @@ import (
 )
 
 func TestImageSearch(t *testing.T) {
-	t.Run("success", func(t *testing.T) {
-		count := 0
+	t.Run("success_google", func(t *testing.T) {
 		client := newMockClient(func(req *http.Request) (*http.Response, error) {
-			count++
-			if count == 1 {
-				return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`vqd='123'`))}, nil
+			if strings.Contains(req.URL.Host, "google.com") {
+				return &http.Response{
+					StatusCode: 200,
+					Body:       io.NopCloser(strings.NewReader(`<html><body><img src="http://img1.jpg"></body></html>`)),
+				}, nil
 			}
-			return &http.Response{
-				StatusCode: 200,
-				Body:       io.NopCloser(strings.NewReader(`{"results": [{"title": "I1", "image": "Img1"}]}`)),
-			}, nil
+			return &http.Response{StatusCode: 404, Body: io.NopCloser(strings.NewReader(``))}, nil
 		})
 		e := NewSearchEngine(); e.Client = client
 		results, err := e.ImageSearch(context.Background(), "test", 1)
 		if err != nil || len(results) != 1 {
 			t.Errorf("image search failed: %v, len=%d", err, len(results))
 		}
-	})
-
-	t.Run("vqd_error", func(t *testing.T) {
-		client := newMockClient(func(req *http.Request) (*http.Response, error) {
-			return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`no vqd`))}, nil
-		})
-		e := NewSearchEngine(); e.Client = client
-		_, err := e.ImageSearch(context.Background(), "test", 1)
-		if err == nil {
-			t.Error("expected error")
+		if results[0].Source != "Google Images" {
+			t.Errorf("expected source Google Images, got %s", results[0].Source)
 		}
 	})
 
-	t.Run("decode_error", func(t *testing.T) {
-		count := 0
+	t.Run("fallback_bing", func(t *testing.T) {
 		client := newMockClient(func(req *http.Request) (*http.Response, error) {
-			count++
-			if count == 1 {
-				return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`vqd='123'`))}, nil
+			if strings.Contains(req.URL.Host, "google.com") {
+				return &http.Response{StatusCode: 500, Body: io.NopCloser(strings.NewReader(`error`))}, nil
 			}
-			return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`invalid json`))}, nil
+			if strings.Contains(req.URL.Host, "bing.com") {
+				return &http.Response{
+					StatusCode: 200,
+					Body:       io.NopCloser(strings.NewReader(`<html><body><img class="mimg" src="http://img2.jpg"></body></html>`)),
+				}, nil
+			}
+			return &http.Response{StatusCode: 404, Body: io.NopCloser(strings.NewReader(``))}, nil
 		})
 		e := NewSearchEngine(); e.Client = client
-		_, err := e.ImageSearch(context.Background(), "test", 1)
-		if err == nil {
-			t.Error("expected error")
+		results, err := e.ImageSearch(context.Background(), "test", 1)
+		if err != nil || len(results) != 1 {
+			t.Errorf("image search fallback failed: %v, len=%d", err, len(results))
+		}
+		if results[0].Source != "Bing Images" {
+			t.Errorf("expected source Bing Images, got %s", results[0].Source)
 		}
 	})
 
-	t.Run("http_error", func(t *testing.T) {
+	t.Run("fallback_ddg", func(t *testing.T) {
 		count := 0
 		client := newMockClient(func(req *http.Request) (*http.Response, error) {
-			count++
-			if count == 1 {
-				return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`vqd='123'`))}, nil
+			if strings.Contains(req.URL.Host, "google.com") || strings.Contains(req.URL.Host, "bing.com") {
+				return &http.Response{StatusCode: 500, Body: io.NopCloser(strings.NewReader(`error`))}, nil
 			}
-			return &http.Response{StatusCode: 500, Body: io.NopCloser(strings.NewReader(`error`))}, nil
+			if strings.Contains(req.URL.Host, "duckduckgo.com") {
+				count++
+				if count == 1 {
+					return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`vqd='123'`))}, nil
+				}
+				return &http.Response{
+					StatusCode: 200,
+					Body:       io.NopCloser(strings.NewReader(`{"results": [{"title": "I1", "image": "Img1", "source": "DDG"}]}`)),
+				}, nil
+			}
+			return &http.Response{StatusCode: 404, Body: io.NopCloser(strings.NewReader(``))}, nil
 		})
 		e := NewSearchEngine(); e.Client = client
-		_, err := e.ImageSearch(context.Background(), "test", 1)
-		if err == nil || !strings.Contains(err.Error(), "status code: 500") {
-			t.Errorf("expected 500 error, got %v", err)
+		results, err := e.ImageSearch(context.Background(), "test", 1)
+		if err != nil || len(results) != 1 {
+			t.Errorf("image search final fallback failed: %v, len=%d", err, len(results))
+		}
+		if results[0].Source != "DDG" {
+			t.Errorf("expected source DDG, got %s", results[0].Source)
 		}
 	})
 }

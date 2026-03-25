@@ -140,8 +140,8 @@ func (e *SearchEngine) extractMirrorResult(baseUrl string, s *goquery.Selection)
 	}
 	title := strings.TrimSpace(anchor.Text())
 
-	link, _ := anchor.Attr("href")
-	if link == "" {
+	link, exists := anchor.Attr("href")
+	if !exists || link == "" {
 		link, _ = s.Find("a").First().Attr("href")
 	}
 

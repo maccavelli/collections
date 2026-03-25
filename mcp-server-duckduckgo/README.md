@@ -17,10 +17,11 @@ The DuckDuckGo Search server empowers AI-driven agents and developers to integra
 
 Built in Go for speed and concurrent processing, the server utilizes a distributed handler architecture:
 
--   **Modular Handler System**: Separate packages for `search` (web, news, books) and `media` (images, videos) allow for specialized processing and scaling.
--   **Structured Result Engine**: Converts raw HTML/JSON search results into a clean, uniform schema optimized for AI consumption.
--   **Concurrent Retrieval**: Uses Go's concurrency primitives to perform multi-source searches with minimal latency.
--   **Privacy-Native**: Uses DuckDuckGo's anonymous endpoints to ensure no user-identifiable data is tracked or transmitted.
+-   **High-Concurrency Multi-Provider Resilience**: Implements a high-concurrency search engine that queries multiple providers (DuckDuckGo, Google, Bing) in parallel using Go channels.
+    -   **Parallel Querying**: All available providers are queried simultaneously to minimize latency.
+    -   **Early Completion**: The engine returns results as soon as the `max_results` threshold is met, canceling pending requests to save resources.
+    -   **Intelligent Fallback**: Seamlessly falls back to secondary providers if primary sources are unavailable or return insufficient results.
+-   **Structured Result Engine**: Converts raw HTML/JSON search results from various sources into a clean, uniform schema optimized for AI consumption.
 
 ### Why it exists (Rationale)
 
@@ -32,13 +33,21 @@ LLMs are often limited by their training data cutoff. The DuckDuckGo server prov
 ## Tools
 
 ### General Search
--   `ddg_search_web(query, [max_results])`: Perform a broad web search. Returns structured titles, snippets, and URLs.
--   `ddg_search_news(query, [max_results])`: Retrieve latest news articles related to the query.
--   `ddg_search_books(query, [max_results])`: Search for published book titles and metadata.
+-   `ddg_search_web(query, [max_results], [format])`: Perform a broad web search. Returns structured titles, snippets, and URLs.
+-   `ddg_search_news(query, [max_results], [format])`: Retrieve latest news articles related to the query.
+-   `ddg_search_books(query, [max_results], [format])`: Search for published book titles and metadata.
 
 ### Media Search
--   `ddg_search_images(query, [max_results])`: Find images related to the query, providing source URLs and titles.
--   `ddg_search_videos(query, [max_results])`: Discover video content from across the web.
+-   `ddg_search_images(query, [max_results])`: Find images related to the query. Returns **Structured JSON 2.0** with source URLs, media URLs, and thumbnails.
+-   `ddg_search_videos(query, [max_results])`: Discover video content from across the web. Returns **Structured JSON 2.0** with duration and publisher metadata.
+
+#### **Format Options (General Search Only)**
+- `hybrid` (Default): Returns a JSON envelope with machine-readable `metadata` and a `results_md` field for AI ingestion.
+- `json`: Returns structured data as pure JSON.
+- `markdown`: Returns only the formatted Markdown string.
+
+> [!NOTE]
+> Media search tools (Images and Videos) exclusively use **Structured JSON 2.0** for optimal metadata delivery and to avoid rendering issues associated with Markdown embedding.
 
 ### System Diagnostics
 -   `get_internal_logs(max_lines)`: Retrieves recent server activity logs for monitoring and debugging.

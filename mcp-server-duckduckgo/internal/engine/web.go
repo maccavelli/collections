@@ -13,15 +13,41 @@ import (
 	"mcp-server-duckduckgo/internal/models"
 )
 
-// WebSearch performs a web search using high-quality HTML endpoint.
+// WebSearch performs a high-concurrency web search by querying DDG and Google.
+// It uses the shared runProviders runner and falls back to Bing only if primaries fail.
 func (e *SearchEngine) WebSearch(ctx context.Context, query string, maxResults int) ([]models.SearchResult, error) {
+	// Standard web search providers
+	providers := []providerFunc{
+		func(c context.Context, q string, m int) ([]models.SearchResult, error) {
+			return e.ddgWebSearch(c, q, m)
+		},
+		func(c context.Context, q string, m int) ([]models.SearchResult, error) {
+			return e.GoogleSearch(c, q, "", m)
+		},
+	}
+
+	// We deduplicate based on the URL
+	dedupeKey := func(r models.SearchResult) string {
+		return r.URL
+	}
+
+	results, err := e.runProviders(ctx, query, maxResults, dedupeKey, providers...)
+	if err == nil {
+		return results, nil
+	}
+
+	// Absolute fallback if primary providers fail
+	return e.BingWebSearch(ctx, query, maxResults)
+}
+
+func (e *SearchEngine) ddgWebSearch(ctx context.Context, query string, maxResults int) ([]models.SearchResult, error) {
 	formData := url.Values{}
 	formData.Set("q", query)
 	formData.Set("b", "")
 
 	req, err := e.newRequest(ctx, http.MethodPost, "https://html.duckduckgo.com/html", strings.NewReader(formData.Encode()))
 	if err != nil {
-		return nil, fmt.Errorf("failed to create web search request: %w", err)
+		return nil, err
 	}
 
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -29,17 +55,17 @@ func (e *SearchEngine) WebSearch(ctx context.Context, query string, maxResults i
 
 	resp, err := e.Client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to perform web search: %w", err)
+		return nil, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("search failed with status code: %d", resp.StatusCode)
+		return nil, fmt.Errorf("ddg web search failed with status %d", resp.StatusCode)
 	}
 
 	doc, err := goquery.NewDocumentFromReader(io.LimitReader(resp.Body, config.MaxBodyBytes))
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse web search results: %w", err)
+		return nil, err
 	}
 
 	results := make([]models.SearchResult, 0, maxResults)
@@ -56,9 +82,9 @@ func (e *SearchEngine) WebSearch(ctx context.Context, query string, maxResults i
 				Title:       title,
 				URL:         link,
 				Description: truncate(snippet, config.MaxSnippetLength),
+				Source:      "DuckDuckGo",
 			})
 		}
 	})
-
 	return results, nil
 }
