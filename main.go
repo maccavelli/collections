@@ -9,7 +9,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"mcp-server-duckduckgo/internal/config"
 	"mcp-server-duckduckgo/internal/engine"
 	"mcp-server-duckduckgo/internal/handler/media"
@@ -52,21 +52,21 @@ func run(ctx context.Context) error {
 	search.Register(eng)
 	media.Register(eng)
 
-	s := server.NewMCPServer(
-		config.Platform+" Search",
-		Version,
-		server.WithLogging(),
+	// Setup MCP Server using official SDK
+	mcpSrv := mcp.NewServer(
+		&mcp.Implementation{
+			Name:    config.Platform + " Search",
+			Version: Version,
+		},
+		&mcp.ServerOptions{
+			// Logging is default to stderr in slog
+		},
 	)
 
-	// Register tools from global registry
+	// Register tools from global registry using the new pattern
 	for _, t := range registry.Global.List() {
-		s.AddTool(t.Metadata(), t.Handle)
+		t.Register(mcpSrv)
 	}
 
-	go func() {
-		<-ctx.Done()
-		slog.Info("shutdown signal received; stopping server")
-	}()
-
-	return server.ServeStdio(s)
+	return mcpSrv.Run(ctx, &mcp.StdioTransport{})
 }
