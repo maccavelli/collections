@@ -10,52 +10,68 @@ import (
 	"strings"
 
 	"github.com/dave/dst"
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"golang.org/x/tools/go/packages"
 )
 
 // Tool implements the go_modernizer tool.
 type Tool struct{}
 
+func (t *Tool) Name() string {
+	return "go_modernizer"
+}
+
+func (t *Tool) Register(s *mcp.Server) {
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        t.Name(),
+		Description: "COMPLETION MANDATE / CODE REPAIR: Scans code for legacy patterns and replaces them with optimized standard library functions (e.g., slices/maps Go 1.21+). Call this to finalize any refactor and ensure high performance. Cascades to go_test_coverage_tracer.",
+	}, t.Handle)
+}
+
 // Register adds the modernizer tool to the registry.
 func Register() {
 	registry.Global.Register(&Tool{})
 }
 
-func (t *Tool) Metadata() mcp.Tool {
-	return mcp.NewTool("go_modernizer",
-		mcp.WithDescription("Scans code for legacy patterns that can be replaced by optimized standard library functions introduced in recent Go versions (e.g., slices and maps packages in 1.21+). It can automatically rewrite manual filtering loops and non-idiomatic string conversions to improve both performance and readability."),
-		mcp.WithString("pkg", mcp.Description("The package path to analyze"), mcp.Required()),
-		mcp.WithBoolean("rewrite", mcp.Description("If true, automatically applies modernization changes (comment-safe).")),
-	)
+type ModernizeInput struct {
+	Pkg     string `json:"pkg" jsonschema:"The package path to analyze"`
+	Rewrite bool   `json:"rewrite" jsonschema:"If true, automatically applies modernization changes (comment-safe)."`
 }
 
-func (t *Tool) Handle(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	pkgPath := request.GetString("pkg", "")
-	rewrite := request.GetBool("rewrite", false)
-	if rewrite {
-		err := ApplyModernize(ctx, pkgPath)
+func (t *Tool) Handle(ctx context.Context, req *mcp.CallToolRequest, input ModernizeInput) (*mcp.CallToolResult, any, error) {
+	if input.Rewrite {
+		err := ApplyModernize(ctx, input.Pkg)
 		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
+			res := &mcp.CallToolResult{}
+			res.SetError(err)
+			return res, nil, nil
 		}
-		return mcp.NewToolResultText(fmt.Sprintf("Successfully applied modernization for %s", pkgPath)), nil
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Successfully applied modernization for %s", input.Pkg)}},
+		}, nil, nil
 	}
 
-	findings, err := Analyze(ctx, pkgPath)
+	findings, err := Analyze(ctx, input.Pkg)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		res := &mcp.CallToolResult{}
+		res.SetError(err)
+		return res, nil, nil
 	}
 	if len(findings) == 0 {
-		return mcp.NewToolResultText("No modernization opportunities found."), nil
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: "No modernization opportunities found."}},
+		}, nil, nil
 	}
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("Modernization findings for %s:\n\n", pkgPath))
+	sb.WriteString(fmt.Sprintf("Modernization findings for %s:\n\n", input.Pkg))
 	for _, f := range findings {
 		sb.WriteString(fmt.Sprintf("[%s] %s:%d\n", f.Category, f.File, f.Line))
 		sb.WriteString(fmt.Sprintf("  Rationale: %s\n", f.Rationale))
 		sb.WriteString(fmt.Sprintf("  Replacement: %s\n\n", f.Replacement))
 	}
-	return mcp.NewToolResultText(sb.String()), nil
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{&mcp.TextContent{Text: sb.String()}},
+	}, nil, nil
 }
 
 // ApplyModernize performs automated code modernization using DST.

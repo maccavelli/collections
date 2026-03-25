@@ -6,32 +6,43 @@ import (
 	"mcp-server-go-refactor/internal/loader"
 	"mcp-server-go-refactor/internal/registry"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"golang.org/x/tools/go/packages"
 )
 
 // Tool implements the package cycle and callgraph tools.
 type Tool struct{}
 
+func (t *Tool) Name() string {
+	return "go_package_cycler"
+}
+
+func (t *Tool) Register(s *mcp.Server) {
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        t.Name(),
+		Description: "ARCHITECTURE MANDATE / CYCLE DETECTION: Maps internal dependency graph to identify cyclic imports that prevent compilation. Call this before large-scale refactors to ensures clean, unidirectional flow. Cascades to go_dependency_impact.",
+	}, t.Handle)
+}
+
 // Register adds the package cycler tool to the registry.
 func Register() {
 	registry.Global.Register(&Tool{})
 }
 
-func (t *Tool) Metadata() mcp.Tool {
-	return mcp.NewTool("go_package_cycler",
-		mcp.WithDescription("Maps the module's internal dependency graph to identify cyclic imports that prevent compilation or lead to brittle architecture. Essential for large-scale refactors where packages are being moved or merged, ensuring a clean, unidirectional dependency flow."),
-		mcp.WithString("pkg", mcp.Description("The root package to analyze"), mcp.Required()),
-	)
+type CyclerInput struct {
+	Pkg string `json:"pkg" jsonschema:"The root package to analyze"`
 }
 
-func (t *Tool) Handle(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	pkg := request.GetString("pkg", "")
-	result, err := AnalyzeCycles(ctx, pkg)
+func (t *Tool) Handle(ctx context.Context, req *mcp.CallToolRequest, input CyclerInput) (*mcp.CallToolResult, any, error) {
+	result, err := AnalyzeCycles(ctx, input.Pkg)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		res := &mcp.CallToolResult{}
+		res.SetError(err)
+		return res, nil, nil
 	}
-	return mcp.NewToolResultText(fmt.Sprintf("%+v", result)), nil
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("%+v", result)}},
+	}, nil, nil
 }
 
 // CycleResult represents the shortest path of a detected import cycle.

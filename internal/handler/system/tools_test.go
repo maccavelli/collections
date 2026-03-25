@@ -2,11 +2,10 @@ package system
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"testing"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 func TestLogBuffer(t *testing.T) {
@@ -33,16 +32,15 @@ func TestGetInternalLogsTool(t *testing.T) {
 	tool := &GetInternalLogsTool{Buffer: lb}
 	ctx := context.Background()
 
-	t.Run("Metadata", func(t *testing.T) {
-		meta := tool.Metadata()
-		if meta.Name != "get_internal_logs" {
-			t.Errorf("expected name get_internal_logs, got %s", meta.Name)
+	t.Run("Name", func(t *testing.T) {
+		if tool.Name() != "get_internal_logs" {
+			t.Errorf("expected name get_internal_logs, got %s", tool.Name())
 		}
 	})
 
 	t.Run("Handle default", func(t *testing.T) {
-		req := mcp.CallToolRequest{}
-		resp, err := tool.Handle(ctx, req)
+		req := &mcp.CallToolRequest{}
+		resp, _, err := tool.Handle(ctx, req, LogsInput{})
 		if err != nil {
 			t.Fatalf("Handle failed: %v", err)
 		}
@@ -50,10 +48,11 @@ func TestGetInternalLogsTool(t *testing.T) {
 			t.Error("expected success")
 		}
 		
-		// Safe extraction
 		text := ""
 		if len(resp.Content) > 0 {
-			text = fmt.Sprintf("%v", resp.Content[0])
+			if tc, ok := resp.Content[0].(*mcp.TextContent); ok {
+				text = tc.Text
+			}
 		}
 		
 		if !strings.Contains(text, "line 1") || !strings.Contains(text, "line 5") {
@@ -62,25 +61,17 @@ func TestGetInternalLogsTool(t *testing.T) {
 	})
 
 	t.Run("Handle max_lines", func(t *testing.T) {
-		req := mcp.CallToolRequest{}
-		req.Params.Arguments = map[string]interface{}{
-			"max_lines": 2,
-		}
-		resp, err := tool.Handle(ctx, req)
+		req := &mcp.CallToolRequest{}
+		input := LogsInput{MaxLines: 2}
+		resp, _, err := tool.Handle(ctx, req, input)
 		if err != nil {
 			t.Fatalf("Handle failed: %v", err)
 		}
 		
 		text := ""
 		if len(resp.Content) > 0 {
-			// Extract text field from mcp.TextContent whether pointer or value
-			switch v := resp.Content[0].(type) {
-			case mcp.TextContent:
-				text = v.Text
-			case *mcp.TextContent:
-				text = v.Text
-			default:
-				text = fmt.Sprintf("%v", v)
+			if tc, ok := resp.Content[0].(*mcp.TextContent); ok {
+				text = tc.Text
 			}
 		}
 

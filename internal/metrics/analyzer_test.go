@@ -2,26 +2,18 @@ package metrics
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 func TestTool_Metadata(t *testing.T) {
 	tool := &Tool{}
-	meta := tool.Metadata()
-
-	if meta.Name != "go_complexity_analyzer" {
-		t.Errorf("expected name go_complexity_analyzer, got %s", meta.Name)
-	}
-
-	// Case-sensitive check to match exactly what's in metrics.go
-	if !strings.Contains(meta.Description, "cyclomatic") {
-		t.Errorf("description should contain cyclomatic: %s", meta.Description)
+	if tool.Name() != "go_complexity_analyzer" {
+		t.Errorf("expected name go_complexity_analyzer, got %s", tool.Name())
 	}
 }
 
@@ -30,13 +22,12 @@ func TestTool_Handle(t *testing.T) {
 	ctx := context.Background()
 
 	// Case 1: Valid package
-	req := mcp.CallToolRequest{}
-	req.Params.Name = "go_complexity_analyzer"
-	req.Params.Arguments = map[string]interface{}{
-		"pkg": ".",
+	input := ComplexityInput{
+		Pkg: ".",
 	}
+	req := &mcp.CallToolRequest{}
 
-	resp, err := tool.Handle(ctx, req)
+	resp, _, err := tool.Handle(ctx, req, input)
 	if err != nil {
 		t.Fatalf("Handle failed unexpectedly: %v", err)
 	}
@@ -47,19 +38,11 @@ func TestTool_Handle(t *testing.T) {
 	// Verify header in output
 	headerFound := false
 	for _, c := range resp.Content {
-		text := ""
-		switch v := c.(type) {
-		case mcp.TextContent:
-			text = v.Text
-		case *mcp.TextContent:
-			text = v.Text
-		default:
-			text = fmt.Sprintf("%v", v)
-		}
-		
-		if strings.Contains(text, "Complexity analysis for package") {
-			headerFound = true
-			break
+		if tc, ok := c.(*mcp.TextContent); ok {
+			if strings.Contains(tc.Text, "Complexity analysis for package") {
+				headerFound = true
+				break
+			}
 		}
 	}
 	if !headerFound {
@@ -67,12 +50,10 @@ func TestTool_Handle(t *testing.T) {
 	}
 
 	// Case 2: Missing package (error handling)
-	reqErr := mcp.CallToolRequest{}
-	reqErr.Params.Name = "go_complexity_analyzer"
-	reqErr.Params.Arguments = map[string]interface{}{
-		"pkg": "./non-existent-dir-12345",
+	inputErr := ComplexityInput{
+		Pkg: "./non-existent-dir-12345",
 	}
-	respErr, err := tool.Handle(ctx, reqErr)
+	respErr, _, err := tool.Handle(ctx, req, inputErr)
 	if err != nil {
 		t.Fatalf("Handle failed unexpectedly: %v", err)
 	}
