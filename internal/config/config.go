@@ -7,7 +7,7 @@ import (
 
 const (
 	Name          = "mcp-server-recall"
-	DefaultVersion = "0.2.0"
+	DefaultVersion = "3.1.2"
 	DefaultDBPath = ".mcp_recall"
 	EnvDBPath     = "MCP_RECALL_DB_PATH"
 )
