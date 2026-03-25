@@ -56,10 +56,15 @@ func TestRegistryToolLoading_Brain(t *testing.T) {
 	}
 
 	// Verify specific tools
-	if _, ok := registry.Global.Get("discover_project"); !ok {
-		t.Error("discover_project tool not found in registry")
+	found := make(map[string]bool)
+	for _, tool := range tools {
+		found[tool.Name()] = true
 	}
-	if _, ok := registry.Global.Get("get_internal_logs"); !ok {
-		t.Error("get_internal_logs tool not found in registry")
+
+	required := []string{"discover_project", "get_internal_logs", "critique_design", "clarify_requirements", "analyze_evolution", "capture_decision_logic"}
+	for _, name := range required {
+		if !found[name] {
+			t.Errorf("expected tool %s not found in registry", name)
+		}
 	}
 }

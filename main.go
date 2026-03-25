@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"mcp-server-brainstorm/internal/config"
 	"mcp-server-brainstorm/internal/engine"
 	"mcp-server-brainstorm/internal/handler/decision"
@@ -18,9 +19,6 @@ import (
 	"mcp-server-brainstorm/internal/handler/system"
 	"mcp-server-brainstorm/internal/registry"
 	"mcp-server-brainstorm/internal/state"
-
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
 )
 
 func main() {
@@ -33,28 +31,29 @@ func main() {
 	}
 
 	buffer := &system.LogBuffer{}
-	setupLogging(buffer)
+	logger := setupLogging(buffer)
 
 	slog.Info("starting "+config.Name, "version", Version)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	if err := run(ctx, buffer); err != nil {
+	if err := run(ctx, buffer, logger); err != nil {
 		slog.Error("server fatal error", "error", err)
 		os.Exit(1)
 	}
 }
 
-func setupLogging(buffer *system.LogBuffer) {
+func setupLogging(buffer *system.LogBuffer) *slog.Logger {
 	mw := io.MultiWriter(os.Stderr, buffer)
-	handler := slog.NewTextHandler(mw, &slog.HandlerOptions{
+	logger := slog.New(slog.NewTextHandler(mw, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
-	})
-	slog.SetDefault(slog.New(handler))
+	}))
+	slog.SetDefault(logger)
+	return logger
 }
 
-func run(ctx context.Context, buffer *system.LogBuffer) error {
+func run(ctx context.Context, buffer *system.LogBuffer, logger *slog.Logger) error {
 	wd, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("get working directory: %w", err)
@@ -69,35 +68,39 @@ func run(ctx context.Context, buffer *system.LogBuffer) error {
 	decision.Register(eng)
 	system.Register(buffer)
 
-	s := server.NewMCPServer(
-		config.Platform+" Socratic Explorer",
-		Version,
-		server.WithLogging(),
+	// Setup MCP Server using official SDK
+	mcpSrv := mcp.NewServer(
+		&mcp.Implementation{
+			Name:    config.Platform + " Socratic Explorer",
+			Version: Version,
+		},
+		&mcp.ServerOptions{
+			Logger: logger,
+		},
 	)
 
 	// Register tools from global registry
 	for _, t := range registry.Global.List() {
-		s.AddTool(t.Metadata(), t.Handle)
+		t.Register(mcpSrv)
 	}
 
 	// Register resources
-	s.AddResource(mcp.NewResource("brainstorm://logs", "Active server logs",
-		mcp.WithResourceDescription("Active server logs"),
-		mcp.WithMIMEType("text/plain"),
-	), func(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
-		return []mcp.ResourceContents{
-			mcp.TextResourceContents{
-				URI:      "brainstorm://logs",
-				Text:     buffer.String(),
-				MIMEType: "text/plain",
+	mcpSrv.AddResource(&mcp.Resource{
+		Name:        "Active server logs",
+		URI:         "brainstorm://logs",
+		Description: "Active server logs for auditing AI decision-making steps.",
+		MIMEType:    "text/plain",
+	}, func(ctx context.Context, request *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+		return &mcp.ReadResourceResult{
+			Contents: []*mcp.ResourceContents{
+				{
+					URI:      request.Params.URI,
+					Text:     buffer.String(),
+					MIMEType: "text/plain",
+				},
 			},
 		}, nil
 	})
 
-	go func() {
-		<-ctx.Done()
-		slog.Info("shutdown signal received; stopping server")
-	}()
-
-	return server.ServeStdio(s)
+	return mcpSrv.Run(ctx, &mcp.StdioTransport{})
 }

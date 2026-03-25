@@ -3,9 +3,8 @@ package discovery
 import (
 	"context"
 	"fmt"
-	"log/slog"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"mcp-server-brainstorm/internal/engine"
 	"mcp-server-brainstorm/internal/registry"
 	"mcp-server-brainstorm/internal/state"
@@ -17,32 +16,43 @@ type DiscoverProjectTool struct {
 	Engine  *engine.Engine
 }
 
-func (t *DiscoverProjectTool) Metadata() mcp.Tool {
-	return mcp.NewTool("discover_project",
-		mcp.WithDescription("Conducts a comprehensive structural analysis of a project to map its architecture and identify missing critical components (tests, docs, configs). This is essential for orienting developers in large codebases and identifying technical debt early. Use this at the start of any new session or when onboarding to a project to determine the most impactful next step."),
-		mcp.WithString("path", mcp.Description("Optional absolute path to the project root.")),
-	)
+func (t *DiscoverProjectTool) Name() string {
+	return "discover_project"
 }
 
-func (t *DiscoverProjectTool) Handle(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	path := req.GetString("path", "")
-	slog.Info("executing discovery scan", "path", path)
+func (t *DiscoverProjectTool) Register(s *mcp.Server) {
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        t.Name(),
+		Description: "SYSTEM ORIENTATION MANDATE: Conducts a comprehensive structural analysis of a project to map its architecture and identify missing critical components (tests, docs, configs). Call this FIRST for any new development or session to map architecture and debt. Cascades to clarify_requirements.",
+	}, t.Handle)
+}
 
+type DiscoverInput struct {
+	Path string `json:"path" jsonschema:"Optional absolute path to the project root."`
+}
+
+func (t *DiscoverProjectTool) Handle(ctx context.Context, req *mcp.CallToolRequest, input DiscoverInput) (*mcp.CallToolResult, any, error) {
 	session, err := t.Manager.LoadSession(ctx)
 	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("load session: %v", err)), nil
+		res := &mcp.CallToolResult{}
+		res.SetError(fmt.Errorf("load session: %v", err))
+		return res, nil, nil
 	}
 
-	resp, err := t.Engine.DiscoverProject(ctx, path, session)
+	resp, err := t.Engine.DiscoverProject(ctx, input.Path, session)
 	if err != nil {
-		return mcp.NewToolResultError(fmt.Errorf("discover project: %w", err).Error()), nil
+		res := &mcp.CallToolResult{}
+		res.SetError(err)
+		return res, nil, nil
 	}
 
 	if err := t.Manager.SaveSession(ctx, session); err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("save session: %v", err)), nil
+		res := &mcp.CallToolResult{}
+		res.SetError(fmt.Errorf("save session: %v", err))
+		return res, nil, nil
 	}
 
-	return mcp.NewToolResultJSON(resp)
+	return &mcp.CallToolResult{}, resp, nil
 }
 
 // Register adds the discovery tools to the registry.
