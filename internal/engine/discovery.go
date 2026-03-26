@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"mcp-server-brainstorm/internal/models"
+	"golang.org/x/sync/errgroup"
 )
 
 // AnalyzeDiscovery scans the project for context and
@@ -18,14 +19,40 @@ func (e *Engine) AnalyzeDiscovery(
 	ctx context.Context, path string,
 ) ([]models.Gap, error) {
 	target := e.ResolvePath(path)
-	var gaps []models.Gap
+	g, gCtx := errgroup.WithContext(ctx)
 
-	// 1. Scan for key files (README, tests)
-	readmeFound, testFound, err := e.scanForContextFiles(ctx, target)
-	if err != nil {
+	var (
+		gaps        []models.Gap
+		readmeFound bool
+		testFound   bool
+		stackGaps   []models.Gap
+	)
+
+	// 1. Scan for key files (README, tests) in parallel
+	g.Go(func() error {
+		rf, tf, err := e.scanForContextFiles(gCtx, target)
+		if err != nil {
+			return err
+		}
+		readmeFound, testFound = rf, tf
+		return nil
+	})
+
+	// 2. Detect language/stack and analyze Go source in parallel
+	g.Go(func() error {
+		sg, err := e.analyzeStackAndSource(gCtx, target)
+		if err != nil {
+			return err
+		}
+		stackGaps = sg
+		return nil
+	})
+
+	if err := g.Wait(); err != nil {
 		return nil, err
 	}
 
+	// 3. Aggregate Gaps
 	if !readmeFound {
 		gaps = append(gaps, models.Gap{
 			Area: "CONTEXT",
@@ -41,12 +68,6 @@ func (e *Engine) AnalyzeDiscovery(
 				"Reliability is unverified.",
 			Severity: "HIGH",
 		})
-	}
-
-	// 2. Detect language/stack and analyze Go if present
-	stackGaps, err := e.analyzeStackAndSource(ctx, target)
-	if err != nil {
-		return nil, err
 	}
 	gaps = append(gaps, stackGaps...)
 
