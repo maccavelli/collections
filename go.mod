@@ -5,6 +5,7 @@ go 1.26.1
 require (
 	github.com/dgraph-io/badger/v4 v4.9.1
 	github.com/modelcontextprotocol/go-sdk v1.4.1
+	github.com/sahilm/fuzzy v0.1.1
 )
 
 require (

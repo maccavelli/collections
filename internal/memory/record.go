@@ -8,9 +8,19 @@ import (
 // Record represents a single atomic entry in the memory store with metadata.
 type Record struct {
 	Content   string    `json:"content"`
+	Category  string    `json:"category,omitempty"` // Primary classification
 	Tags      []string  `json:"tags,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// SearchResult wraps a Record with its original key and an optional relevance score.
+type SearchResult struct {
+	Key         string  `json:"key"`
+	Record      *Record `json:"record,omitempty"`
+	Score       int     `json:"score,omitempty"`
+	Summary     string  `json:"summary,omitempty"`
+	IsTruncated bool    `json:"is_truncated,omitempty"`
 }
 
 // migrateRecord converts legacy string formats to the new Record struct if needed.
