@@ -1,65 +1,69 @@
 # Go Prepare Commit Message Hook
 
-An AI-powered Git hook that automatically generates descriptive, Conventional Commit messages.
+An AI-powered Git hook that automatically generates descriptive, Conventional Commit messages based on your staged changes.
 
 ## 🎯 What it is for
-The `prepare-commit-msg` hook eliminates the mental overhead of drafting commit messages. It ensures that your
-repository history is consistent, detailed, and adheres to the Conventional Commits specification. Optimized for
-**maximum performance and robustness**, it operates with sub-100ms overhead by utilizing in-process Git analysis.
+The `prepare-commit-msg` hook eliminates the mental overhead of drafting commit messages. It ensures that your repository history is consistent, detailed, and adheres to the **Conventional Commits** specification. Optimized for **maximum performance and robustness**, it operates with sub-100ms overhead by utilizing in-process Git analysis.
+
+## ✨ Key Features
+- **Multi-Provider Support**: Native integration with **Google Gemini**, **Anthropic Claude**, and **OpenAI GPT**.
+- **Conventional Commit Standards**: Automatically categorizes changes as `feat`, `fix`, `docs`, `refactor`, `chore`, etc.
+- **In-Process Git Analysis**: Uses `go-git` for high-speed repository scanning—no external `git` process spawning required.
+- **Zero-Dependency SDKs**: Uses standard Go `net/http` for LLM communication, ensuring a minimal binary footprint and fast startup.
+- **Interactive Setup**: Includes a CLI wizard for quick configuration and provider selection.
+- **Self-Documenting Configuration**: Automatically maintains empty placeholders for all supported providers in your config file for easy manual updates.
 
 ## ⚙️ How it works
-1. **In-Process Diff Analysis**: Uses the `go-git` library to perform in-memory repository analysis, eliminating the overhead of spawning external `git` processes.
-2. **Concurrent Initialization**: Parallelizes configuration loading and repository scanning to minimize the critical path before AI request initiation.
-3. **SDK-less LLM Integration**: Communicates directly with LLM providers using standard Go `net/http` implementations, bypassing heavy third-party SDKs for faster startup and smaller binary size.
-4. **IDE Integration**: Seamlessly integrates with VSCode, Antigravity, and standard CLI `git commit` workflows.
+1. **Context Gathers**: Analyzes unified diffs and file metadata for all staged changes.
+2. **AI Inference**: Sends the context to your preferred LLM provider with a strict Conventional Commit prompt.
+3. **Drafting**: Populates your Git commit message editor with the generated draft.
+4. **Human Review**: You retain final control—edit the draft or save as-is to complete the commit.
 
-## 🧠 Why it works
-- **Context-Awareness**: Gathers precise file metadata and unified diffs to understand the *logic* of your changes.
-- **Maximum Speed**: Built for zero-latency with concurrent, in-process execution.
-- **Robust & Lightweight**: Native Go implementation with zero external runtime dependencies and a minimal binary footprint.
-- **Standards Enforcement**: Defaults to Conventional Commits (feat, fix, docs, etc.) with configurable retry and timeout logic.
+## 🔧 Installation
 
-## 🔧 Installation Instructions
+### 1. Build the Binary
+Clone the repository and build the binary for your platform:
+```bash
+make build
+```
+The compiled binary will be located in the `dist` directory.
 
-1. **Build**:
+### 2. Install as a Git Hook
+Copy the binary to your project's `.git/hooks` folder and name it `prepare-commit-msg`:
+```bash
+cp dist/prepare-commit-msg-linux-amd64 /path/to/your/project/.git/hooks/prepare-commit-msg
+chmod +x /path/to/your/project/.git/hooks/prepare-commit-msg
+```
 
-   ```bash
-   make build
-   ```
+## 🚀 Setup & Usage
 
-2. **Copy Binary**: Copy the built binary into your project's `.git/hooks/` directory.
+### 1. Configure Providers
+Run the interactive setup wizard to configure your API keys and preferred model:
+```bash
+# Navigate to the hooks directory or run globally if in PATH
+./prepare-commit-msg --setup
+```
+Supported providers:
+- **Gemini**: Recommended `gemini-2.5-flash-lite` (Default)
+- **Anthropic**: Recommended `claude-3-5-haiku-latest`
+- **OpenAI**: Recommended `gpt-4o-mini`
 
-   ```bash
-   cp dist/prepare-commit-msg-linux-amd64 .git/hooks/prepare-commit-msg
-   ```
-
-3. **Make Executable**:
-
-   ```bash
-   chmod +x .git/hooks/prepare-commit-msg
-   ```
-
-## 🚀 Usage Instructions
-
-1. **Configure**: Run the setup wizard to choose your provider and model.
-
-   ```bash
-   ./prepare-commit-msg --setup
-   ```
-
-2. **Commit**: Work as usual. The tool automatically drafts the message.
-3. **Edit/Save**: Review the AI-generated draft in your editor and save.
+### 2. Regular Workflow
+Simply stage your changes and run `git commit` as usual:
+```bash
+git add .
+git commit
+```
+The hook will trigger, generate the message, and open your configured editor with the draft.
 
 ## 💡 Detailed Guidance
-
-- **Model Selection**: For the best balance of speed and quality, the tool recommends `gemini-2.0-flash-lite` or `claude-3-5-haiku-latest`.
-- **Security**: API keys are stored in `~/.config/prepare-commit-msg/config.json`.
-- **Customization**: You can override the generated message entirely by simply deleting it in your editor before saving.
+- **Configuration Path**: Settings are stored in `~/.config/prepare-commit-msg/config.json`.
+- **Security**: The configuration file is created with `0600` permissions (read/write by owner only).
+- **Bypassing**: If you need to skip the AI generation for a specific commit, use the `--no-verify` flag.
+- **Customization**: The tool respects your existing commit message templates if present.
 
 ## ⚖️ License
-
 MIT
 
-___________________________________________________________________________
-
-Created in Go for performance and efficiency.
+---
+Built with Go for performance and efficiency.

@@ -15,6 +15,13 @@ type Provider interface {
 	Generate(ctx context.Context, prompt string) (string, error)
 }
 
+// ModelDiscoverer is an optional interface providers can implement to support
+// dynamic querying of available models.
+type ModelDiscoverer interface {
+	// DiscoverModels returns a list of recommended models sorted by speed/preference.
+	DiscoverModels(ctx context.Context) ([]string, error)
+}
+
 // GenerateWithRetry executes a Generate call with the specified number of retries
 // and delay. It will stop Retrying if the context is cancelled.
 func GenerateWithRetry(ctx context.Context, p Provider, prompt string, retries int, delay time.Duration) (string, error) {

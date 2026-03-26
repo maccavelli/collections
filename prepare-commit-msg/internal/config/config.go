@@ -104,6 +104,17 @@ func (c *Config) Save() error {
 		return err
 	}
 
+	// TIER 3 PERFORMANCE & PORTABILITY: Ensure all supported providers are visible in config.
+	// This makes the config self-documenting for end-users when saved.
+	if c.Providers == nil {
+		c.Providers = make(map[string]ProviderConfig)
+	}
+	for _, p := range []string{"openai", "gemini", "anthropic"} {
+		if _, ok := c.Providers[p]; !ok {
+			c.Providers[p] = ProviderConfig{}
+		}
+	}
+
 	data, err := json.MarshalIndent(c, "", "  ")
 	if err != nil {
 		return err
