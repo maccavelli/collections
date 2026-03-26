@@ -21,6 +21,7 @@ Built using the latest MCP SDK and Go 1.26.1+, the server utilizes an explicit r
 -   **Explicit Tool Registry**: Eschews side-effect initialization in favor of intentional tool registration, allowing for better observability and safer dependency injection.
 -   **AST-Driven Intelligence**: Uses standard library `go/ast`, `go/types`, and `go/parser` to ensure absolute accuracy in source code manipulation.
 -   **Embedded Multi-Diagnostic System**: Real-time internal logging is accessible via a dedicated `LogBuffer` and the `go-refactor://logs` resource.
+-   **Parallel Analysis Engine**: Implements high-concurrency structural discovery using `errgroup` and `sync.Mutex`, enabling rapid interface clustering and cross-package analysis even in massive codebases.
 -   **Standardized Handler Interface**: All tools implement a unified interface, promoting consistent behavior and error handling across the entire suite.
 
 ### Why it exists (Rationale)
