@@ -6,11 +6,13 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
+	"github.com/sahilm/fuzzy"
 )
 
 // MemoryStore manages the BadgerDB persistent storage for memories.
@@ -76,15 +78,9 @@ func (s *MemoryStore) runGC() {
 }
 
 // Save stores or updates a memory Record in the database.
-func (s *MemoryStore) Save(ctx context.Context, key, content string, tags []string) error {
+func (s *MemoryStore) Save(ctx context.Context, key, content string, category string, tags []string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
-	rec := &Record{
-		Content:   content,
-		Tags:      tags,
-		UpdatedAt: time.Now(),
-	}
 
 	var oldRec *Record
 	err := s.db.View(func(txn *badger.Txn) error {
@@ -93,7 +89,6 @@ func (s *MemoryStore) Save(ctx context.Context, key, content string, tags []stri
 			_ = item.Value(func(val []byte) error {
 				if old, err := migrateRecord(val); err == nil {
 					oldRec = old
-					rec.CreatedAt = old.CreatedAt
 				}
 				return nil
 			})
@@ -104,35 +99,73 @@ func (s *MemoryStore) Save(ctx context.Context, key, content string, tags []stri
 		return fmt.Errorf("lookup failure: %w", err)
 	}
 
-	if rec.CreatedAt.IsZero() {
-		rec.CreatedAt = rec.UpdatedAt
-	}
-
-	data, err := json.Marshal(rec)
-	if err != nil {
-		return fmt.Errorf("marshal failure: %w", err)
-	}
-
 	err = s.db.Update(func(txn *badger.Txn) error {
-		// Remove old index entries if they exist
+		// 1. Clear old indexes
 		if oldRec != nil {
-			oldIdxKey := fmt.Sprintf("_idx:t:%x:%s", oldRec.UpdatedAt.UnixNano(), key)
-			_ = txn.Delete([]byte(oldIdxKey))
+			oldTimeIdx := fmt.Sprintf("_idx:t:%x:%s", oldRec.UpdatedAt.UnixNano(), key)
+			_ = txn.Delete([]byte(oldTimeIdx))
+
+			// Clear old tag indices
+			for _, t := range oldRec.Tags {
+				oldTagIdx := fmt.Sprintf("_idx:tag:%s:%s", strings.ToLower(t), key)
+				_ = txn.Delete([]byte(oldTagIdx))
+			}
+
+			// Clear old category index
+			if oldRec.Category != "" {
+				oldCatIdx := fmt.Sprintf("_idx:cat:%s:%s", strings.ToLower(oldRec.Category), key)
+				_ = txn.Delete([]byte(oldCatIdx))
+			}
 		}
 
-		// Save record content
+		// 2. Save actual record content
+		rec := &Record{
+			Content:   content,
+			Category:  category,
+			Tags:      tags,
+			UpdatedAt: time.Now(),
+		}
+		if oldRec != nil {
+			rec.CreatedAt = oldRec.CreatedAt
+		} else {
+			rec.CreatedAt = rec.UpdatedAt
+		}
+
+		data, err := json.Marshal(rec)
+		if err != nil {
+			return err
+		}
+
 		if err := txn.Set([]byte(key), data); err != nil {
 			return err
 		}
 
-		// Save secondary index for time-based lookups (descending sort friendly)
-		// We use a hex-encoded timestamp to ensure binary sortability
-		idxKey := fmt.Sprintf("_idx:t:%x:%s", rec.UpdatedAt.UnixNano(), key)
-		return txn.Set([]byte(idxKey), []byte(key))
+		// 3. Save new time-based index (descending sort friendly)
+		newTimeIdx := fmt.Sprintf("_idx:t:%x:%s", rec.UpdatedAt.UnixNano(), key)
+		if err := txn.Set([]byte(newTimeIdx), []byte(key)); err != nil {
+			return err
+		}
+
+		// 4. Save new category index
+		if rec.Category != "" {
+			newCatIdx := fmt.Sprintf("_idx:cat:%s:%s", strings.ToLower(rec.Category), key)
+			if err := txn.Set([]byte(newCatIdx), []byte(key)); err != nil {
+				return err
+			}
+		}
+
+		// 5. Save new tag indices
+		for _, t := range rec.Tags {
+			newTagIdx := fmt.Sprintf("_idx:tag:%s:%s", strings.ToLower(t), key)
+			if err := txn.Set([]byte(newTagIdx), []byte(key)); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 
 	if err == nil {
-		slog.Debug("Memory saved and indexed", "key", key, "tag_count", len(tags))
+		slog.Debug("Memory saved and indexed", "key", key, "category", category, "tag_count", len(tags))
 	}
 	return err
 }
@@ -164,21 +197,48 @@ func (s *MemoryStore) Get(ctx context.Context, key string) (*Record, error) {
 	return rec, nil
 }
 
-// Search matches keys, content, and tags with context awareness and limits.
-func (s *MemoryStore) Search(ctx context.Context, query string, tagFilter string, limit int) (map[string]*Record, error) {
+// Search matches keys, content, and tags with fuzzy relevance ranking and limits.
+func (s *MemoryStore) Search(ctx context.Context, query string, tagFilter string, limit int) ([]*SearchResult, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	results := make(map[string]*Record)
-	query = strings.ToLower(query)
+	var candidates []*SearchResult
 	tagFilter = strings.ToLower(tagFilter)
 
 	err := s.db.View(func(txn *badger.Txn) error {
 		it := txn.NewIterator(badger.DefaultIteratorOptions)
 		defer it.Close()
 
+		// Case A: Tag-based search (O(K) where K is records with that tag)
+		if tagFilter != "" {
+			prefix := []byte(fmt.Sprintf("_idx:tag:%s:", tagFilter))
+			for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				default:
+				}
+
+				// The value of the tag index is the original key
+				_ = it.Item().Value(func(kVal []byte) error {
+					originalKey := string(kVal)
+					item, err := txn.Get(kVal)
+					if err != nil {
+						return nil
+					}
+					return item.Value(func(v []byte) error {
+						if rec, err := migrateRecord(v); err == nil {
+							candidates = append(candidates, &SearchResult{Key: originalKey, Record: rec})
+						}
+						return nil
+					})
+				})
+			}
+			return nil
+		}
+
+		// Case B: General search (Linear Scan, but avoiding non-data keys)
 		for it.Rewind(); it.Valid(); it.Next() {
-			// Hardening: Respect context cancellation during long scans
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
@@ -187,81 +247,126 @@ func (s *MemoryStore) Search(ctx context.Context, query string, tagFilter string
 
 			item := it.Item()
 			k := string(item.Key())
-
-			// Skip index entries
+			// Skip all internal indices
 			if strings.HasPrefix(k, "_idx:") {
 				continue
 			}
 
-			if limit > 0 && len(results) >= limit {
-				break
-			}
-			
-			err := item.Value(func(v []byte) error {
+			_ = item.Value(func(v []byte) error {
 				rec, err := migrateRecord(v)
 				if err != nil {
 					return nil
 				}
-
-				if !s.matchesFilter(k, rec, query, tagFilter) {
-					return nil
-				}
-
-				results[k] = rec
+				candidates = append(candidates, &SearchResult{Key: k, Record: rec})
 				return nil
 			})
-			if err != nil {
-				return err
-			}
 		}
 		return nil
 	})
 
-	return results, err
+	if err != nil {
+		return nil, err
+	}
+
+	// If no query, return chronological/original order limited
+	if query == "" {
+		if limit > 0 && len(candidates) > limit {
+			return candidates[:limit], nil
+		}
+		return candidates, nil
+	}
+
+	// Perform fuzzy matching and scoring
+	results := s.rankCandidates(query, candidates)
+
+	if limit > 0 && len(results) > limit {
+		return results[:limit], nil
+	}
+	return results, nil
 }
 
-// matchesFilter checks if a record satisfies keyword and tag requirements.
-func (s *MemoryStore) matchesFilter(key string, rec *Record, query, tagFilter string) bool {
-	// Filter by tag if provided
-	if tagFilter != "" {
-		found := false
-		for _, t := range rec.Tags {
-			if strings.ToLower(t) == tagFilter {
-				found = true
-				break
+// rankCandidates applies fuzzy scoring across Key, Content, and Tags with parallelism.
+func (s *MemoryStore) rankCandidates(query string, candidates []*SearchResult) []*SearchResult {
+	if len(candidates) == 0 {
+		return candidates
+	}
+
+	var wg sync.WaitGroup
+	// Concurrency: Use worker pool based on CPU count or chunking
+	workerCount := 4
+	if len(candidates) < workerCount {
+		workerCount = len(candidates)
+	}
+	
+	chunkSize := (len(candidates) + workerCount - 1) / workerCount
+	for i := 0; i < workerCount; i++ {
+		start := i * chunkSize
+		if start >= len(candidates) {
+			break
+		}
+		end := start + chunkSize
+		if end > len(candidates) {
+			end = len(candidates)
+		}
+
+		wg.Add(1)
+		go func(subset []*SearchResult) {
+			defer wg.Done()
+			for _, c := range subset {
+				if c.Record == nil { continue }
+				// 1. Score the Key
+				keyMatches := fuzzy.Find(query, []string{c.Key})
+				if len(keyMatches) > 0 {
+					c.Score = keyMatches[0].Score
+				}
+
+				// 2. Score Content (if better)
+				contentMatches := fuzzy.Find(query, []string{c.Record.Content})
+				if len(contentMatches) > 0 && contentMatches[0].Score > c.Score {
+					c.Score = contentMatches[0].Score
+				}
+
+				// 3. Score Category
+				if c.Record.Category != "" {
+					catMatches := fuzzy.Find(query, []string{c.Record.Category})
+					if len(catMatches) > 0 && catMatches[0].Score > c.Score {
+						c.Score = catMatches[0].Score
+					}
+				}
+
+				// 4. Score Tags (if better)
+				for _, t := range c.Record.Tags {
+					tagMatches := fuzzy.Find(query, []string{t})
+					if len(tagMatches) > 0 && tagMatches[0].Score > c.Score {
+						c.Score = tagMatches[0].Score
+					}
+				}
 			}
-		}
-		if !found {
-			return false
-		}
+		}(candidates[start:end])
 	}
+	wg.Wait()
 
-	// Filter by keyword if provided
-	if query == "" {
-		return true
-	}
-
-	if strings.Contains(strings.ToLower(key), query) || 
-	   strings.Contains(strings.ToLower(rec.Content), query) {
-		return true
-	}
-
-	for _, t := range rec.Tags {
-		if strings.Contains(strings.ToLower(t), query) {
-			return true
+	// Filter out zero scores and sort
+	var ranked []*SearchResult
+	for _, c := range candidates {
+		if c.Score > 0 {
+			ranked = append(ranked, c)
 		}
 	}
 
-	return false
+	sort.Slice(ranked, func(i, j int) bool {
+		return ranked[i].Score > ranked[j].Score // Descending
+	})
+
+	return ranked
 }
 
 // GetRecent retrieves the last N memories sorted by UpdatedAt descending.
-// Optimized: Uses the secondary timestamp index for O(K) retrieval.
-func (s *MemoryStore) GetRecent(ctx context.Context, count int) (map[string]*Record, error) {
+func (s *MemoryStore) GetRecent(ctx context.Context, count int) ([]*SearchResult, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	results := make(map[string]*Record)
+	var results []*SearchResult
 	if count <= 0 {
 		return results, nil
 	}
@@ -274,24 +379,24 @@ func (s *MemoryStore) GetRecent(ctx context.Context, count int) (map[string]*Rec
 		defer it.Close()
 
 		prefix := []byte("_idx:t:")
-		// In reverse mode, Seek to prefix plus a high byte to start at the end of the index range
 		seekKey := append([]byte(nil), prefix...)
 		seekKey = append(seekKey, 0xff, 0xff, 0xff)
 
 		for it.Seek(seekKey); it.ValidForPrefix(prefix) && len(results) < count; it.Next() {
 			item := it.Item()
 			err := item.Value(func(val []byte) error {
-				// The value of the index is the original key
 				originalKey := val
-				
 				item, err := txn.Get(originalKey)
 				if err != nil {
-					return nil // Skip if missing
+					return nil
 				}
 
 				return item.Value(func(v []byte) error {
 					if rec, err := migrateRecord(v); err == nil {
-						results[string(originalKey)] = rec
+						results = append(results, &SearchResult{
+							Key:    string(originalKey),
+							Record: rec,
+						})
 					}
 					return nil
 				})
@@ -307,11 +412,11 @@ func (s *MemoryStore) GetRecent(ctx context.Context, count int) (map[string]*Rec
 }
 
 // ListKeys retrieves all available keys for knowledge discovery.
-func (s *MemoryStore) ListKeys(ctx context.Context) (map[string]*Record, error) {
+func (s *MemoryStore) ListKeys(ctx context.Context) ([]*SearchResult, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	results := make(map[string]*Record)
+	var results []*SearchResult
 	err := s.db.View(func(txn *badger.Txn) error {
 		it := txn.NewIterator(badger.DefaultIteratorOptions)
 		defer it.Close()
@@ -324,7 +429,7 @@ func (s *MemoryStore) ListKeys(ctx context.Context) (map[string]*Record, error) 
 			
 			_ = it.Item().Value(func(v []byte) error {
 				if rec, err := migrateRecord(v); err == nil {
-					results[k] = rec
+					results = append(results, &SearchResult{Key: k, Record: rec})
 				}
 				return nil
 			})
@@ -369,6 +474,10 @@ func (s *MemoryStore) Delete(ctx context.Context, key string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	return s.deleteNoLock(key)
+}
+
+func (s *MemoryStore) deleteNoLock(key string) error {
 	var rec *Record
 	_ = s.db.View(func(txn *badger.Txn) error {
 		item, err := txn.Get([]byte(key))
@@ -383,11 +492,266 @@ func (s *MemoryStore) Delete(ctx context.Context, key string) error {
 
 	return s.db.Update(func(txn *badger.Txn) error {
 		if rec != nil {
+			// Clear time index
 			idxKey := fmt.Sprintf("_idx:t:%x:%s", rec.UpdatedAt.UnixNano(), key)
 			_ = txn.Delete([]byte(idxKey))
+
+			// Clear all tag indices
+			for _, t := range rec.Tags {
+				tagIdx := fmt.Sprintf("_idx:tag:%s:%s", strings.ToLower(t), key)
+				_ = txn.Delete([]byte(tagIdx))
+			}
+
+			// Clear category index
+			if rec.Category != "" {
+				catIdx := fmt.Sprintf("_idx:cat:%s:%s", strings.ToLower(rec.Category), key)
+				_ = txn.Delete([]byte(catIdx))
+			}
 		}
 		return txn.Delete([]byte(key))
 	})
+}
+
+// Consolidate identifies and merges redundant memories based on content similarity.
+func (s *MemoryStore) Consolidate(ctx context.Context, threshold float64, dryRun bool) (int, []string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if threshold <= 0 {
+		threshold = 0.8
+	}
+
+	// 1. Fetch all records for analysis
+	var all []*SearchResult
+	err := s.db.View(func(txn *badger.Txn) error {
+		it := txn.NewIterator(badger.DefaultIteratorOptions)
+		defer it.Close()
+		for it.Rewind(); it.Valid(); it.Next() {
+			k := it.Item().KeyCopy(nil)
+			if strings.HasPrefix(string(k), "_idx:") {
+				continue
+			}
+			_ = it.Item().Value(func(v []byte) error {
+				if rec, err := migrateRecord(v); err == nil {
+					all = append(all, &SearchResult{Key: string(k), Record: rec})
+				}
+				return nil
+			})
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, nil, err
+	}
+
+	if len(all) < 2 {
+		return 0, nil, nil
+	}
+
+	// 2. Perform pairwise similarity check and clustering (Find Connected Components)
+	parent := make(map[string]string)
+	for _, res := range all {
+		parent[res.Key] = res.Key
+	}
+
+	var find func(string) string
+	find = func(i string) string {
+		if parent[i] == i {
+			return i
+		}
+		parent[i] = find(parent[i])
+		return parent[i]
+	}
+
+	union := func(i, j string) {
+		rootI := find(i)
+		rootJ := find(j)
+		if rootI != rootJ {
+			parent[rootI] = rootJ
+		}
+	}
+
+	// Parallel Pairwise Comparison
+	var wg sync.WaitGroup
+	// Actually, let's use a simpler parallel approach for pairs:
+	// Use a worker group to score chunks of the outer loop.
+	
+	workerCount := 4
+	chunkSize := (len(all) + workerCount - 1) / workerCount
+	var mergeMu sync.Mutex
+
+	for w := 0; w < workerCount; w++ {
+		start := w * chunkSize
+		if start >= len(all) { break }
+		end := start + chunkSize
+		if end > len(all) { end = len(all) }
+
+		wg.Add(1)
+		go func(s, e int) {
+			defer wg.Done()
+			for i := s; i < e; i++ {
+				for j := i + 1; j < len(all); j++ {
+					if computeJaccard(all[i].Record.Content, all[j].Record.Content) >= threshold {
+						mergeMu.Lock()
+						union(all[i].Key, all[j].Key)
+						mergeMu.Unlock()
+					}
+				}
+			}
+		}(start, end)
+	}
+	wg.Wait()
+
+	// 3. Group by root
+	clusters := make(map[string][]*SearchResult)
+	for _, res := range all {
+		root := find(res.Key)
+		clusters[root] = append(clusters[root], res)
+	}
+
+	// 4. Process clusters with > 1 members
+	var mergedKeys []string
+	mergeCount := 0
+	for _, members := range clusters {
+		if len(members) <= 1 {
+			continue
+		}
+
+		// Identify primary (longest content as proxy for 'most descriptive')
+		primary := members[0]
+		for _, m := range members[1:] {
+			if len(m.Record.Content) > len(primary.Record.Content) {
+				primary = m
+			}
+		}
+
+		// Merge tags
+		tagSet := make(map[string]struct{})
+		for _, m := range members {
+			for _, t := range m.Record.Tags {
+				tagSet[strings.ToLower(t)] = struct{}{}
+			}
+		}
+		var mergedTags []string
+		for t := range tagSet {
+			mergedTags = append(mergedTags, t)
+		}
+
+		if dryRun {
+			mergeCount++
+			for _, m := range members {
+				if m.Key != primary.Key {
+					mergedKeys = append(mergedKeys, m.Key)
+				}
+			}
+			continue
+		}
+
+		// Update database: Atomic operation for this cluster
+		// Save unique tags to primary
+		primary.Record.Tags = mergedTags
+		data, _ := json.Marshal(primary.Record)
+		
+		err := s.db.Update(func(txn *badger.Txn) error {
+			// Update primary
+			if err := txn.Set([]byte(primary.Key), data); err != nil {
+				return err
+			}
+			// Delete redundant ones (indices included)
+			for _, m := range members {
+				if m.Key == primary.Key {
+					continue
+				}
+				mergedKeys = append(mergedKeys, m.Key)
+				// We need the record to delete indices, but we already have it in 'm'
+				idxKey := fmt.Sprintf("_idx:t:%x:%s", m.Record.UpdatedAt.UnixNano(), m.Key)
+				_ = txn.Delete([]byte(idxKey))
+				for _, t := range m.Record.Tags {
+					tagIdx := fmt.Sprintf("_idx:tag:%s:%s", strings.ToLower(t), m.Key)
+					_ = txn.Delete([]byte(tagIdx))
+				}
+				_ = txn.Delete([]byte(m.Key))
+			}
+			return nil
+		})
+
+		if err == nil {
+			mergeCount++
+			slog.Info("Consolidated memory cluster", "primary", primary.Key, "merged_redundants", len(members)-1)
+		}
+	}
+
+	return mergeCount, mergedKeys, nil
+}
+
+// ListCategories retrieves a unique list of all memory categories with counts.
+func (s *MemoryStore) ListCategories(ctx context.Context) (map[string]int, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	categories := make(map[string]int)
+	err := s.db.View(func(txn *badger.Txn) error {
+		opts := badger.DefaultIteratorOptions
+		it := txn.NewIterator(opts)
+		defer it.Close()
+
+		prefix := []byte("_idx:cat:")
+		for it.Seek(prefix); it.ValidForPrefix(prefix); {
+			item := it.Item()
+			key := string(item.Key())
+			// Key format: _idx:cat:<category>:<record_key>
+			parts := strings.Split(key, ":")
+			if len(parts) >= 3 {
+				cat := parts[2]
+				categories[cat]++
+				
+				// Optimization: Skip all records in THIS category to find the NEXT unique category
+				// BUT we want counts, so we can't skip if we want exact counts.
+				// If we only wanted names, we'd seek(append(prefixWithCat, 0xff))
+				// Let's stick to full scan for accuracy in small-medium DBs.
+				it.Next()
+			} else {
+				it.Next()
+			}
+		}
+		return nil
+	})
+	return categories, err
+}
+
+func computeJaccard(a, b string) float64 {
+	clean := func(s string) string {
+		return strings.Map(func(r rune) rune {
+			if strings.ContainsRune("!.,:;?()[]{}", r) {
+				return -1
+			}
+			return r
+		}, strings.ToLower(s))
+	}
+
+	setA := make(map[string]struct{})
+	for _, w := range strings.Fields(clean(a)) {
+		if len(w) > 2 {
+			setA[w] = struct{}{}
+		}
+	}
+	setB := make(map[string]struct{})
+	for _, w := range strings.Fields(clean(b)) {
+		if len(w) > 2 {
+			setB[w] = struct{}{}
+		}
+	}
+	if len(setA) == 0 || len(setB) == 0 {
+		return 0
+	}
+	inter := 0
+	for w := range setA {
+		if _, ok := setB[w]; ok {
+			inter++
+		}
+	}
+	union := len(setA) + len(setB) - inter
+	return float64(inter) / float64(union)
 }
 
 // Close safely shuts down the database and maintenance routines.

@@ -26,7 +26,7 @@ func TestMemoryStore(t *testing.T) {
 	tags := []string{"tag1", "tag2"}
 
 	// Test Save
-	err = store.Save(ctx, key, content, tags)
+	err = store.Save(ctx, key, content, "test-cat", tags)
 	if err != nil {
 		t.Errorf("Save failed: %v", err)
 	}
@@ -48,7 +48,14 @@ func TestMemoryStore(t *testing.T) {
 	if err != nil {
 		t.Errorf("Search failed: %v", err)
 	}
-	if _, ok := results[key]; !ok {
+	found := false
+	for _, r := range results {
+		if r.Key == key {
+			found = true
+			break
+		}
+	}
+	if !found {
 		t.Errorf("Search did not find key")
 	}
 
@@ -83,8 +90,46 @@ func TestMemoryStore(t *testing.T) {
 		t.Errorf("expected error for deleted key, got nil")
 	}
 
+	// Test Consolidate
+	_ = store.Save(ctx, "near-dup-1", "This is a detailed memory about Go performance optimization.", "go-perf", []string{"go", "perf"})
+	_ = store.Save(ctx, "near-dup-2", "Go performance optimization: brief note about speed.", "go-perf", []string{"go"})
+	_ = store.Save(ctx, "distinct", "Something completely different about Python.", "other", []string{"python"})
+
+	count, merged, err := store.Consolidate(ctx, 0.3, false) // Using low threshold for test
+	if err != nil {
+		t.Errorf("Consolidate failed: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("expected 1 merged cluster, got %d", count)
+	}
+	if len(merged) != 1 {
+		t.Errorf("expected 1 merged key, got %d", len(merged))
+	}
+
+	// Verify primary remains
+	rec1, err := store.Get(ctx, "near-dup-1")
+	if err != nil {
+		t.Errorf("Primary key lost: %v", err)
+	}
+	// Verify tags merged (go, perf)
+	if len(rec1.Tags) != 2 {
+		t.Errorf("expected 2 merged tags, got %d", len(rec1.Tags))
+	}
+
+	// Test ListCategories
+	cats, err := store.ListCategories(ctx)
+	if err != nil {
+		t.Errorf("ListCategories failed: %v", err)
+	}
+	if cats["go-perf"] == 0 {
+		t.Errorf("expected go-perf category to have multiple records")
+	}
+	if cats["other"] != 1 {
+		t.Errorf("expected other category to have 1 record")
+	}
+
 	// Test Clear
-	_ = store.Save(ctx, "k2", "c2", nil)
+	_ = store.Save(ctx, "k2", "c2", "tmp", nil)
 	err = store.Clear(ctx)
 	if err != nil {
 		t.Errorf("Clear failed: %v", err)
@@ -105,7 +150,7 @@ func BenchmarkMemoryStore(b *testing.B) {
 	ctx := context.Background()
 	// Seed with 1000 items
 	for i := 0; i < 1000; i++ {
-		_ = store.Save(ctx, fmt.Sprintf("key-%d", i), fmt.Sprintf("content block for record %d", i), []string{"tag"})
+		_ = store.Save(ctx, fmt.Sprintf("key-%d", i), fmt.Sprintf("content block for record %d", i), "perf-test", []string{"tag"})
 	}
 
 	b.Run("GetRecent-10", func(b *testing.B) {
