@@ -2,7 +2,10 @@ module mcp-server-brainstorm
 
 go 1.26.1
 
-require github.com/modelcontextprotocol/go-sdk v1.4.1
+require (
+	github.com/modelcontextprotocol/go-sdk v1.4.1
+	golang.org/x/sync v0.20.0
+)
 
 require (
 	github.com/google/jsonschema-go v0.4.2 // indirect

@@ -20,6 +20,7 @@ Built in Go for performance and reliability, the server follows a modular, provi
 -   **Clarification Engine**: Triggers Socratic prompts when ambiguous components (Database, Auth, API, Queue) are mentioned without sufficient constraints.
 -   **Unified Processing Engine**: Core reasoning is partitioned into specialized providers (`Discovery`, `Design`, `Decision`), allowing for high-density analysis within a single tool invocation.
 -   **Socratic & Red-Teaming Integration**: The `critique_design` tool uses a multi-dimensional persona system to simultaneously audit for quality attributes, security risks, and architectural blind spots.
+-   **High-Concurrency Discovery**: Implements parallel file-system scanning and AST logic using `errgroup`, allowing for rapid identification of project gaps in larger codebases.
 -   **Context-Aware Analytics**: Tools maintain awareness of previous project states via the internal `.brainstorm.json` manifest.
 -   **MCP Provider**: Implements a standard JSON-RPC 2.0 interface for seamless integration into any AI-driven development workflow.
 
