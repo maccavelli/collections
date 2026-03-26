@@ -17,7 +17,7 @@ import (
 
 // Version is overwritten by build flags during the compilation process to represent
 // the current release version of the application.
-var Version = "2.0.0"
+var Version = "3.1.4"
 
 const (
 	// AppTitle is the name of the application used in help text and version output.
@@ -43,7 +43,7 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
-		if err := ui.RunSetup(conf); err != nil {
+		if err := ui.RunSetup(context.Background(), conf); err != nil {
 			fmt.Fprintf(os.Stderr, "Setup failed: %v\n", err)
 			os.Exit(1)
 		}

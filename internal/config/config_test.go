@@ -129,7 +129,7 @@ func TestConfig_UserRepro(t *testing.T) {
   "active_provider": "gemini",
   "providers": {
     "gemini": {
-      "api_key": "AIzaSyBoh7E1gPHenD_WtuxC0_Kscs2D0wCXoMU",
+      "api_key": "REDACTED_API_KEY",
       "model": "gemini-2.5-flash-lite"
     },
     "openai": {
@@ -176,10 +176,10 @@ func TestConfig_UserRepro(t *testing.T) {
 		t.Errorf("Expected active provider 'anthropic', got %q", loaded.ActiveProvider)
 	}
 
-	if _, ok := loaded.Providers["anthropic"]; !ok {
-		t.Error("Anthropic provider missing after reload")
+	if pc, ok := loaded.Providers["anthropic"]; !ok || pc.APIKey != "new-anthropic-key" {
+		t.Error("Anthropic provider missing or incorrect after reload")
 	}
-	if _, ok := loaded.Providers["gemini"]; !ok {
-		t.Error("Gemini provider lost after reload")
+	if pc, ok := loaded.Providers["gemini"]; !ok || pc.APIKey != "REDACTED_API_KEY" {
+		t.Error("Gemini provider lost or incorrect after reload")
 	}
 }

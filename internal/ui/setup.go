@@ -1,16 +1,18 @@
 package ui
 
 import (
+	"context"
 	"fmt"
 	"os"
 
 	"prepare-commit-msg/internal/config"
+	"prepare-commit-msg/internal/llm"
 
 	"github.com/AlecAivazis/survey/v2"
 )
 
 // RunSetup runs the interactive configuration wizard for provider and model selection.
-func RunSetup(conf *config.Config) error {
+func RunSetup(ctx context.Context, conf *config.Config) error {
 	fmt.Println("--- prepare-commit-msg Setup ---")
 
 	var provider string
@@ -58,13 +60,35 @@ func RunSetup(conf *config.Config) error {
 	}
 
 	var models []string
-	if provider == "openai" {
-		models = []string{"gpt-4o", "gpt-4o-mini", "gpt-3.5-turbo", "Other"}
-	} else if provider == "anthropic" {
-		models = []string{"claude-3-5-haiku-latest", "claude-3-5-sonnet-latest", "Other"}
-	} else {
-		models = []string{"gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-2.5-pro", "Other"}
+	// TIER 3 PERFORMANCE: Attempt dynamic discovery if the provider supports it.
+	var discoverer any
+	switch provider {
+	case "gemini":
+		discoverer, _ = llm.NewGemini(ctx, pc.APIKey, "")
+	case "openai":
+		discoverer = llm.NewOpenAI(pc.APIKey, "")
+	case "anthropic":
+		discoverer, _ = llm.NewAnthropic(pc.APIKey, "")
 	}
+
+	if md, ok := discoverer.(llm.ModelDiscoverer); ok {
+		fmt.Println("I am currently finding the best models, please hang tight!")
+		discovered, err := md.DiscoverModels(ctx)
+		if err == nil && len(discovered) > 0 {
+			models = discovered
+		}
+	}
+
+	if len(models) == 0 {
+		if provider == "openai" {
+			models = []string{"gpt-4o", "gpt-4o-mini", "gpt-3.5-turbo"}
+		} else if provider == "anthropic" {
+			models = []string{"claude-3-5-haiku-latest", "claude-3-5-sonnet-latest"}
+		} else {
+			models = []string{"gemini-2.0-flash-lite", "gemini-2.0-flash", "gemini-1.5-flash"}
+		}
+	}
+	models = append(models, "Other")
 
 	var model string
 	if err := survey.AskOne(&survey.Select{
