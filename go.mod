@@ -5,6 +5,7 @@ go 1.26.1
 require (
 	github.com/PuerkitoBio/goquery v1.11.0
 	github.com/modelcontextprotocol/go-sdk v1.4.1
+	golang.org/x/sync v0.20.0
 )
 
 require (

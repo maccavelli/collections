@@ -21,6 +21,7 @@ Built in Go for speed and concurrent processing, the server utilizes a distribut
     -   **Parallel Querying**: All available providers are queried simultaneously to minimize latency.
     -   **Early Completion**: The engine returns results as soon as the `max_results` threshold is met, canceling pending requests to save resources.
     -   **Intelligent Fallback**: Seamlessly falls back to secondary providers if primary sources are unavailable or return insufficient results.
+-   **Single-flight Request Protection**: Utilizes `golang.org/x/sync/singleflight` to prevent redundant network requests for the same query, ensuring high efficiency even under heavy concurrent load.
 -   **Structured Result Engine**: Converts raw HTML/JSON search results from various sources into a clean, uniform schema optimized for AI consumption.
 
 ### Why it exists (Rationale)

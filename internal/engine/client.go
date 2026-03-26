@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"mcp-server-duckduckgo/internal/config"
+
+	"golang.org/x/sync/singleflight"
 )
 
 // Pre-compiled VQD extraction patterns.
@@ -31,6 +33,7 @@ type SearchEngine struct {
 	Client   *http.Client
 	vqdCache map[string]cacheEntry
 	mu       sync.RWMutex
+	vqdSF    singleflight.Group
 }
 
 // NewSearchEngine initializes an optimized HTTP client for search engine scraping.
@@ -75,7 +78,7 @@ func (e *SearchEngine) newRequest(ctx context.Context, method, u string, body io
 }
 
 func (e *SearchEngine) getVQD(ctx context.Context, query string) (string, error) {
-	// Check Cache
+	// 1. Initial Cache Check (Fast Path)
 	e.mu.RLock()
 	entry, ok := e.vqdCache[query]
 	e.mu.RUnlock()
@@ -85,51 +88,70 @@ func (e *SearchEngine) getVQD(ctx context.Context, query string) (string, error)
 		return entry.vqd, nil
 	}
 
-	slog.Info("VQD cache miss; fetching new token", "query", query)
-	req, err := e.newRequest(ctx, http.MethodGet, "https://duckduckgo.com", http.NoBody)
-	if err != nil {
-		return "", fmt.Errorf("failed to create VQD request: %w", err)
-	}
-
-	q := req.URL.Query()
-	q.Add("q", query)
-	req.URL.RawQuery = q.Encode()
-
-	resp, err := e.Client.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("failed to perform VQD request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("vqd fetch failed with status code: %d", resp.StatusCode)
-	}
-
-	body, err := io.ReadAll(io.LimitReader(resp.Body, config.MaxBodyBytes))
-	if err != nil {
-		return "", fmt.Errorf("failed to read VQD response body: %w", err)
-	}
-
-	for _, re := range vqdPatterns {
-		matches := re.FindSubmatch(body)
-		if len(matches) > 1 {
-			vqd := string(matches[1])
-			// Update Cache
-			e.mu.Lock()
-			// Basic cleanup if over limit
-			if len(e.vqdCache) >= config.VQDCacheLimit {
-				// Simple flush if limit reached, better than OOM
-				slog.Warn("VQD cache limit reached; flushing", "limit", config.VQDCacheLimit)
-				e.vqdCache = make(map[string]cacheEntry)
-			}
-			e.vqdCache[query] = cacheEntry{
-				vqd:       vqd,
-				expiresAt: time.Now().Add(config.VQDCacheTTL),
-			}
-			e.mu.Unlock()
-			return vqd, nil
+	// 2. Use singleflight to prevent redundant VQD fetches for the same query
+	v, err, shared := e.vqdSF.Do(query, func() (interface{}, error) {
+		// Re-check cache inside singleflight to avoid racing
+		e.mu.RLock()
+		entry, ok := e.vqdCache[query]
+		e.mu.RUnlock()
+		if ok && time.Now().Before(entry.expiresAt) {
+			return entry.vqd, nil
 		}
+
+		slog.Info("VQD cache miss; fetching new token", "query", query)
+		req, err := e.newRequest(ctx, http.MethodGet, "https://duckduckgo.com", http.NoBody)
+		if err != nil {
+			return "", fmt.Errorf("failed to create VQD request: %w", err)
+		}
+
+		q := req.URL.Query()
+		q.Add("q", query)
+		req.URL.RawQuery = q.Encode()
+
+		resp, err := e.Client.Do(req)
+		if err != nil {
+			return "", fmt.Errorf("failed to perform VQD request: %w", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			return "", fmt.Errorf("vqd fetch failed with status code: %d", resp.StatusCode)
+		}
+
+		body, err := io.ReadAll(io.LimitReader(resp.Body, config.MaxBodyBytes))
+		if err != nil {
+			return "", fmt.Errorf("failed to read VQD response body: %w", err)
+		}
+
+		for _, re := range vqdPatterns {
+			matches := re.FindSubmatch(body)
+			if len(matches) > 1 {
+				vqd := string(matches[1])
+				// Update Cache
+				e.mu.Lock()
+				if len(e.vqdCache) >= config.VQDCacheLimit {
+					slog.Warn("VQD cache limit reached; flushing", "limit", config.VQDCacheLimit)
+					e.vqdCache = make(map[string]cacheEntry)
+				}
+				e.vqdCache[query] = cacheEntry{
+					vqd:       vqd,
+					expiresAt: time.Now().Add(config.VQDCacheTTL),
+				}
+				e.mu.Unlock()
+				return vqd, nil
+			}
+		}
+
+		return "", fmt.Errorf("could not extract vqd")
+	})
+
+	if err != nil {
+		return "", err
 	}
 
-	return "", fmt.Errorf("could not extract vqd")
+	if shared {
+		slog.Debug("VQD fetch shared across concurrent requests", "query", query)
+	}
+
+	return v.(string), nil
 }
