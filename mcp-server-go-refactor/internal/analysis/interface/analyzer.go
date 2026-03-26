@@ -6,8 +6,10 @@ import (
 	"go/types"
 	"mcp-server-go-refactor/internal/loader"
 	"mcp-server-go-refactor/internal/registry"
+	"sync"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"golang.org/x/sync/errgroup"
 )
 
 // Tool implements the interface discovery tool.
@@ -61,27 +63,46 @@ func DiscoverSharedInterfaces(ctx context.Context, pkgPath string) ([]interfaceS
 		return nil, err
 	}
 
+	var mu sync.Mutex
 	allStructs := make(map[string][]string)
-	for _, pkg := range pkgs {
-		scope := pkg.Types.Scope()
-		for _, name := range scope.Names() {
-			obj := scope.Lookup(name)
-			if _, ok := obj.Type().Underlying().(*types.Struct); ok {
-				// Get methods of the struct (including pointer receivers)
-				ptr := types.NewPointer(obj.Type())
-				ms := types.NewMethodSet(ptr)
-				methods := []string{}
-				for i := 0; i < ms.Len(); i++ {
-					m := ms.At(i).Obj().(*types.Func)
-					if m.Exported() {
-						methods = append(methods, m.Name())
+	g, gCtx := errgroup.WithContext(ctx)
+
+	for _, p := range pkgs {
+		pkg := p
+		g.Go(func() error {
+			scope := pkg.Types.Scope()
+			for _, name := range scope.Names() {
+				select {
+				case <-gCtx.Done():
+					return gCtx.Err()
+				default:
+				}
+
+				obj := scope.Lookup(name)
+				if _, ok := obj.Type().Underlying().(*types.Struct); ok {
+					// Get methods of the struct (including pointer receivers)
+					ptr := types.NewPointer(obj.Type())
+					ms := types.NewMethodSet(ptr)
+					methods := []string{}
+					for i := 0; i < ms.Len(); i++ {
+						m := ms.At(i).Obj().(*types.Func)
+						if m.Exported() {
+							methods = append(methods, m.Name())
+						}
+					}
+					if len(methods) > 0 {
+						mu.Lock()
+						allStructs[name] = methods
+						mu.Unlock()
 					}
 				}
-				if len(methods) > 0 {
-					allStructs[name] = methods
-				}
 			}
-		}
+			return nil
+		})
+	}
+
+	if err := g.Wait(); err != nil {
+		return nil, err
 	}
 
 	// Simple clustering: group structs that share more than 2 methods
