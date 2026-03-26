@@ -18,6 +18,7 @@ The MagicSkills server manages a sophisticated repository of expert-level "skill
 Built in Go for maximum performance and memory efficiency, MagicSkills follows a robust, repository-based architecture:
 
 -   **Multi-Root Knowledge Index**: Can index and serve skills from multiple local or remote directories, allowing for partitioned knowledge bases (e.g., internal corp vs. public community).
+-   **Parallel Skill Discovery**: Uses high-performance parallel directory walking via `errgroup` to rapidly identify and index `SKILL.md` files across complex projects.
 -   **Advanced Scoring Engine**: Uses a BM25-based similarity engine to find the most relevant skill for a given user intent, even if keywords aren't exact.
 -   **Structured Extraction**: Tools like `magicskills_bootstrap` use AST-like parsing to pull actionable task lists directly from YAML/Markdown skill definitions.
 -   **Dynamic Resource Loading**: Skills are treated as dynamic resources that can be updated in real-time without server restarts.
