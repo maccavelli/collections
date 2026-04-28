@@ -16,14 +16,11 @@ import (
 // WebSearch performs a high-concurrency web search by querying DDG and Google.
 // It uses the shared runProviders runner and falls back to Bing only if primaries fail.
 func (e *SearchEngine) WebSearch(ctx context.Context, query string, maxResults int) ([]models.SearchResult, error) {
-	// Standard web search providers
-	providers := []providerFunc{
-		func(c context.Context, q string, m int) ([]models.SearchResult, error) {
-			return e.ddgWebSearch(c, q, m)
-		},
-		func(c context.Context, q string, m int) ([]models.SearchResult, error) {
+	providers := []SearchProvider{
+		&simpleProvider{name: "DuckDuckGo", searchFunc: e.ddgWebSearch},
+		&simpleProvider{name: "Google", searchFunc: func(c context.Context, q string, m int) ([]models.SearchResult, error) {
 			return e.GoogleSearch(c, q, "", m)
-		},
+		}},
 	}
 
 	// We deduplicate based on the URL

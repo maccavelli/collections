@@ -1,10 +1,13 @@
 package main
 
-import "fmt"
+import (
+	"fmt"
+	"os"
+)
 
-// Version is overwritten by build flags
-var Version = "3.2.0"
+// Version is the current version of the DuckDuckGo MCP server.
+var Version = "0.0.0-dev"
 
 func printVersion() {
-	fmt.Printf("mcp-server-duckduckgo version %s\n", Version)
+	fmt.Fprintf(os.Stderr, "mcp-server-duckduckgo version %s\n", Version)
 }

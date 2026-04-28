@@ -2,7 +2,6 @@ package models
 
 import (
 	"fmt"
-	"strings"
 )
 
 // SearchResult represents a single search result from DuckDuckGo or mirrors.
@@ -28,19 +27,50 @@ type SearchMetadata struct {
 }
 
 // SearchResponse represents the formatted response for the MCP tool.
-// It supports a hybrid format with both structured JSON and Markdown content.
 type SearchResponse struct {
-	Type      string          `json:"type"`
-	Metadata  *SearchMetadata `json:"metadata,omitempty"`
-	ResultsMD string          `json:"results_md,omitempty"`
-	Results   []SearchResult  `json:"results,omitempty"`
+	Summary   string `json:"summary"`
+	ResultsMD string `json:"results_md,omitempty"`
+	Data      struct {
+		Type     string          `json:"type"`
+		Metadata *SearchMetadata `json:"metadata"`
+		Results  []SearchResult  `json:"results"`
+	} `json:"data"`
+}
+
+func (r SearchResponse) ToMarkdown() string {
+	res := fmt.Sprintf("# %s Search Results for '%s'\n\n", r.Data.Type, r.Data.Metadata.Query)
+	for i, item := range r.Data.Results {
+		res += fmt.Sprintf("### %d. [%s](%s)\n", i+1, item.Title, item.URL)
+		if item.Description != "" {
+			res += fmt.Sprintf("> %s\n\n", item.Description)
+		} else {
+			res += "\n"
+		}
+	}
+	return res
 }
 
 // SearchResponse20 represents the Structured JSON 2.0 format for media results.
 type SearchResponse20 struct {
-	Version  string          `json:"version"`
-	Metadata *SearchMetadata `json:"metadata"`
-	Results  []MediaResult20 `json:"results"`
+	Summary   string `json:"summary"`
+	ResultsMD string `json:"results_md,omitempty"`
+	Data      struct {
+		Version  string          `json:"version"`
+		Metadata *SearchMetadata `json:"metadata"`
+		Results  []MediaResult20 `json:"results"`
+	} `json:"data"`
+}
+
+func (r SearchResponse20) ToMarkdown() string {
+	res := fmt.Sprintf("# %s Media Results for '%s'\n\n", r.Data.Metadata.SearchType, r.Data.Metadata.Query)
+	for i, item := range r.Data.Results {
+		res += fmt.Sprintf("### %d. %s\n", i+1, item.Title)
+		if item.MediaURL != "" {
+			res += fmt.Sprintf("![%s](%s)\n", item.Title, item.MediaURL)
+		}
+		res += fmt.Sprintf("[View Page](%s)\n\n", item.PageURL)
+	}
+	return res
 }
 
 // MediaResult20 represents a single result in the Structured JSON 2.0 format.
@@ -50,64 +80,7 @@ type MediaResult20 struct {
 	MediaURL     string `json:"media_url,omitempty"`
 	ThumbnailURL string `json:"thumbnail_url,omitempty"`
 	Duration     string `json:"duration,omitempty"`
-	Publisher    string    `json:"publisher,omitempty"`
+	Publisher    string `json:"publisher,omitempty"`
 	Source       string `json:"source,omitempty"`
 }
 
-// ToMarkdown converts search results to a beautifully formatted Markdown string.
-func (r *SearchResponse) ToMarkdown() string {
-	if len(r.Results) == 0 {
-		return "_No results found for the requested query._"
-	}
-
-	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("## Search Results: %s (%s)\n\n", r.Metadata.Query, strings.Title(r.Type)))
-
-	for _, res := range r.Results {
-		switch r.Type {
-		case "images":
-			sb.WriteString(fmt.Sprintf("#### ![%s](%s)\n", res.Title, res.Thumbnail))
-			sb.WriteString(fmt.Sprintf("**[%s](%s)**\n", res.Title, res.URL))
-			if res.Publisher != "" {
-				sb.WriteString(fmt.Sprintf("*Publisher: %s*\n", res.Publisher))
-			}
-		case "videos":
-			sb.WriteString(fmt.Sprintf("#### [%s](%s)\n", res.Title, res.URL))
-			if res.Duration != "" {
-				sb.WriteString(fmt.Sprintf("*Duration: %s*\n", res.Duration))
-			}
-			if res.Thumbnail != "" {
-				sb.WriteString(fmt.Sprintf("![Thumbnail](%s)\n", res.Thumbnail))
-			}
-			if res.Publisher != "" {
-				sb.WriteString(fmt.Sprintf("*Publisher: %s*\n", res.Publisher))
-			}
-		case "books":
-			sb.WriteString(fmt.Sprintf("#### [%s](%s)\n", res.Title, res.URL))
-			if res.Author != "" {
-				sb.WriteString(fmt.Sprintf("**Author:** %s\n", res.Author))
-			}
-			if res.Info != "" {
-				sb.WriteString(fmt.Sprintf("> %s\n", res.Info))
-			}
-		default: // web and news
-			sb.WriteString(fmt.Sprintf("#### [%s](%s)\n", res.Title, res.URL))
-			if res.Description != "" {
-				sb.WriteString(fmt.Sprintf("> %s\n", res.Description))
-			}
-			metaParts := []string{}
-			if res.Source != "" {
-				metaParts = append(metaParts, fmt.Sprintf("Source: %s", res.Source))
-			}
-			if res.Date != "" {
-				metaParts = append(metaParts, fmt.Sprintf("Date: %s", res.Date))
-			}
-			if len(metaParts) > 0 {
-				sb.WriteString(fmt.Sprintf("*%s*\n", strings.Join(metaParts, " | ")))
-			}
-		}
-		sb.WriteString("\n---\n\n")
-	}
-
-	return sb.String()
-}

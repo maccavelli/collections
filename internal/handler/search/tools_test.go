@@ -33,8 +33,8 @@ func TestSearchTool_Handle(t *testing.T) {
 	input := SearchInput{
 		Query:      "test query",
 		MaxResults: 1,
-		Format:     "json",
 	}
+
 
 	// Test Handle
 	_, resp, err := tool.Handle(ctx, &mcp.CallToolRequest{}, input)
@@ -46,7 +46,16 @@ func TestSearchTool_Handle(t *testing.T) {
 	}
 
 	// Verify Name
-	if tool.Name() != "ddg_search_web" {
-		t.Errorf("expected ddg_search_web, got %s", tool.Name())
+	if tool.Name() != "search_web" {
+		t.Errorf("expected search_web, got %s", tool.Name())
 	}
+}
+
+func TestRegister(t *testing.T) {
+	eng := &mockSearchEngine{}
+	Register(eng)
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test"}, &mcp.ServerOptions{})
+	tool := &SearchTool{Engine: eng, Type: "web"}
+	tool.Register(srv)
 }

@@ -42,7 +42,16 @@ func TestMediaTool_Handle(t *testing.T) {
 	}
 
 	// Verify Name
-	if tool.Name() != "ddg_search_images" {
-		t.Errorf("expected ddg_search_images, got %s", tool.Name())
+	if tool.Name() != "search_images" {
+		t.Errorf("expected search_images, got %s", tool.Name())
 	}
+}
+
+func TestRegister(t *testing.T) {
+	eng := &mockMediaEngine{}
+	Register(eng)
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test"}, &mcp.ServerOptions{})
+	tool := &MediaTool{Engine: eng, Type: "images"}
+	tool.Register(srv)
 }

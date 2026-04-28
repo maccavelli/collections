@@ -3,10 +3,13 @@ package search
 import (
 	"context"
 	"fmt"
+	"log/slog"
+	"os"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"mcp-server-duckduckgo/internal/models"
 	"mcp-server-duckduckgo/internal/registry"
+	"mcp-server-duckduckgo/internal/util"
 )
 
 // SearchEngine defines the interface for engine searches.
@@ -25,28 +28,32 @@ type SearchTool struct {
 }
 
 func (t *SearchTool) Name() string {
-	return fmt.Sprintf("ddg_search_%s", t.Type)
+	return fmt.Sprintf("search_%s", t.Type)
 }
 
 type SearchInput struct {
-	Query      string `json:"query" jsonschema:"The search keywords"`
-	MaxResults int    `json:"max_results" jsonschema:"Maximum results to return (default 5). Low counts are faster and more token-efficient."`
-	Format     string `json:"format" jsonschema:"Output format: 'hybrid' (JSON metadata + markdown content), 'json' (pure structured data), or 'markdown' (pure narrative string).,enum=hybrid,enum=json,enum=markdown"`
+	Query      string `json:"query" jsonschema:"The primary search query string to execute"`
+	MaxResults int    `json:"max_results" jsonschema:"The maximum number of search results to return. Default is 5."`
+	Format     string `json:"format" jsonschema:"Output format: 'hybrid', 'json', or 'markdown'.,enum=hybrid,enum=json,enum=markdown"`
 }
 
 func (t *SearchTool) Register(s *mcp.Server) {
-	mcp.AddTool(s, &mcp.Tool{
+	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
 		Description: t.Desc,
 	}, t.Handle)
 }
 
 func (t *SearchTool) Handle(ctx context.Context, request *mcp.CallToolRequest, input SearchInput) (*mcp.CallToolResult, any, error) {
+	slog.Info("[BACKPLANE] [SearchTool] executing search action", "type", t.Type, "query", input.Query, "format", input.Format)
 	if input.MaxResults <= 0 {
 		input.MaxResults = 5
 	}
 	if input.Format == "" {
-		input.Format = "hybrid"
+		input.Format = os.Getenv("DDG_DEFAULT_FORMAT")
+		if input.Format == "" {
+			input.Format = "json"
+		}
 	}
 
 	results, err := t.SearchFunc(ctx, input.Query, input.MaxResults)
@@ -57,24 +64,25 @@ func (t *SearchTool) Handle(ctx context.Context, request *mcp.CallToolRequest, i
 	}
 
 	response := models.SearchResponse{
-		Type: t.Type,
-		Metadata: &models.SearchMetadata{
-			Query:      input.Query,
-			TotalCount: len(results),
-			SearchType: t.Type,
-		},
-		Results: results,
+		Summary: fmt.Sprintf("Found %d %s results for '%s'", len(results), t.Type, input.Query),
 	}
+	response.Data.Type = t.Type
+	response.Data.Metadata = &models.SearchMetadata{
+		Query:      input.Query,
+		TotalCount: len(results),
+		SearchType: t.Type,
+	}
+	response.Data.Results = results
 
 	switch input.Format {
 	case "markdown":
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{&mcp.TextContent{Text: response.ToMarkdown()}},
 		}, nil, nil
-	case "json":
-		return &mcp.CallToolResult{}, response, nil
-	default: // hybrid
+	case "hybrid":
 		response.ResultsMD = response.ToMarkdown()
+		return &mcp.CallToolResult{}, response, nil
+	default: // json
 		return &mcp.CallToolResult{}, response, nil
 	}
 }
@@ -85,18 +93,18 @@ func Register(engine SearchEngine) {
 		Engine:     engine,
 		Type:       "web",
 		SearchFunc: engine.WebSearch,
-		Desc:       "PRIMARY RESEARCH MANDATE: High-concurrency entry point for general intelligence. Call this FIRST for any information retrieval task. Cascades to ddg_search_news for current events or ddg_search_images for visual assets.",
+		Desc:       "[DIRECTIVE: General Internet Discovery] Comprehensive retrieval utilizing the DuckDuckGo index to extract current, real-time web results and engine queries. Keywords: web, internet, websites, online, general-search, urls, text, browse",
 	})
 	registry.Global.Register(&SearchTool{
 		Engine:     engine,
 		Type:       "news",
 		SearchFunc: engine.NewsSearch,
-		Desc:       "TIMELINESS MANDATE: Targeted search for breaking developments and live updates. Call this if ddg_search_web returns stale data or when investigating specific current events. Cascades to ddg_search_web for historical context.",
+		Desc:       "[DIRECTIVE: Live Events and Journalism] Preferred choice for breaking developments, real-time updates, and current timeline information. Keywords: news, press, breaking, events, articles, temporal, journalism, headlines",
 	})
 	registry.Global.Register(&SearchTool{
 		Engine:     engine,
 		Type:       "books",
 		SearchFunc: engine.BookSearch,
-		Desc:       "ACADEMIC AUDIT: Specialized retrieval for authoritative sources, citations, and literary metadata. Call this to verify facts found in ddg_search_web or when performing deep scholarly research. Cascades to ddg_search_web for broader context.",
+		Desc:       "[DIRECTIVE: Academic and Scholarship Lookup] Specialized retrieval of authoritative literature, academic citations, and literary metadata. Keywords: books, academic, scholars, publications, isbn, citations, authors, reading",
 	})
 }

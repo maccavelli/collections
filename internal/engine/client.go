@@ -99,18 +99,40 @@ func (e *SearchEngine) getVQD(ctx context.Context, query string) (string, error)
 		}
 
 		slog.Info("VQD cache miss; fetching new token", "query", query)
-		req, err := e.newRequest(ctx, http.MethodGet, "https://duckduckgo.com", http.NoBody)
-		if err != nil {
-			return "", fmt.Errorf("failed to create VQD request: %w", err)
+		var resp *http.Response
+		var doErr error
+		backoff := 1 * time.Second
+
+		for i := 0; i < 3; i++ {
+			reqCtx, reqCancel := context.WithTimeout(ctx, 15*time.Second)
+			req, err := e.newRequest(reqCtx, http.MethodGet, "https://duckduckgo.com", http.NoBody)
+			if err != nil {
+				reqCancel()
+				return "", fmt.Errorf("failed to create VQD request: %w", err)
+			}
+
+			q := req.URL.Query()
+			q.Add("q", query)
+			req.URL.RawQuery = q.Encode()
+
+			resp, doErr = e.Client.Do(req)
+			if doErr == nil {
+				reqCancel()
+				break
+			}
+			reqCancel()
+
+			slog.Warn("VQD request failed; retrying", "attempt", i+1, "error", doErr)
+			select {
+			case <-ctx.Done():
+				return "", ctx.Err()
+			case <-time.After(backoff):
+				backoff *= 2
+			}
 		}
 
-		q := req.URL.Query()
-		q.Add("q", query)
-		req.URL.RawQuery = q.Encode()
-
-		resp, err := e.Client.Do(req)
-		if err != nil {
-			return "", fmt.Errorf("failed to perform VQD request: %w", err)
+		if doErr != nil {
+			return "", fmt.Errorf("failed to perform VQD request after retries: %w", doErr)
 		}
 		defer resp.Body.Close()
 

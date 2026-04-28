@@ -14,13 +14,11 @@ import (
 
 // VideoSearch performs a high-concurrency video search across multiple providers.
 func (e *SearchEngine) VideoSearch(ctx context.Context, query string, maxResults int) ([]models.SearchResult, error) {
-	providers := []providerFunc{
-		func(c context.Context, q string, m int) ([]models.SearchResult, error) {
-			return e.ddgVideoSearch(c, q, m)
-		},
-		func(c context.Context, q string, m int) ([]models.SearchResult, error) {
+	providers := []SearchProvider{
+		&simpleProvider{name: "DuckDuckGo Videos", searchFunc: e.ddgVideoSearch},
+		&simpleProvider{name: "Google Videos", searchFunc: func(c context.Context, q string, m int) ([]models.SearchResult, error) {
 			return e.GoogleSearch(c, q, "vid", m)
-		},
+		}},
 	}
 
 	dedupeKey := func(r models.SearchResult) string {
