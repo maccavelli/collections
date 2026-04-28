@@ -2,10 +2,13 @@ package metrics
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"mcp-server-go-refactor/internal/models"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -23,11 +26,13 @@ func TestTool_Handle(t *testing.T) {
 
 	// Case 1: Valid package
 	input := ComplexityInput{
-		Pkg: ".",
+		UniversalPipelineInput: models.UniversalPipelineInput{
+			Target: ".",
+		},
 	}
 	req := &mcp.CallToolRequest{}
 
-	resp, _, err := tool.Handle(ctx, req, input)
+	resp, result, err := tool.Handle(ctx, req, input)
 	if err != nil {
 		t.Fatalf("Handle failed unexpectedly: %v", err)
 	}
@@ -35,23 +40,36 @@ func TestTool_Handle(t *testing.T) {
 		t.Errorf("expected success, got error content")
 	}
 
-	// Verify header in output
-	headerFound := false
-	for _, c := range resp.Content {
-		if tc, ok := c.(*mcp.TextContent); ok {
-			if strings.Contains(tc.Text, "Complexity analysis for package") {
-				headerFound = true
-				break
-			}
+	// Verify summary in result
+	summary := ""
+	if m, ok := result.(struct {
+		Summary string        `json:"summary"`
+		Data    *MetricResult `json:"data"`
+	}); ok {
+		summary = m.Summary
+	} else if m, ok := result.(map[string]any); ok {
+		if s, ok := m["summary"].(string); ok {
+			summary = s
+		}
+	} else {
+		// If it's a pointer to the struct
+		data, _ := json.Marshal(result)
+		var m map[string]any
+		json.Unmarshal(data, &m)
+		if s, ok := m["summary"].(string); ok {
+			summary = s
 		}
 	}
-	if !headerFound {
-		t.Error("response content missing complexity analysis header")
+
+	if !strings.Contains(summary, "Complexity analysis for") {
+		t.Errorf("response result missing complexity analysis summary, got: %+v", result)
 	}
 
 	// Case 2: Missing package (error handling)
 	inputErr := ComplexityInput{
-		Pkg: "./non-existent-dir-12345",
+		UniversalPipelineInput: models.UniversalPipelineInput{
+			Target: "./non-existent-dir-12345",
+		},
 	}
 	respErr, _, err := tool.Handle(ctx, req, inputErr)
 	if err != nil {
@@ -72,7 +90,7 @@ func TestCalculateComplexity_Table(t *testing.T) {
 
 	// Simple module scaffold
 	os.WriteFile(filepath.Join(tmp, "go.mod"), []byte("module testmetrics\n\ngo 1.20\n"), 0644)
-	
+
 	code := `
 package testmetrics
 
@@ -92,7 +110,7 @@ func ComplexFlow(a, b bool) int {
 `
 	os.WriteFile(filepath.Join(tmp, "main.go"), []byte(code), 0644)
 
-	result, err := CalculateComplexity(context.Background(), tmp)
+	result, err := CalculateComplexity(context.Background(), nil, tmp)
 	if err != nil {
 		t.Fatalf("CalculateComplexity failed: %v", err)
 	}

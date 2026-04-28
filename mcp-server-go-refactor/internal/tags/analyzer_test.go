@@ -7,8 +7,12 @@ import (
 	"strings"
 	"testing"
 
+	"mcp-server-go-refactor/internal/models"
+
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
+
+func ptr(s string) *string { return &s }
 
 type TagStruct struct {
 	FirstName string
@@ -23,7 +27,7 @@ func TestAnalyzeTags(t *testing.T) {
 	if result == nil {
 		t.Fatal("expected tag modification data")
 	}
-	
+
 	found := false
 	for _, m := range result.Modifications {
 		if m.Field == "FirstName" {
@@ -91,14 +95,14 @@ func TestTool(t *testing.T) {
 	}
 
 	// Test Handle
-	input := TagInput{
-		Pkg:        ".",
-		StructName: "TagStruct",
-		CaseFormat: "snake",
-		TargetTag:  "json",
-	}
 	req := &mcp.CallToolRequest{}
-
+	input := TagInput{
+		UniversalPipelineInput: models.UniversalPipelineInput{
+			Target:  ".",
+			Context: "TagStruct",
+			Flags:   map[string]any{"caseFormat": "snake", "targetTag": "json"},
+		},
+	}
 	res, _, err := tool.Handle(context.Background(), req, input)
 	if err != nil {
 		t.Fatalf("Handle failed: %v", err)
@@ -112,11 +116,14 @@ func TestTool(t *testing.T) {
 	defer os.RemoveAll(tmp)
 	_ = os.WriteFile(filepath.Join(tmp, "go.mod"), []byte("module tags-handle\n\ngo 1.21\n"), 0644)
 	_ = os.WriteFile(filepath.Join(tmp, "example.go"), []byte("package h\ntype MyS struct { F string }\n"), 0644)
-	
-	input.Pkg = tmp
-	input.StructName = "MyS"
-	input.Rewrite = true
 
+	input = TagInput{
+		UniversalPipelineInput: models.UniversalPipelineInput{
+			Target:  tmp,
+			Context: "MyS",
+			Flags:   map[string]any{"rewrite": true},
+		},
+	}
 	_, _, err = tool.Handle(context.Background(), req, input)
 	if err != nil {
 		t.Fatalf("Handle rewrite failed: %v", err)

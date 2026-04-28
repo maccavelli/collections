@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
+	"regexp"
 	"strings"
 	"sync"
 
 	"mcp-server-go-refactor/internal/config"
 	"mcp-server-go-refactor/internal/registry"
+	"mcp-server-go-refactor/internal/util"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -20,14 +23,18 @@ type LogBuffer struct {
 	buf bytes.Buffer
 }
 
+var secretRegex = regexp.MustCompile(`(?i)(token_|sk_|key_|secret_)[a-zA-Z0-9_-]+`)
+
 func (lb *LogBuffer) Write(p []byte) (n int, err error) {
 	lb.mu.Lock()
 	defer lb.mu.Unlock()
 
-	n, err = lb.buf.Write(p)
+	redacted := secretRegex.ReplaceAll(p, []byte("[REDACTED]"))
+	_, err = lb.buf.Write(redacted)
 	if err != nil {
-		return n, err
+		return len(p), err
 	}
+	n = len(p)
 
 	if lb.buf.Len() > config.LogBufferLimit {
 		data := lb.buf.Bytes()
@@ -61,18 +68,27 @@ func (t *GetInternalLogsTool) Name() string {
 	return "get_internal_logs"
 }
 
-func (t *GetInternalLogsTool) Register(s *mcp.Server) {
-	mcp.AddTool(s, &mcp.Tool{
+func (t *GetInternalLogsTool) Register(s util.SessionProvider) {
+	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
-		Description: "SYSTEM MANDATE / AUDIT LOG: Provides a diagnostic window into the server's internal operations. Essential for troubleshooting multi-tool workflows and verifying server state. Call this if tool outputs are unexpected.",
+		Description: "[ROLE: DIAGNOSTIC] SYSTEM LOG INSPECTOR: Provides access to system logs and bug debugging trails for troubleshooting and auditing AI decision-making steps. [Routing Tags: logs, trace, debug, stdout]",
 	}, t.Handle)
 }
 
 type LogsInput struct {
-	MaxLines int `json:"max_lines" jsonschema:"Max log lines to return (default 25)."`
+	SessionID string `json:"session_id,omitempty" jsonschema:"CSSA backend storage pipeline correlation ID."`
+	MaxLines  int    `json:"max_lines" jsonschema:"Max log lines to return (default 25)."`
 }
 
-func (t *GetInternalLogsTool) Handle(_ context.Context, req *mcp.CallToolRequest, input LogsInput) (*mcp.CallToolResult, any, error) {
+func (t *GetInternalLogsTool) Handle(_ context.Context, _ *mcp.CallToolRequest, input LogsInput) (*mcp.CallToolResult, any, error) {
+	isOrchestrator := os.Getenv("MCP_ORCHESTRATOR_OWNED") == "true"
+	if isOrchestrator {
+		// Native anchoring for telemetry and trace logging if orchestrated natively.
+		if input.SessionID != "" {
+			_ = input.SessionID // standard CSSA mappings acknowledged safely
+		}
+	}
+
 	maxLines := config.DefaultLogLines
 	if input.MaxLines > 0 {
 		maxLines = input.MaxLines

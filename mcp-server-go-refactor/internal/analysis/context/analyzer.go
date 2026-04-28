@@ -5,51 +5,128 @@ import (
 	"fmt"
 	"go/ast"
 	"go/types"
+	"log/slog"
+	"mcp-server-go-refactor/internal/engine"
 	"mcp-server-go-refactor/internal/loader"
+	"mcp-server-go-refactor/internal/models"
 	"mcp-server-go-refactor/internal/registry"
+	"mcp-server-go-refactor/internal/util"
+	"os"
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // Tool implements the context propagation analyzer tool.
-type Tool struct{}
+type Tool struct {
+	Engine *engine.Engine
+}
 
 func (t *Tool) Name() string {
 	return "go_context_analyzer"
 }
 
-func (t *Tool) Register(s *mcp.Server) {
-	mcp.AddTool(s, &mcp.Tool{
+func (t *Tool) Register(s util.SessionProvider) {
+	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
-		Description: "RELIABILITY MANDATE / PROPAGATION AUDIT: Audits call chains to ensure robust context propagation, identifying where parent contexts are dropped. Call this before implementing async patterns or distributed traces to ensure system stability.",
+		Description: "[ROLE: ANALYZER] CONTEXT PROPAGATION AUDITOR: Audits call chains to ensure robust propagation, identifying missing ctxs where parent contexts are dropped. Detects broken async patterns and context forwarding in goroutine launches. Produces context propagation violation list. [Routing Tags: context, context.Context, propagate, async-patterns, timeouts, cancel-propagation]",
 	}, t.Handle)
 }
 
 // Register adds the context propagation analyzer tool to the registry.
-func Register() {
-	registry.Global.Register(&Tool{})
+func Register(eng *engine.Engine) {
+	registry.Global.Register(&Tool{Engine: eng})
 }
 
 type ContextInput struct {
-	Pkg string `json:"pkg" jsonschema:"The package path"`
+	models.UniversalPipelineInput
 }
 
 func (t *Tool) Handle(ctx context.Context, req *mcp.CallToolRequest, input ContextInput) (*mcp.CallToolResult, any, error) {
-	findings, err := AnalyzeContext(ctx, input.Pkg)
+	var session *engine.Session
+
+	isOrchestrator := os.Getenv("MCP_ORCHESTRATOR_OWNED") == "true"
+	recallAvailable := isOrchestrator && t.Engine != nil && t.Engine.ExternalClient != nil && t.Engine.ExternalClient.RecallEnabled()
+	if isOrchestrator && !recallAvailable {
+		slog.Warn("[ORCHESTRATOR] recall unavailable — degrading to standalone", "tool", t.Name())
+	}
+
+	if t.Engine != nil {
+		session = t.Engine.LoadSession(ctx, input.Target)
+
+		if recallAvailable {
+			if history := t.Engine.LoadCrossSessionFromRecall(ctx, "gorefactor", input.Target); history != "" {
+				if session.Metadata == nil {
+					session.Metadata = make(map[string]any)
+				}
+				session.Metadata["historical_context"] = history
+			}
+		}
+	}
+
+	findings, err := AnalyzeContext(ctx, input.Target)
 	if err != nil {
 		res := &mcp.CallToolResult{}
 		res.SetError(err)
 		return res, nil, nil
 	}
-	if len(findings) == 0 {
-		return &mcp.CallToolResult{
-			Content: []mcp.Content{&mcp.TextContent{Text: "No context propagation issues found."}},
-		}, nil, nil
+
+	summary := "No context propagation issues found."
+	if len(findings) > 0 {
+		summary = fmt.Sprintf("Found %d context propagation issues in package %s", len(findings), input.Target)
 	}
-	return &mcp.CallToolResult{
-		Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("%+v", findings)}},
-	}, nil, nil
+
+	if session != nil {
+		if session.Metadata == nil {
+			session.Metadata = make(map[string]any)
+		}
+
+		if recallAvailable {
+			ctxStds := t.Engine.EnsureRecallCache(ctx, session, "context_propagation", "search", map[string]interface{}{"namespace": "ecosystem",
+				"query": "Go context propagation standards, cancellation patterns, timeout policy conventions, and distributed tracing standards for " + input.Target,
+				"limit": 15,
+			})
+			session.Metadata["recall_cache_context"] = ctxStds
+
+			if ctxStds != "" {
+				summary += fmt.Sprintf("\n\n[Context Propagation Standards]: %s", ctxStds)
+			}
+		}
+
+		// Pillar metrics for brainstorm learning.
+		session.Metadata["pillar_metrics"] = map[string]any{
+			"pillar":                  "reliability",
+			"context_violation_count": len(findings),
+		}
+
+		// AST faults.
+		if len(findings) > 0 {
+			var astFaults []string
+			if f, ok := session.Metadata["ast_faults"].([]string); ok {
+				astFaults = f
+			}
+			session.Metadata["ast_faults"] = append(astFaults, "context_violation")
+		}
+
+		var diags []string
+		if d, ok := session.Metadata["diagnostics"].([]string); ok {
+			diags = d
+		}
+		session.Metadata["diagnostics"] = append(diags, summary)
+		t.Engine.SaveSession(session)
+
+		if recallAvailable {
+			t.Engine.PublishSessionToRecall(ctx, input.SessionID, input.Target, "context_analyzed", "native", "go_context_analyzer", "", session.Metadata)
+		}
+	}
+
+	return &mcp.CallToolResult{}, struct {
+		Summary string    `json:"summary"`
+		Data    []Finding `json:"data"`
+	}{
+		Summary: summary,
+		Data:    findings,
+	}, nil
 }
 
 type Finding struct {
@@ -141,8 +218,7 @@ func isContextDeprivedCall(info *types.Info, call *ast.CallExpr) bool {
 
 	firstParam := sig.Params().At(0)
 	paramType := firstParam.Type().String()
-	
+
 	// Check if param type is context.Context
 	return strings.Contains(paramType, "context.Context")
 }
-

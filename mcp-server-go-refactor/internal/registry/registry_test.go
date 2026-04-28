@@ -2,6 +2,7 @@ package registry
 
 import (
 	"context"
+	"mcp-server-go-refactor/internal/util"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -15,7 +16,7 @@ func (m *MockTool) Name() string {
 	return m.toolName
 }
 
-func (m *MockTool) Register(s *mcp.Server) {
+func (m *MockTool) Register(s util.SessionProvider) {
 }
 
 func (m *MockTool) Handle(_ context.Context, _ *mcp.CallToolRequest, _ any) (*mcp.CallToolResult, any, error) {

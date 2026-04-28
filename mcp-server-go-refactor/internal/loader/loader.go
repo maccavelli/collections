@@ -3,28 +3,90 @@ package loader
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
-	"log/slog"
-	"strings"
+	"go/ast"
+	"go/parser"
+	"go/token"
+
+	"github.com/tidwall/buntdb"
+	"golang.org/x/sync/singleflight"
+	"golang.org/x/tools/go/packages"
 
 	"mcp-server-go-refactor/internal/runner"
 	"mcp-server-go-refactor/internal/workspace"
-
-	"golang.org/x/tools/go/packages"
 )
 
 // DefaultMode provides the standard set of flags needed for most AST analysis.
 const DefaultMode = packages.NeedName | packages.NeedTypes | packages.NeedSyntax | packages.NeedTypesInfo | packages.NeedImports
 
+// SyntaxMode provides a lightweight set of flags for metric analysis without deep type parsing.
+const SyntaxMode = packages.NeedName | packages.NeedFiles | packages.NeedCompiledGoFiles | packages.NeedSyntax
+
+// cacheTTL controls how long in-memory package entries remain valid.
+const cacheTTL = 10 * time.Minute
+
+// CacheMetrics tracks cache performance with atomic counters.
+type CacheMetrics struct {
+	Hits   uint64
+	Misses uint64
+}
+
+// cacheEntry wraps a cached package set with an expiration timestamp.
+type cacheEntry struct {
+	pkgs    []*packages.Package
+	expires time.Time
+}
+
+// packageCache holds recently loaded package results with TTL-based eviction.
+var packageCache = struct {
+	sync.RWMutex
+	m       map[string]*cacheEntry
+	metrics *CacheMetrics
+}{
+	m:       make(map[string]*cacheEntry),
+	metrics: &CacheMetrics{},
+}
+
+var (
+	discoveryGroup singleflight.Group
+	discoveryCache = struct {
+		sync.RWMutex
+		m map[string]*cachedDiscovery
+	}{m: make(map[string]*cachedDiscovery)}
+)
+
+type cachedDiscovery struct {
+	result  *Result
+	expires time.Time
+}
+
+// GetPackageCacheMetrics returns a snapshot of the in-memory package cache performance.
+func GetPackageCacheMetrics() (hits, misses uint64, entries int) {
+	hits = atomic.LoadUint64(&packageCache.metrics.Hits)
+	misses = atomic.LoadUint64(&packageCache.metrics.Misses)
+	packageCache.RLock()
+	entries = len(packageCache.m)
+	packageCache.RUnlock()
+	return
+}
+
 // ResolveDir identifies the working directory and pattern to use for a given package path.
-// Deprecated: use LoadWorkspace instead for better metadata.
+// Deprecated: use Discover() instead. This function lacks sentinel walk-up and module context.
 func ResolveDir(pkgPath string) (dir string, pattern string) {
+	slog.Warn("ResolveDir called — use loader.Discover() for sentinel-aware resolution", "pkg", pkgPath)
 	p := strings.TrimSpace(pkgPath)
 	recursive := false
 	if strings.HasSuffix(p, "...") {
@@ -61,10 +123,80 @@ type Result struct {
 }
 
 // Discover takes an input path and resolves its workspace context using 'go list'.
-// Discover takes an input path and resolves its workspace context using 'go list'.
 func Discover(ctx context.Context, pkgPath string) (*Result, error) {
 	p, recursive := parsePath(pkgPath)
 	abs, isLocal := resolveAbsPath(p)
+
+	// Check singleflight TTL global cache
+	discoveryCache.RLock()
+	if entry, ok := discoveryCache.m[abs]; ok && time.Now().Before(entry.expires) {
+		discoveryCache.RUnlock()
+		return entry.result, nil
+	}
+	discoveryCache.RUnlock()
+
+	v, err, _ := discoveryGroup.Do(abs, func() (interface{}, error) {
+		res, err := executeDiscovery(ctx, pkgPath, p, abs, isLocal, recursive)
+		if err != nil {
+			return nil, err
+		}
+		discoveryCache.Lock()
+		discoveryCache.m[abs] = &cachedDiscovery{
+			result:  res,
+			expires: time.Now().Add(5 * time.Minute),
+		}
+		discoveryCache.Unlock()
+		return res, nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+	return v.(*Result), nil
+}
+
+func fastLocalResolve(modPath string) string {
+	data, err := os.ReadFile(modPath)
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "module ") {
+			return strings.TrimSpace(strings.TrimPrefix(line, "module "))
+		}
+	}
+	return ""
+}
+
+func executeDiscovery(ctx context.Context, pkgPath, p, abs string, isLocal, recursive bool) (*Result, error) {
+	// FAST-PATH: File-System Short Circuit avoids `go list` subprocess completely
+	if isLocal {
+		modPath := filepath.Join(abs, "go.mod")
+		if _, err := os.Stat(modPath); err == nil {
+			modName := fastLocalResolve(modPath)
+			if modName != "" {
+				rel := "."
+				if recursive {
+					rel = "./..."
+				}
+				wInfo := &workspace.Info{
+					AbsPath:       abs,
+					ModuleRoot:    abs,
+					ModuleName:    modName,
+					RelativePkg:   "./",
+					IsModule:      true,
+					DiscoveryType: "fast-local",
+				}
+				slog.Debug("fast-path workspace discovery", "root", abs)
+				return &Result{
+					Workspace: wInfo,
+					Runner:    runner.New(wInfo.ModuleRoot),
+					Pattern:   wInfo.ResolvePattern(rel),
+				}, nil
+			}
+		}
+	}
 
 	// 1. Try to get module/package info via 'go list'
 	res, serr, err := discoverViaGoList(ctx, p, abs, isLocal, recursive)
@@ -78,7 +210,7 @@ func Discover(ctx context.Context, pkgPath string) (*Result, error) {
 			return res, nil
 		}
 	}
-	
+
 	// 3. Fallback for local paths if 'go list' failed
 	if isLocal {
 		if ws, err := workspace.Discover(ctx, p); err == nil {
@@ -94,7 +226,7 @@ func Discover(ctx context.Context, pkgPath string) (*Result, error) {
 		}
 	}
 
-	return nil, fmt.Errorf("failed to discover workspace for %s: %s", pkgPath, serr)
+	return nil, fmt.Errorf("failed to discover workspace for %s: %w: %s", pkgPath, err, serr)
 }
 
 func tryNeighborDiscovery(ctx context.Context, pkgPath string) (*Result, error) {
@@ -170,7 +302,7 @@ func resolveAbsPath(p string) (abs string, isLocal bool) {
 }
 
 func discoverViaGoList(ctx context.Context, p, abs string, isLocal, recursive bool) (*Result, string, error) {
-	tctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	tctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
 	var listArgs []string
@@ -206,7 +338,7 @@ func discoverViaGoList(ctx context.Context, p, abs string, isLocal, recursive bo
 	if p == "all" || p == "..." {
 		listArgs = []string{"list", "-m", "-json", "main"}
 	}
-	
+
 	cmd := exec.CommandContext(tctx, "go", listArgs...)
 	if dir != "" {
 		cmd.Dir = dir
@@ -217,7 +349,7 @@ func discoverViaGoList(ctx context.Context, p, abs string, isLocal, recursive bo
 	cmd.Stderr = &serr
 
 	if err := cmd.Run(); err != nil {
-		return nil, serr.String(), err
+		return nil, serr.String(), fmt.Errorf("go list failed: %w", err)
 	}
 
 	// Unmarshal and resolve result
@@ -283,6 +415,39 @@ func LoadPackages(ctx context.Context, pkgPath string, mode packages.LoadMode) (
 	if err != nil {
 		return nil, err
 	}
+	// Check early if path isn't local
+	if strings.HasPrefix(res.Pattern, "./") {
+		full := filepath.Join(res.Workspace.ModuleRoot, strings.TrimPrefix(res.Pattern, "./"))
+		if strings.HasSuffix(full, "/...") {
+			full = strings.TrimSuffix(full, "/...")
+		} else if strings.HasSuffix(full, "...") {
+			full = strings.TrimSuffix(full, "...")
+		}
+		if _, err := os.Stat(full); err != nil {
+			return nil, fmt.Errorf("local path not found: %s", full)
+		}
+	}
+	return LoadPackagesWithResult(ctx, res, mode, pkgPath)
+}
+
+// LoadPackagesWithResult bypasses the Discover subprocess overhead if the Result is already known.
+func LoadPackagesWithResult(ctx context.Context, res *Result, mode packages.LoadMode, pkgPath string) ([]*packages.Package, error) {
+	cacheKey := fmt.Sprintf("%s:%s:%d", res.Workspace.ModuleRoot, res.Pattern, mode)
+
+	// Check for content-hash invalidation via go.mod/go.sum
+	modHash := moduleContentHash(res.Workspace.ModuleRoot)
+	fullKey := cacheKey + ":" + modHash
+
+	packageCache.RLock()
+	if entry, ok := packageCache.m[fullKey]; ok && time.Now().Before(entry.expires) {
+		packageCache.RUnlock()
+		atomic.AddUint64(&packageCache.metrics.Hits, 1)
+		slog.Debug("cache hit for packages", "key", cacheKey)
+		return entry.pkgs, nil
+	}
+	packageCache.RUnlock()
+
+	atomic.AddUint64(&packageCache.metrics.Misses, 1)
 
 	cfg := &packages.Config{
 		Mode:    mode,
@@ -291,21 +456,14 @@ func LoadPackages(ctx context.Context, pkgPath string, mode packages.LoadMode) (
 		Dir:     res.Workspace.ModuleRoot,
 	}
 
-	slog.Info("loading packages", "root", res.Workspace.ModuleRoot, "pattern", res.Pattern)
-	
-	// Early check: if pattern is relative and path does not exist, fail clearly
-	if strings.HasPrefix(res.Pattern, "./") {
-		full := filepath.Join(res.Workspace.ModuleRoot, strings.TrimPrefix(res.Pattern, "./"))
-		if strings.HasSuffix(full, "/...") {
-			full = strings.TrimSuffix(full, "/...")
-		} else if strings.HasSuffix(full, "...") {
-			full = strings.TrimSuffix(full, "...")
-		}
-		
-		if _, err := os.Stat(full); err != nil {
-			return nil, fmt.Errorf("local path not found: %s", full)
+	// Inject optimized parser if types are not needed
+	if mode&packages.NeedTypesInfo == 0 {
+		cfg.ParseFile = func(fset *token.FileSet, filename string, src []byte) (*ast.File, error) {
+			return parser.ParseFile(fset, filename, src, parser.SkipObjectResolution|parser.ParseComments)
 		}
 	}
+
+	slog.Info("loading packages (cache miss)", "root", res.Workspace.ModuleRoot, "pattern", res.Pattern)
 
 	pkgs, err := packages.Load(cfg, res.Pattern)
 	if err != nil {
@@ -323,5 +481,71 @@ func LoadPackages(ctx context.Context, pkgPath string, mode packages.LoadMode) (
 		}
 	}
 
+	packageCache.Lock()
+	packageCache.m[fullKey] = &cacheEntry{
+		pkgs:    pkgs,
+		expires: time.Now().Add(cacheTTL),
+	}
+	packageCache.Unlock()
+
 	return pkgs, nil
+}
+
+// moduleContentHash returns a SHA-256 hash of go.mod + go.sum for invalidation.
+func moduleContentHash(moduleRoot string) string {
+	h := sha256.New()
+	for _, name := range []string{"go.mod", "go.sum"} {
+		f, err := os.Open(filepath.Join(moduleRoot, name))
+		if err != nil {
+			continue
+		}
+		if _, err := io.Copy(h, f); err != nil {
+			slog.Warn("cache invalidation partial hash generation failed", "file", name, "err", err)
+		}
+		f.Close()
+	}
+	return hex.EncodeToString(h.Sum(nil))[:16]
+}
+
+// CachedEvaluate wraps an execution block with BuntDB persistence if the file/package hash has not changed.
+func CachedEvaluate[T any](db *buntdb.DB, cachePrefix string, moduleRoot string, evaluate func() (T, error)) (T, error) {
+	if db == nil {
+		return evaluate()
+	}
+	modHash := moduleContentHash(moduleRoot)
+	// Hierarchical Prefix Standardization: e.g. "go-refactor:metrics:complexity:<hash>"
+	fullKey := fmt.Sprintf("%s:%s", cachePrefix, modHash)
+
+	var result T
+
+	err := db.View(func(tx *buntdb.Tx) error {
+		val, err := tx.Get(fullKey)
+		if err != nil {
+			return err
+		}
+		// JSON powers BuntDB Spatial Indexing
+		return json.Unmarshal([]byte(val), &result)
+	})
+
+	if err == nil {
+		slog.Debug("BuntDB cache hit", "key", fullKey)
+		return result, nil
+	}
+
+	result, err = evaluate()
+	if err != nil {
+		return result, err
+	}
+
+	if data, mErr := json.Marshal(result); mErr == nil {
+		if errUpdate := db.Update(func(tx *buntdb.Tx) error {
+			// Ephemeral Sandboxing auto-GC: Clean cache after 4 hours
+			_, _, err := tx.Set(fullKey, string(data), &buntdb.SetOptions{Expires: true, TTL: 4 * time.Hour})
+			return err
+		}); errUpdate != nil {
+			slog.Warn("failed to update BuntDB cache", "err", errUpdate)
+		}
+	}
+
+	return result, nil
 }

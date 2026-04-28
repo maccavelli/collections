@@ -4,45 +4,120 @@ import (
 	"context"
 	"fmt"
 	"go/ast"
+	"log/slog"
+	"os"
+
+	"mcp-server-go-refactor/internal/engine"
 	"mcp-server-go-refactor/internal/loader"
+	"mcp-server-go-refactor/internal/models"
 	"mcp-server-go-refactor/internal/registry"
+	"mcp-server-go-refactor/internal/util"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // Tool implements the doc generator tool.
-type Tool struct{}
+type Tool struct {
+	Engine *engine.Engine
+}
 
 func (t *Tool) Name() string {
 	return "go_doc_generator"
 }
 
-func (t *Tool) Register(s *mcp.Server) {
-	mcp.AddTool(s, &mcp.Tool{
+func (t *Tool) Register(s util.SessionProvider) {
+	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
-		Description: "QUALITY MANDATE / DOC AUDIT: Audits the codebase for exported types, functions, and variables that lack Go documentation comments. Call this as a final quality gate to ensure API accessibility. Cascades to go_test_coverage_tracer.",
+		Description: "[ROLE: ANALYZER] DOCUMENTATION AUDITOR: Audits the codebase for missing comments, and writes compliant docs substituting undocumented public API surface with generated godoc suggestions. Produces undocumented symbol list.",
 	}, t.Handle)
 }
 
 // Register adds the doc generator tool to the registry.
-func Register() {
-	registry.Global.Register(&Tool{})
+func Register(eng *engine.Engine) {
+	registry.Global.Register(&Tool{Engine: eng})
 }
 
 type DocInput struct {
-	Pkg string `json:"pkg" jsonschema:"The package path to audit"`
+	models.UniversalPipelineInput
 }
 
 func (t *Tool) Handle(ctx context.Context, req *mcp.CallToolRequest, input DocInput) (*mcp.CallToolResult, any, error) {
-	docs, err := GenerateDocs(ctx, input.Pkg)
+	var session *engine.Session
+
+	isOrchestrator := os.Getenv("MCP_ORCHESTRATOR_OWNED") == "true"
+	recallAvailable := isOrchestrator && t.Engine != nil && t.Engine.ExternalClient != nil && t.Engine.ExternalClient.RecallEnabled()
+	if isOrchestrator && !recallAvailable {
+		slog.Warn("[ORCHESTRATOR] recall unavailable — degrading to standalone", "tool", t.Name())
+	}
+
+	if t.Engine != nil {
+		session = t.Engine.LoadSession(ctx, input.Target)
+	}
+
+	docs, err := GenerateDocs(ctx, input.Target)
 	if err != nil {
 		res := &mcp.CallToolResult{}
 		res.SetError(err)
 		return res, nil, nil
 	}
-	return &mcp.CallToolResult{
-		Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("%+v", docs)}},
-	}, nil, nil
+	summary := "All exported symbols have documentation."
+	if len(docs.MissingComments) > 0 {
+		summary = fmt.Sprintf("Found %d undocumented exported symbols in %s", len(docs.MissingComments), input.Target)
+	}
+
+	if session != nil {
+		if session.Metadata == nil {
+			session.Metadata = make(map[string]any)
+		}
+
+		if recallAvailable {
+			godocStds := t.Engine.EnsureRecallCache(ctx, session, "godoc_standards", "search", map[string]interface{}{"namespace": "ecosystem",
+				"query":       "godoc formatting conventions standard",
+				"package":     input.Target,
+				"symbol_type": "func",
+				"limit":       10,
+			})
+			session.Metadata["recall_cache_godoc"] = godocStds
+
+			if godocStds != "" {
+				summary += fmt.Sprintf("\n\n[Godoc Documentation Standards]: %s", godocStds)
+			}
+		}
+
+		// Pillar metrics for brainstorm learning.
+		session.Metadata["pillar_metrics"] = map[string]any{
+			"pillar":             "maintainability",
+			"undocumented_count": len(docs.MissingComments),
+		}
+
+		// AST faults.
+		if len(docs.MissingComments) > 0 {
+			var astFaults []string
+			if f, ok := session.Metadata["ast_faults"].([]string); ok {
+				astFaults = f
+			}
+			session.Metadata["ast_faults"] = append(astFaults, "missing_documentation")
+		}
+
+		var diags []string
+		if d, ok := session.Metadata["diagnostics"].([]string); ok {
+			diags = d
+		}
+		session.Metadata["diagnostics"] = append(diags, summary)
+		t.Engine.SaveSession(session)
+
+		if recallAvailable {
+			t.Engine.PublishSessionToRecall(ctx, input.SessionID, input.Target, "docs_generated", "native", "go_doc_generator", "", session.Metadata)
+		}
+	}
+
+	return &mcp.CallToolResult{}, struct {
+		Summary string      `json:"summary"`
+		Data    *DocSummary `json:"data"`
+	}{
+		Summary: summary,
+		Data:    docs,
+	}, nil
 }
 
 // DocSummary contains identified public definitions lacking comments.
@@ -85,4 +160,3 @@ func GenerateDocs(ctx context.Context, pkgPath string) (*DocSummary, error) {
 		MissingComments: missing,
 	}, nil
 }
-

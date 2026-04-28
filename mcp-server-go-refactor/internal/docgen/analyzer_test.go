@@ -38,4 +38,3 @@ func TestGenerateDocs(t *testing.T) {
 		t.Errorf("expected ExportedTypeMissingDoc in missing comments")
 	}
 }
-

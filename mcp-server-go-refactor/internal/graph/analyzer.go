@@ -3,46 +3,120 @@ package graph
 import (
 	"context"
 	"fmt"
+	"log/slog"
+	"mcp-server-go-refactor/internal/engine"
 	"mcp-server-go-refactor/internal/loader"
+	"mcp-server-go-refactor/internal/models"
 	"mcp-server-go-refactor/internal/registry"
+	"mcp-server-go-refactor/internal/util"
+	"os"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"golang.org/x/tools/go/packages"
 )
 
 // Tool implements the package cycle and callgraph tools.
-type Tool struct{}
+type Tool struct {
+	Engine *engine.Engine
+}
 
 func (t *Tool) Name() string {
 	return "go_package_cycler"
 }
 
-func (t *Tool) Register(s *mcp.Server) {
-	mcp.AddTool(s, &mcp.Tool{
+func (t *Tool) Register(s util.SessionProvider) {
+	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
-		Description: "ARCHITECTURE MANDATE / CYCLE DETECTION: Maps internal dependency graph to identify cyclic imports that prevent compilation. Call this before large-scale refactors to ensures clean, unidirectional flow. Cascades to go_dependency_impact.",
+		Description: "[ROLE: ANALYZER] CYCLIC IMPORT DETECTOR: Traces, finds, and reports import cycles by walking the package dependency graph. Detects circular dependencies that cause compilation failures and suggest restructuring. Produces cycle detection result for dependency restructuring.",
 	}, t.Handle)
 }
 
 // Register adds the package cycler tool to the registry.
-func Register() {
-	registry.Global.Register(&Tool{})
+func Register(eng *engine.Engine) {
+	registry.Global.Register(&Tool{Engine: eng})
 }
 
 type CyclerInput struct {
-	Pkg string `json:"pkg" jsonschema:"The root package to analyze"`
+	models.UniversalPipelineInput
 }
 
 func (t *Tool) Handle(ctx context.Context, req *mcp.CallToolRequest, input CyclerInput) (*mcp.CallToolResult, any, error) {
-	result, err := AnalyzeCycles(ctx, input.Pkg)
+	var session *engine.Session
+
+	isOrchestrator := os.Getenv("MCP_ORCHESTRATOR_OWNED") == "true"
+	recallAvailable := isOrchestrator && t.Engine != nil && t.Engine.ExternalClient != nil && t.Engine.ExternalClient.RecallEnabled()
+	if isOrchestrator && !recallAvailable {
+		slog.Warn("[ORCHESTRATOR] recall unavailable — degrading to standalone", "tool", t.Name())
+	}
+
+	if t.Engine != nil {
+		session = t.Engine.LoadSession(ctx, input.Target)
+	}
+
+	result, err := AnalyzeCycles(ctx, input.Target)
 	if err != nil {
 		res := &mcp.CallToolResult{}
 		res.SetError(err)
 		return res, nil, nil
 	}
-	return &mcp.CallToolResult{
-		Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("%+v", result)}},
-	}, nil, nil
+	summary := "No import cycles detected."
+	if result.HasCycle {
+		summary = fmt.Sprintf("Import cycle detected in %s: %v", input.Target, result.Path)
+	}
+
+	if session != nil {
+		if session.Metadata == nil {
+			session.Metadata = make(map[string]any)
+		}
+
+		if recallAvailable {
+			cycleStds := t.Engine.EnsureRecallCache(ctx, session, "import_cycles", "search", map[string]interface{}{"namespace": "ecosystem",
+				"query": "Go import cycle resolution standards, dependency inversion patterns, and package structure conventions for " + input.Target,
+				"limit": 10,
+			})
+			session.Metadata["recall_cache_cycles"] = cycleStds
+
+			if cycleStds != "" {
+				summary += fmt.Sprintf("\n\n[Import Cycle Resolution Standards]: %s", cycleStds)
+			}
+		}
+
+		// Pillar metrics for brainstorm learning.
+		session.Metadata["pillar_metrics"] = map[string]any{
+			"pillar":            "modularization",
+			"has_cycles":        result.HasCycle,
+			"cycle_path_length": len(result.Path),
+		}
+
+		var diags []string
+		if d, ok := session.Metadata["diagnostics"].([]string); ok {
+			diags = d
+		}
+		session.Metadata["diagnostics"] = append(diags, summary)
+
+		// AST faults.
+		if result.HasCycle {
+			var astFaults []string
+			if f, ok := session.Metadata["ast_faults"].([]string); ok {
+				astFaults = f
+			}
+			session.Metadata["ast_faults"] = append(astFaults, "cyclic_import")
+		}
+
+		t.Engine.SaveSession(session)
+
+		if recallAvailable {
+			t.Engine.PublishSessionToRecall(ctx, input.SessionID, input.Target, "cycles_detected", "native", "go_package_cycler", "", session.Metadata)
+		}
+	}
+
+	return &mcp.CallToolResult{}, struct {
+		Summary string       `json:"summary"`
+		Data    *CycleResult `json:"data"`
+	}{
+		Summary: summary,
+		Data:    result,
+	}, nil
 }
 
 // CycleResult represents the shortest path of a detected import cycle.

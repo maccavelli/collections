@@ -48,7 +48,7 @@ func TestIsContextDeprivedCall(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			// Actually isContextDeprivedCall checks if the FIRST ARG of 'call' is context.Background()
-			
+
 			dummyCall := &ast.CallExpr{
 				Fun: &ast.Ident{Name: "SomeFunc"},
 				Args: []ast.Expr{

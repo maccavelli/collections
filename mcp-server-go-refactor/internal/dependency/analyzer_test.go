@@ -6,6 +6,9 @@ import (
 	"path/filepath"
 	"testing"
 
+	"mcp-server-go-refactor/internal/engine"
+	"mcp-server-go-refactor/internal/models"
+
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -22,7 +25,7 @@ func TestDependencyTool(t *testing.T) {
 
 	// Test Handle
 	input := ImpactInput{
-		Pkg: tmp,
+		UniversalPipelineInput: models.UniversalPipelineInput{Target: tmp},
 	}
 	req := &mcp.CallToolRequest{}
 
@@ -36,5 +39,6 @@ func TestDependencyTool(t *testing.T) {
 }
 
 func TestRegister(t *testing.T) {
-	Register()
+	e := &engine.Engine{}
+	Register(e)
 }

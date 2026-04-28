@@ -9,17 +9,20 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
+
+	"golang.org/x/mod/modfile"
 )
 
 // Info holds the metadata for a Go workspace/module context.
 type Info struct {
-	AbsPath      string // Input absolute path (physically resolved)
-	ModuleRoot   string // Nearest go.mod or go.work directory
-	ModuleName   string // Module name (empty if Workspace)
-	RelativePkg  string // Package relative to ModuleRoot (e.g. ./internal/loader)
-	IsModule     bool   // True if within a Go module
-	IsWorkspace  bool   // True if using go.work
+	AbsPath       string // Input absolute path (physically resolved)
+	ModuleRoot    string // Nearest go.mod or go.work directory
+	ModuleName    string // Module name (empty if Workspace)
+	RelativePkg   string // Package relative to ModuleRoot (e.g. ./internal/loader)
+	IsModule      bool   // True if within a Go module
+	IsWorkspace   bool   // True if using go.work
 	DiscoveryType string // "go.mod", "go.work", "vcs", "fallback"
 }
 
@@ -38,9 +41,9 @@ type ModuleInfo struct {
 
 // PackageInfo represents the JSON output from 'go list -json .'.
 type PackageInfo struct {
-	ImportPath string `json:"ImportPath"`
+	ImportPath string      `json:"ImportPath"`
 	Module     *ModuleInfo `json:"Module"`
-	Dir        string `json:"Dir"`
+	Dir        string      `json:"Dir"`
 }
 
 // Discover takes an input path and resolves its workspace context using a robust tiered approach.
@@ -182,7 +185,19 @@ type goEnv struct {
 	GOWORK string
 }
 
+var (
+	goEnvCache = make(map[string]*goEnv)
+	goEnvMutex sync.RWMutex
+)
+
 func getGoEnv(ctx context.Context, dir string) (*goEnv, error) {
+	goEnvMutex.RLock()
+	if env, ok := goEnvCache[dir]; ok {
+		goEnvMutex.RUnlock()
+		return env, nil
+	}
+	goEnvMutex.RUnlock()
+
 	tctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 
@@ -197,20 +212,27 @@ func getGoEnv(ctx context.Context, dir string) (*goEnv, error) {
 	if err := json.Unmarshal(out, &env); err != nil {
 		return nil, err
 	}
+
+	goEnvMutex.Lock()
+	goEnvCache[dir] = &env
+	goEnvMutex.Unlock()
+
 	return &env, nil
 }
 
 func getModuleName(ctx context.Context, root string) string {
-	tctx, cancel := context.WithTimeout(ctx, 2*time.Second)
-	defer cancel()
-
-	cmd := exec.CommandContext(tctx, "go", "list", "-m", "-f", "{{.Path}}")
-	cmd.Dir = root
-	out, err := cmd.Output()
+	modPath := filepath.Join(root, "go.mod")
+	data, err := os.ReadFile(modPath)
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(string(out))
+
+	f, err := modfile.Parse(modPath, data, nil)
+	if err != nil || f == nil || f.Module == nil || f.Module.Mod.Path == "" {
+		return ""
+	}
+
+	return f.Module.Mod.Path
 }
 
 func isVCSRoot(root string) bool {
