@@ -4,20 +4,29 @@ import (
 	"context"
 	"testing"
 
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"mcp-server-brainstorm/internal/engine"
+	"mcp-server-brainstorm/internal/models"
+	"mcp-server-brainstorm/internal/state"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/tidwall/buntdb"
 )
 
 func TestCaptureDecisionTool_Handle(t *testing.T) {
-	eng := engine.NewEngine(".")
+	db, _ := buntdb.Open(":memory:")
+	defer db.Close()
+	eng := engine.NewEngine(".", db)
+	mgr := state.NewManager(".")
 	tool := &CaptureDecisionTool{
-		Engine: eng,
+		Engine:  eng,
+		Manager: mgr,
 	}
 
 	ctx := context.Background()
 	input := DecisionInput{
-		Decision:     "Select PostgreSQL as the primary database.",
-		Alternatives: "MongoDB, DynamoDB",
+		UniversalPipelineInput: models.UniversalPipelineInput{
+			Context: "Select PostgreSQL as the primary database. Alternatives: MongoDB, DynamoDB",
+		},
 	}
 
 	// Test Handle
@@ -34,3 +43,5 @@ func TestCaptureDecisionTool_Handle(t *testing.T) {
 		t.Errorf("expected capture_decision_logic, got %s", tool.Name())
 	}
 }
+
+// TestRegister removed because tools are now registered via macro tools.

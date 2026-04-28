@@ -1,15 +1,14 @@
 package registry
 
 import (
+	"mcp-server-brainstorm/internal/util"
 	"sync"
-
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // Tool defines the interface for an MCP tool compatible with the official SDK.
 type Tool interface {
 	Name() string
-	Register(s *mcp.Server)
+	Register(s util.SessionProvider)
 }
 
 // Registry manages tool registration.

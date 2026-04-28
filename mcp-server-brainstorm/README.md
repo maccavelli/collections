@@ -1,94 +1,94 @@
-# Brainstorm Server
+# 🧠 Brainstorm MCP Server
 
-A powerful MCP server designed to facilitate deep technical brainstorming, project discovery, and architectural decision-making through a Socratic, adversarial approach.
+A powerful Model Context Protocol (MCP) server designed to facilitate deep technical brainstorming, project discovery,
+and architectural decision-making through a Socratic, adversarial approach.
 
-## Overview
+## 🚀 Overview
 
-The Brainstorm server helps engineers and architects stress-test designs, identify project gaps, and document decisions. It bridges the gap between raw LLM analysis and complex project context by providing structured rubrics, automated discovery, and a proactive clarification engine.
+The Brainstorm server helps engineers and architects stress-test designs, identify project gaps, and document decisions.
+It bridges the gap between raw LLM analysis and complex project context by providing structured rubrics, automated
+discovery, and a proactive clarification engine.
 
-### What it does (Core Pillars)
+### 📋 Core Pillars
 
-1.  **Requirement Grounding**: Proactively identifies architectural "decision forks" (e.g., Database choice, Auth strategy) and uses Socratic questioning to force precise definitions before implementation.
-2.  **Discovery**: Unified scanning of project structure, technology stacks, and documentation to identify gaps or technical debt.
-3.  **Design Analysis**: Interactive stress-testing using adversarial personas (Red Teaming) and multi-dimensional quality rubrics (Scalability, Security, Modularity).
-4.  **Decision Tracking**: Capturing architectural logic and rejected alternatives into structured Architecture Decision Records (ADR).
+1. **Requirement Grounding**: Proactively identifies architectural "decision forks" (e.g., Database choice, Auth
+   strategy) and uses Socratic questioning to force precise definitions.
+2. **Discovery**: Unified scanning of project structure, technology stacks, and documentation to identify gaps or
+   technical debt.
+3. **Design Analysis**: Interactive stress-testing using adversarial personas (Red Teaming) and multi-dimensional
+   quality rubrics (Scalability, Security, Modularity).
+4. **Decision Tracking**: Capturing architectural logic and rejected alternatives into structured Architecture Decision
+   Records (ADR).
 
-### How it works (Architecture)
+---
 
-Built in Go for performance and reliability, the server follows a modular, provider-centric architecture:
+## 🛠️ Tools
 
--   **Clarification Engine**: Triggers Socratic prompts when ambiguous components (Database, Auth, API, Queue) are mentioned without sufficient constraints.
--   **Unified Processing Engine**: Core reasoning is partitioned into specialized providers (`Discovery`, `Design`, `Decision`), allowing for high-density analysis within a single tool invocation.
--   **Socratic & Red-Teaming Integration**: The `critique_design` tool uses a multi-dimensional persona system to simultaneously audit for quality attributes, security risks, and architectural blind spots.
--   **High-Concurrency Discovery**: Implements parallel file-system scanning and AST logic using `errgroup`, allowing for rapid identification of project gaps in larger codebases.
--   **Context-Aware Analytics**: Tools maintain awareness of previous project states via the internal `.brainstorm.json` manifest.
--   **MCP Provider**: Implements a standard JSON-RPC 2.0 interface for seamless integration into any AI-driven development workflow.
+### `clarify_requirements`
 
-### Why it exists (Rationale)
+Analyzes high-level requirements to detect architectural "decision forks".
 
-LLMs often suffer from "default compliance," agreeing with flawed designs to avoid conflict. The Brainstorm server provides:
+- **Parameter**: `requirements` (string)
+- **Usage**: Use this at the start of any project to resolve ambiguity early.
 
--   **Early Ambiguity Detection**: Flags "Decision Forks" early to prevent expensive downstream re-architecture.
--   **Forced Contention**: Systematic "Red Team" analysis to find non-obvious failure modes.
--   **Socratic Scrutiny**: Questions the underlying assumptions of a proposal rather than just suggesting syntax.
--   **Institutional Memory**: Documentation of decision logic that persists beyond a single terminal session.
+### `discover_project`
 
-## Tools
+Performs a unified scan of the project structure and technology stack.
 
-### Requirement Clarification
--   `clarify_requirements(requirements)`: Analyzes high-level requirements to detect architectural "decision forks" (e.g., SQL vs NoSQL, JWT vs Session). It generates targeted Socratic questions to resolve ambiguity early.
+- **Parameter**: `path` (string, optional)
+- **Usage**: Identify documentation gaps and suggest critical next steps.
 
-### Discovery & Analytics
--   `discover_project([path])`: Performs a unified scan of the project structure and technology stack to identify documentation gaps and suggest critical next steps.
--   `get_internal_logs(max_lines)`: Retrieves the most recent internal server logs for transparency and debugging.
+### `critique_design`
 
-### Architectural Critique
--   `critique_design(design)`: Provides a consolidated, multi-dimensional assessment of a design snippet, using Socratic inquiry and Red Team personas to audit for scalability, security, and modularity.
--   `analyze_evolution(proposal)`: Evaluates the risks, breaking changes, and deprecation paths of a proposed project extension.
+Provides a consolidated, multi-dimensional assessment of a design snippet.
 
-### Decision Capture
--   `capture_decision_logic(decision, alternatives)`: Translates architectural discussions into structured, high-quality Architecture Decision Records (ADR).
+- **Parameter**: `design` (string)
+- **Usage**: Audit for scalability, security, and modularity using Red Team personas.
 
-## Installation
+### `analyze_evolution`
+
+Evaluates the risks, breaking changes, and deprecation paths of a proposed extension.
+
+- **Parameter**: `proposal` (string)
+
+### `capture_decision_logic`
+
+Translates architectural discussions into structured ADRs.
+
+- **Parameters**: `decision` (string), `alternatives` (string)
+
+---
+
+## ⚙️ Installation
 
 ### 1. Build the Binary
-
-Ensure you have Go installed, then build the binary:
 
 ```bash
 go build -o dist/mcp-server-brainstorm main.go
 ```
 
-The compiled binary will be located in the `dist` directory.
+### 2. Configure for IDEs
 
-### 2. Configuration for AI Agents (Antigravity, Claude, Cline)
+#### **Antigravity (Internal Orchestrator)**
 
-To use this server with an MCP-compatible agent, add it to your `mcpServers` configuration file.
+Antigravity automatically manages this server. If you need to add it manually to a custom environment:
 
-#### **Windows**
-> [!IMPORTANT]
-> On Windows, you **MUST** include the `.exe` extension in the command path for the agent to correctly invoke the binary.
-
-```json
-{
-  "mcpServers": {
-    "brainstorm": {
-      "command": "C:\\path\\to\\mcp-server-brainstorm.exe",
-      "args": [],
-      "env": {
-        "PATH": "C:\\Program Files\\Go\\bin;C:\\Windows\\system32"
-      }
-    }
-  }
-}
+```yaml
+# antigravity/config.yaml
+mcpServers:
+  brainstorm:
+    command: "/absolute/path/to/dist/mcp-server-brainstorm"
 ```
 
-#### **Linux / MacOS**
+#### **VS Code (MCP Extension / Cline)**
+
+Add to your `mcp_config.json`:
+
 ```json
 {
   "mcpServers": {
     "brainstorm": {
-      "command": "/usr/local/bin/mcp-server-brainstorm",
+      "command": "/absolute/path/to/dist/mcp-server-brainstorm",
       "args": [],
       "env": {
         "PATH": "/usr/local/go/bin:/usr/local/bin:/usr/bin"
@@ -98,13 +98,33 @@ To use this server with an MCP-compatible agent, add it to your `mcpServers` con
 }
 ```
 
-## Use Cases
+#### **Cursor IDE**
 
-- **Initial Scoping**: Use `clarify_requirements` at the very beginning of a task to ensure the technical foundation (DB, Auth, API) is correctly chosen.
-- **Pre-Implementation Design Review**: Run a feature proposal through `critique_design` to find potential flaws BEFORE writing code.
-- **Project Onboarding**: Use `discover_project` when starting on a new repository to find where documentation is missing.
-- **Architecture Governance**: Use `capture_decision_logic` to ensure all major technical pivots are documented as ADRs.
+1. Open **Settings** -> **Features** -> **MCP**.
+2. Click **+ Add New MCP Server**.
+3. Name: `Brainstorm`
+4. Type: `stdio`
+5. Command: `/absolute/path/to/dist/mcp-server-brainstorm`
 
 ---
 
-Created in Go for performance and efficiency.
+## 📖 Use Cases
+
+- **Initial Scoping**: Run `clarify_requirements` to ensure the technical foundation is solid.
+- **Pre-Implementation Design Review**: Run a feature proposal through `critique_design` to find potential flaws.
+- **Project Onboarding**: Use `discover_project` when starting on a new repository.
+- **Architecture Governance**: Use `capture_decision_logic` to document technical pivots.
+
+---
+
+## 💻 CLI Functionality
+
+The binary supports a `-version` flag to check the current build version.
+
+```bash
+./mcp-server-brainstorm -version
+```
+
+---
+
+*Built with Go for performance and reliability.*

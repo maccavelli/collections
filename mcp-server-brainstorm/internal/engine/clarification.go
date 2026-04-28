@@ -36,8 +36,8 @@ var forkRegistry = []models.DecisionFork{
 		Component:      "Auth",
 		SocraticPrompt: "How do you plan to manage user sessions and identities?",
 		Options: map[string]string{
-			"JWT":    "Stateless tokens. Scale-friendly but hard to revoke (Auth0, Clerk).",
-			"OIDC":   "Full external identity provider (Google/GitHub login).",
+			"JWT":     "Stateless tokens. Scale-friendly but hard to revoke (Auth0, Clerk).",
+			"OIDC":    "Full external identity provider (Google/GitHub login).",
 			"Session": "Stateful database-backed sessions. Secure and easy to revoke.",
 		},
 		Impact:         "Security surface and Implementation speed.",
@@ -47,8 +47,8 @@ var forkRegistry = []models.DecisionFork{
 		Component:      "API",
 		SocraticPrompt: "How will your services communicate with each other?",
 		Options: map[string]string{
-			"REST": "Standard HTTP/JSON. Ubiquitous and easy to debug.",
-			"gRPC": "High-performance binary protocol. Best for internal microservices.",
+			"REST":    "Standard HTTP/JSON. Ubiquitous and easy to debug.",
+			"gRPC":    "High-performance binary protocol. Best for internal microservices.",
 			"GraphQL": "Flexible client-side querying. Best for complex frontends.",
 		},
 		Impact:         "Developer productivity vs. Network efficiency.",
@@ -73,8 +73,8 @@ func (e *Engine) GetDecisionForks(
 	for _, f := range forkRegistry {
 		trigger := strings.ToLower(f.Component)
 		if strings.Contains(lower, trigger) {
-			// Basic filtering: if the requirement already 
-			// contains an option's keyword, skip the fork 
+			// Basic filtering: if the requirement already
+			// contains an option's keyword, skip the fork
 			// or mark as resolved.
 			alreadyDefined := false
 			for optKey := range f.Options {
@@ -93,10 +93,10 @@ func (e *Engine) GetDecisionForks(
 	return forks, nil
 }
 
-// ClarifyRequirements analyzes input and returns 
+// ClarifyRequirements analyzes input and returns
 // structured forks and a narrative summary.
 func (e *Engine) ClarifyRequirements(
-	ctx context.Context, requirements string,
+	ctx context.Context, requirements string, standards string,
 ) (models.ClarificationResponse, error) {
 	forks, err := e.GetDecisionForks(ctx, requirements)
 	if err != nil {
@@ -119,7 +119,7 @@ func (e *Engine) ClarifyRequirements(
 	if len(forks) > 0 {
 		for _, f := range forks {
 			sb.WriteString(fmt.Sprintf("#### %s: %s\n", f.Component, f.SocraticPrompt))
-			sb.WriteString(fmt.Sprintf("- **Options**:\n") )
+			sb.WriteString("- **Options**:\n")
 			for k, v := range f.Options {
 				sb.WriteString(fmt.Sprintf("  - **%s**: %s\n", k, v))
 			}
@@ -130,9 +130,20 @@ func (e *Engine) ClarifyRequirements(
 		sb.WriteString("The current requirements are specific enough for a baseline implementation. Consider defining performance targets next.\n")
 	}
 
+	if standards != "" {
+		sb.WriteString("\n### Enterprise Standards Alignment\n")
+		sb.WriteString(standards + "\n\n")
+		narrative += " (Anchored by Enterprise Standards)"
+	}
+
 	return models.ClarificationResponse{
-		Narrative: narrative,
-		Forks:     forks,
-		SummaryMD: sb.String(),
+		Summary: narrative,
+		Data: struct {
+			Narrative string                `json:"narrative"`
+			Forks     []models.DecisionFork `json:"forks"`
+		}{
+			Narrative: narrative,
+			Forks:     forks,
+		},
 	}, nil
 }

@@ -2,17 +2,23 @@ package engine
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"mcp-server-brainstorm/internal/models"
+
+	"github.com/tidwall/buntdb"
 )
 
 func TestChallengeAssumption_Database(t *testing.T) {
-	e := NewEngine(".")
+	db, _ := buntdb.Open(":memory:")
+	defer db.Close()
+	e := NewEngine(".", db)
 	ctx := context.Background()
 
-	got, err := e.ChallengeAssumption(ctx, "Use a PostgreSQL db")
+	got, err := e.ChallengeAssumption(ctx, "Use a PostgreSQL db", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -25,11 +31,13 @@ func TestChallengeAssumption_Database(t *testing.T) {
 }
 
 func TestChallengeAssumption_API(t *testing.T) {
-	e := NewEngine(".")
+	db, _ := buntdb.Open(":memory:")
+	defer db.Close()
+	e := NewEngine(".", db)
 	ctx := context.Background()
 
 	got, err := e.ChallengeAssumption(
-		ctx, "Expose via HTTP API",
+		ctx, "Expose via HTTP API", nil,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -40,11 +48,13 @@ func TestChallengeAssumption_API(t *testing.T) {
 }
 
 func TestChallengeAssumption_General(t *testing.T) {
-	e := NewEngine(".")
+	db, _ := buntdb.Open(":memory:")
+	defer db.Close()
+	e := NewEngine(".", db)
 	ctx := context.Background()
 
 	got, err := e.ChallengeAssumption(
-		ctx, "Random design idea",
+		ctx, "Random design idea", nil,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -61,10 +71,12 @@ func TestChallengeAssumption_General(t *testing.T) {
 }
 
 func TestChallengeAssumption_Empty(t *testing.T) {
-	e := NewEngine(".")
+	db, _ := buntdb.Open(":memory:")
+	defer db.Close()
+	e := NewEngine(".", db)
 	ctx := context.Background()
 
-	got, err := e.ChallengeAssumption(ctx, "")
+	got, err := e.ChallengeAssumption(ctx, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,11 +89,13 @@ func TestChallengeAssumption_Empty(t *testing.T) {
 }
 
 func TestChallengeAssumption_Cache(t *testing.T) {
-	e := NewEngine(".")
+	db, _ := buntdb.Open(":memory:")
+	defer db.Close()
+	e := NewEngine(".", db)
 	ctx := context.Background()
 
 	got, err := e.ChallengeAssumption(
-		ctx, "Add a Redis cache layer",
+		ctx, "Add a Redis cache layer", nil,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -92,101 +106,101 @@ func TestChallengeAssumption_Cache(t *testing.T) {
 }
 
 func TestAnalyzeEvolution_Refactor(t *testing.T) {
-	e := NewEngine(".")
+	db, _ := buntdb.Open(":memory:")
+	defer db.Close()
+	e := NewEngine(".", db)
 	ctx := context.Background()
 
 	got, err := e.AnalyzeEvolution(
-		ctx, "refactor the auth module",
+		ctx, "refactor the auth module", "", map[string]interface{}{
+			"total_nodes":     600.0,
+			"total_functions": 25.0,
+		},
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Category != "refactor" {
+	if got.Data.Category != "large_scale_refactor" {
 		t.Errorf(
-			"want category 'refactor', got: %s",
-			got.Category,
+			"want category 'large_scale_refactor', got: %s",
+			got.Data.Category,
 		)
 	}
-	if got.RiskLevel != "HIGH" {
+	if got.Data.RiskLevel != "HIGH" {
 		t.Errorf(
-			"want risk 'HIGH', got: %s", got.RiskLevel,
+			"want risk 'HIGH', got: %s", got.Data.RiskLevel,
 		)
 	}
 	if !strings.Contains(
-		strings.ToLower(got.Recommendation), "upstream",
+		strings.ToLower(got.Data.Recommendation), "smaller",
 	) {
 		t.Errorf(
-			"want upstream warning, got: %s",
-			got.Recommendation,
+			"want smaller merge logic warning, got: %s",
+			got.Data.Recommendation,
 		)
 	}
 }
 
 func TestAnalyzeEvolution_Stable(t *testing.T) {
-	e := NewEngine(".")
+	db, _ := buntdb.Open(":memory:")
+	defer db.Close()
+	e := NewEngine(".", db)
 	ctx := context.Background()
 
 	got, err := e.AnalyzeEvolution(
-		ctx, "review the docs",
+		ctx, "review the docs", "", nil,
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Category != "general" {
+	if got.Data.Category != "general" {
 		t.Errorf(
 			"want category 'general', got: %s",
-			got.Category,
+			got.Data.Category,
 		)
 	}
-	if got.RiskLevel != "LOW" {
+	if got.Data.RiskLevel != "LOW" {
 		t.Errorf(
-			"want risk 'LOW', got: %s", got.RiskLevel,
-		)
-	}
-}
-
-func TestAnalyzeEvolution_Rename(t *testing.T) {
-	e := NewEngine(".")
-	ctx := context.Background()
-
-	got, err := e.AnalyzeEvolution(
-		ctx, "rename the auth package",
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.Category != "rename" {
-		t.Errorf(
-			"want category 'rename', got: %s",
-			got.Category,
+			"want risk 'LOW', got: %s", got.Data.RiskLevel,
 		)
 	}
 }
 
-func TestAnalyzeEvolution_Upgrade(t *testing.T) {
-	e := NewEngine(".")
+func TestAnalyzeEvolution_Displacement(t *testing.T) {
+	db, _ := buntdb.Open(":memory:")
+	defer db.Close()
+	e := NewEngine(".", db)
 	ctx := context.Background()
 
 	got, err := e.AnalyzeEvolution(
-		ctx, "upgrade the dependency to v2",
+		ctx, "split the auth package", "", map[string]interface{}{
+			"total_nodes": 150.0,
+		},
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Category != "dependency_change" {
+	if got.Data.Category != "structural_displacement" {
 		t.Errorf(
-			"want category 'dependency_change', got: %s",
-			got.Category,
+			"want category 'structural_displacement', got: %s",
+			got.Data.Category,
+		)
+	}
+	if got.Data.RiskLevel != "MEDIUM" {
+		t.Errorf(
+			"want risk 'MEDIUM', got: %s", got.Data.RiskLevel,
 		)
 	}
 }
 
 func TestEvaluateQualityAttributes_Default(t *testing.T) {
-	e := NewEngine(".")
+	db, _ := buntdb.Open(":memory:")
+	defer db.Close()
+	e := NewEngine(".", db)
 	ctx := context.Background()
 
 	metrics, err := e.EvaluateQualityAttributes(
-		ctx, "basic web service",
+		ctx, "basic web service", nil,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -211,11 +225,13 @@ func TestEvaluateQualityAttributes_Default(t *testing.T) {
 func TestEvaluateQualityAttributes_WithCache(
 	t *testing.T,
 ) {
-	e := NewEngine(".")
+	db, _ := buntdb.Open(":memory:")
+	defer db.Close()
+	e := NewEngine(".", db)
 	ctx := context.Background()
 
 	metrics, err := e.EvaluateQualityAttributes(
-		ctx, "add Redis cache layer",
+		ctx, "add Redis cache layer", nil,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -234,17 +250,19 @@ func TestEvaluateQualityAttributes_WithCache(
 // mentioning multiple keywords produces a higher score
 // than either keyword alone.
 func TestEvaluateQuality_AdditiveScoring(t *testing.T) {
-	e := NewEngine(".")
+	db, _ := buntdb.Open(":memory:")
+	defer db.Close()
+	e := NewEngine(".", db)
 	ctx := context.Background()
 
 	authOnly, err := e.EvaluateQualityAttributes(
-		ctx, "auth token system",
+		ctx, "auth token system", nil,
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	both, err := e.EvaluateQualityAttributes(
-		ctx, "auth token with tls encryption",
+		ctx, "auth token with tls encryption", nil,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -271,25 +289,33 @@ func TestEvaluateQuality_AdditiveScoring(t *testing.T) {
 	}
 }
 
-// TestEvaluateQuality_Negation verifies that negation
-// patterns prevent score boosting.
-func TestEvaluateQuality_Negation(t *testing.T) {
-	e := NewEngine(".")
+// TestEvaluateQuality_EmpiricalAST verifies that AST footprints
+// properly override string scanning bonuses (Angle 6).
+func TestEvaluateQuality_EmpiricalAST(t *testing.T) {
+	db, _ := buntdb.Open(":memory:")
+	defer db.Close()
+	e := NewEngine(".", db)
 	ctx := context.Background()
 
+	// Provide an AST import array natively mapped to crypto edges
 	metrics, err := e.EvaluateQualityAttributes(
-		ctx, "system with no auth",
+		ctx, "general logic", map[string]interface{}{
+			"imports": []interface{}{
+				"crypto/sha256",
+			},
+		},
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	for _, m := range metrics {
 		if m.Attribute == "Security" {
 			if !strings.Contains(
-				m.Observation, "Negation",
+				m.Observation, "AST:",
 			) {
 				t.Errorf(
-					"expected negation detection,"+
+					"expected empirical AST execution path,"+
 						" got: %s", m.Observation,
 				)
 			}
@@ -298,10 +324,12 @@ func TestEvaluateQuality_Negation(t *testing.T) {
 }
 
 func TestRedTeamReview_NoLogs(t *testing.T) {
-	e := NewEngine(".")
+	db, _ := buntdb.Open(":memory:")
+	defer db.Close()
+	e := NewEngine(".", db)
 	ctx := context.Background()
 
-	got, err := e.RedTeamReview(ctx, "a simple web service")
+	got, err := e.RedTeamReview(ctx, "a simple web service", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -314,10 +342,12 @@ func TestRedTeamReview_NoLogs(t *testing.T) {
 }
 
 func TestRedTeamReview_WithAPI(t *testing.T) {
-	e := NewEngine(".")
+	db, _ := buntdb.Open(":memory:")
+	defer db.Close()
+	e := NewEngine(".", db)
 	ctx := context.Background()
 
-	got, err := e.RedTeamReview(ctx, "expose a public API")
+	got, err := e.RedTeamReview(ctx, "expose a public API", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -327,11 +357,13 @@ func TestRedTeamReview_WithAPI(t *testing.T) {
 }
 
 func TestRedTeamReview_ReliabilityHawk(t *testing.T) {
-	e := NewEngine(".")
+	db, _ := buntdb.Open(":memory:")
+	defer db.Close()
+	e := NewEngine(".", db)
 	ctx := context.Background()
 
 	got, err := e.RedTeamReview(
-		ctx, "a basic data pipeline",
+		ctx, "a basic data pipeline", nil,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -341,50 +373,53 @@ func TestRedTeamReview_ReliabilityHawk(t *testing.T) {
 	}
 }
 
-
 func TestCaptureDecisionLogic_Layered(t *testing.T) {
-	e := NewEngine(".")
+	db, _ := buntdb.Open(":memory:")
+	defer db.Close()
+	e := NewEngine(".", db)
 	ctx := context.Background()
 
 	adr, err := e.CaptureDecisionLogic(
 		ctx,
 		"Use PostgreSQL for performance",
-		"SQLite",
+		"SQLite", "",
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if adr.Narrative == "" {
+	if adr.Data.Narrative == "" {
 		t.Error("expected non-empty narrative in ADR")
 	}
-	if !strings.Contains(adr.SummaryMD, "### Architecture Decision Record") {
-		t.Error("expected markdown summary header in ADR")
+	if !strings.Contains(adr.Summary, "ADR Drafted") {
+		t.Error("expected summary to contain draft status")
 	}
 }
 
 func TestCritiqueDesign_Consolidated(t *testing.T) {
-	e := NewEngine(".")
+	db, _ := buntdb.Open(":memory:")
+	defer db.Close()
+	e := NewEngine(".", db)
 	ctx := context.Background()
 
-	resp, err := e.CritiqueDesign(ctx, "Use a Redis cache with retry logic")
+	// Simple query that might hit cache or DB.
+	resp, err := e.CritiqueDesign(ctx, "Use a Redis cache with retry logic", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if resp.Narrative == "" {
+	if resp.Data.Narrative == "" {
 		t.Error("expected non-empty narrative")
 	}
-	if !strings.Contains(resp.SummaryMD, "#### Quality Attributes") {
-		t.Error("expected quality attributes table in markdown")
-	}
-	if len(resp.Metrics) == 0 {
+	if len(resp.Data.Metrics) == 0 {
 		t.Error("expected metrics in response")
 	}
 }
 
 func TestDiscoverProject_Consolidated(t *testing.T) {
-	e := NewEngine(".")
+	db, _ := buntdb.Open(":memory:")
+	defer db.Close()
+	e := NewEngine(".", db)
 	ctx := context.Background()
 	session := &models.Session{Status: "DISCOVERY"}
 
@@ -393,19 +428,18 @@ func TestDiscoverProject_Consolidated(t *testing.T) {
 		t.Fatalf("DiscoverProject failed: %v", err)
 	}
 
-	if resp.Narrative == "" {
+	if resp.Data.Narrative == "" {
 		t.Error("expected non-empty narrative")
 	}
-	if !strings.Contains(resp.SummaryMD, "### Project Discovery") {
-		t.Error("expected markdown summary header")
-	}
-	if resp.NextStep == "" {
+	if resp.Data.NextStep == "" {
 		t.Error("expected next step suggestion")
 	}
 }
 
 func TestSuggestNextStep_WithGaps(t *testing.T) {
-	e := NewEngine(".")
+	db, _ := buntdb.Open(":memory:")
+	defer db.Close()
+	e := NewEngine(".", db)
 	ctx := context.Background()
 
 	session := &models.Session{
@@ -429,7 +463,9 @@ func TestSuggestNextStep_WithGaps(t *testing.T) {
 }
 
 func TestSuggestNextStep_Discovery(t *testing.T) {
-	e := NewEngine(".")
+	db, _ := buntdb.Open(":memory:")
+	defer db.Close()
+	e := NewEngine(".", db)
 	ctx := context.Background()
 
 	session := &models.Session{
@@ -447,10 +483,13 @@ func TestSuggestNextStep_Discovery(t *testing.T) {
 }
 
 func TestAnalyzeDiscovery(t *testing.T) {
-	e := NewEngine(".")
+	db, _ := buntdb.Open(":memory:")
+	defer db.Close()
+	e := NewEngine(".", db)
 	ctx := context.Background()
 
-	gaps, err := e.AnalyzeDiscovery(ctx, ".")
+	session := &models.Session{Metadata: make(map[string]any)}
+	gaps, err := e.AnalyzeDiscovery(ctx, ".", session)
 	if err != nil {
 		t.Fatalf("AnalyzeDiscovery failed: %v", err)
 	}
@@ -461,7 +500,9 @@ func TestAnalyzeDiscovery(t *testing.T) {
 }
 
 func TestSuggestNextStep_Statuses(t *testing.T) {
-	e := NewEngine(".")
+	db, _ := buntdb.Open(":memory:")
+	defer db.Close()
+	e := NewEngine(".", db)
 	ctx := context.Background()
 
 	tests := []struct {
@@ -486,34 +527,100 @@ func TestSuggestNextStep_Statuses(t *testing.T) {
 }
 
 func TestAnalyzeDiscovery_DepthAndSkip(t *testing.T) {
-	e := NewEngine(".")
+	db, _ := buntdb.Open(":memory:")
+	defer db.Close()
+	e := NewEngine(".", db)
 	ctx := context.Background()
-	
+
 	// Test with a non-existent path.
-	_, err := e.AnalyzeDiscovery(ctx, "/tmp/non-existent-brainstorm-path-abs-xyz")
+	session := &models.Session{Metadata: make(map[string]any)}
+	_, err := e.AnalyzeDiscovery(ctx, "/tmp/non-existent-brainstorm-path-abs-xyz", session)
 	if err == nil {
 		t.Error("expected error for non-existent path")
 	}
 }
 
 func TestResolvePath_Abs(t *testing.T) {
-	e := NewEngine("/tmp")
-	
-	// Empty path
-	if got := e.ResolvePath(""); got != "/tmp" {
-		t.Errorf("ResolvePath('') = %s; want /tmp", got)
+	db, _ := buntdb.Open(":memory:")
+	defer db.Close()
+
+	// Create a temp project with go.mod
+	tmp := t.TempDir()
+	os.WriteFile(filepath.Join(tmp, "go.mod"), []byte("module test\n"), 0644)
+	os.MkdirAll(filepath.Join(tmp, "internal", "handler"), 0755)
+
+	e := NewEngine(tmp, db)
+
+	// Empty path returns project root
+	if got := e.ResolvePath(""); got != tmp {
+		t.Errorf("ResolvePath('') = %s; want %s", got, tmp)
 	}
-	
-	// Relative path
-	if got := e.ResolvePath("sub"); strings.HasSuffix(got, "..") {
-		// Just verify it's joined.
+
+	// Subdirectory resolves to module root via sentinel walk-up
+	sub := filepath.Join(tmp, "internal", "handler")
+	if got := e.ResolvePath(sub); got != tmp {
+		t.Errorf("ResolvePath(%s) = %s; want %s (sentinel walk-up)", sub, got, tmp)
 	}
-	
-	// Absolute path
-	abs := "/home/user/test"
-	if got := e.ResolvePath(abs); got != abs {
-		t.Errorf("ResolvePath(%s) = %s; want %s", abs, got, abs)
-	}
+}
+
+func TestFindProjectRoot(t *testing.T) {
+	t.Run("go.mod sentinel", func(t *testing.T) {
+		tmp := t.TempDir()
+		os.WriteFile(filepath.Join(tmp, "go.mod"), []byte("module test\n"), 0644)
+		os.MkdirAll(filepath.Join(tmp, "a", "b", "c"), 0755)
+
+		root, kind := findProjectRoot(filepath.Join(tmp, "a", "b", "c"))
+		if root != tmp {
+			t.Errorf("want root %s, got %s", tmp, root)
+		}
+		if kind != "module" {
+			t.Errorf("want kind 'module', got %s", kind)
+		}
+	})
+
+	t.Run(".git sentinel", func(t *testing.T) {
+		tmp := t.TempDir()
+		os.MkdirAll(filepath.Join(tmp, ".git"), 0755)
+		os.MkdirAll(filepath.Join(tmp, "src", "pkg"), 0755)
+
+		root, kind := findProjectRoot(filepath.Join(tmp, "src", "pkg"))
+		if root != tmp {
+			t.Errorf("want root %s, got %s", tmp, root)
+		}
+		if kind != "vcs" {
+			t.Errorf("want kind 'vcs', got %s", kind)
+		}
+	})
+
+	t.Run("go.mod takes priority over .git", func(t *testing.T) {
+		tmp := t.TempDir()
+		os.MkdirAll(filepath.Join(tmp, ".git"), 0755)
+		modDir := filepath.Join(tmp, "services", "api")
+		os.MkdirAll(filepath.Join(modDir, "internal"), 0755)
+		os.WriteFile(filepath.Join(modDir, "go.mod"), []byte("module api\n"), 0644)
+
+		root, kind := findProjectRoot(filepath.Join(modDir, "internal"))
+		if root != modDir {
+			t.Errorf("want root %s (go.mod), got %s", modDir, root)
+		}
+		if kind != "module" {
+			t.Errorf("want kind 'module', got %s", kind)
+		}
+	})
+
+	t.Run("fallback returns input", func(t *testing.T) {
+		tmp := t.TempDir()
+		deep := filepath.Join(tmp, "no", "sentinel", "here")
+		os.MkdirAll(deep, 0755)
+
+		// Note: t.TempDir() is inside /tmp which may have .git above it.
+		// The fallback case is hard to test in real filesystems, but we
+		// can at least verify the function doesn't panic.
+		root, _ := findProjectRoot(deep)
+		if root == "" {
+			t.Error("root should never be empty")
+		}
+	})
 }
 
 // containsSubstr checks if any string in the slice

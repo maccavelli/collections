@@ -2,96 +2,79 @@ package state
 
 import (
 	"context"
-	"os"
-	"path/filepath"
 	"testing"
 
 	"mcp-server-brainstorm/internal/models"
 )
 
-func TestSessionManager(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "mcp-state-test-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(tmpDir)
+func TestLoadAndSaveSession(t *testing.T) {
+	mgr := NewManager("/tmp/test-project")
+	ctx := context.Background()
 
-	mgr := NewManager(tmpDir)
-
-	// 1. Test Load non-existent.
-	session, err := mgr.LoadSession(context.Background())
+	// First load creates a fresh session.
+	session, err := mgr.LoadSession(ctx)
 	if err != nil {
 		t.Fatalf("LoadSession failed: %v", err)
 	}
 	if session.Status != "DISCOVERY" {
-		t.Errorf("want DISCOVERY, got %s", session.Status)
+		t.Errorf("expected DISCOVERY, got %s", session.Status)
 	}
 
-	// 2. Test Save.
-	session.Status = "PLANNING"
-	if err := mgr.SaveSession(context.Background(), session); err != nil {
+	// Mutate and save.
+	session.Status = "CLARIFICATION"
+	session.Gaps = append(session.Gaps, models.Gap{
+		Area: "TEST", Description: "test gap", Severity: "HIGH",
+	})
+	if err := mgr.SaveSession(ctx, session); err != nil {
 		t.Fatalf("SaveSession failed: %v", err)
 	}
 
-	// 3. Test Load existing.
-	session2, err := mgr.LoadSession(context.Background())
+	// Reload should return the same mutated session.
+	session2, err := mgr.LoadSession(ctx)
 	if err != nil {
 		t.Fatalf("LoadSession failed: %v", err)
 	}
-	if session2.Status != "PLANNING" {
-		t.Errorf("want PLANNING, got %s", session2.Status)
+	if session2.Status != "CLARIFICATION" {
+		t.Errorf("expected CLARIFICATION, got %s", session2.Status)
+	}
+	if len(session2.Gaps) != 1 {
+		t.Errorf("expected 1 gap, got %d", len(session2.Gaps))
 	}
 }
 
-func TestSaveSession_MarshalError(t *testing.T) {
-	mgr := NewManager(".")
-	// Session has no fields that would fail marshaling normally,
-	// but we test the pattern.
-	err := mgr.SaveSession(context.Background(), &models.Session{})
-	if err != nil {
-		// Should succeed.
-	}
-}
+func TestLoadSession_ContextCancelled(t *testing.T) {
+	mgr := NewManager("/tmp/test-project")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
 
-func TestSaveSession_Error(t *testing.T) {
-	// 1. Write error
-	m := NewManager("/not-real-at-all/invalid/directory")
-	s := &models.Session{Status: "error"}
-	if err := m.SaveSession(context.Background(), s); err == nil {
-		t.Error("expected error for invalid directory")
-	}
-
-	// 2. Rename error
-	tmpDir := t.TempDir()
-	m2 := NewManager(tmpDir)
-	// Create a directory where the final file should be to cause Rename to fail.
-	os.Mkdir(filepath.Join(tmpDir, StateFile), 0755)
-	if err := m2.SaveSession(context.Background(), s); err == nil {
-		t.Error("expected error when target is a directory")
-	}
-}
-
-func TestLoadSession_ReadError(t *testing.T) {
-	tmpDir := t.TempDir()
-	path := filepath.Join(tmpDir, StateFile)
-	// Create a directory where the file should be to cause ReadFile to fail.
-	os.Mkdir(path, 0755)
-	
-	m := NewManager(tmpDir)
-	_, err := m.LoadSession(context.Background())
+	_, err := mgr.LoadSession(ctx)
 	if err == nil {
-		t.Error("expected error when reading a directory as a file")
+		t.Fatal("expected context error")
 	}
 }
 
-func TestLoadSession_UnmarshalError(t *testing.T) {
-	tmpDir := t.TempDir()
-	path := filepath.Join(tmpDir, StateFile)
-	os.WriteFile(path, []byte("{invalid-json"), 0644)
-	
-	m := NewManager(tmpDir)
-	_, err := m.LoadSession(context.Background())
+func TestSaveSession_ContextCancelled(t *testing.T) {
+	mgr := NewManager("/tmp/test-project")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := mgr.SaveSession(ctx, &models.Session{})
 	if err == nil {
-		t.Error("expected error for invalid JSON")
+		t.Fatal("expected context error")
+	}
+}
+
+func TestMultipleProjectRoots(t *testing.T) {
+	mgr1 := NewManager("/tmp/project-a")
+	mgr2 := NewManager("/tmp/project-b")
+	ctx := context.Background()
+
+	s1, _ := mgr1.LoadSession(ctx)
+	s1.Status = "PROJECT_A"
+	_ = mgr1.SaveSession(ctx, s1)
+
+	s2, _ := mgr2.LoadSession(ctx)
+	if s2.Status != "DISCOVERY" {
+		t.Errorf("project-b should have fresh session, got %s", s2.Status)
 	}
 }

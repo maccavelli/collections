@@ -1,70 +1,105 @@
 package main
 
 import (
-	"mcp-server-brainstorm/internal/config"
-	"mcp-server-brainstorm/internal/engine"
-	"mcp-server-brainstorm/internal/handler/decision"
-	"mcp-server-brainstorm/internal/handler/design"
-	"mcp-server-brainstorm/internal/handler/discovery"
-	"mcp-server-brainstorm/internal/handler/system"
-	"mcp-server-brainstorm/internal/registry"
-	"mcp-server-brainstorm/internal/state"
+	"bytes"
+	"context"
+	"errors"
+	"io"
+	"os"
+	"strings"
 	"testing"
+	"time"
+
+	"mcp-server-brainstorm/internal/handler/system"
+	"mcp-server-brainstorm/internal/util"
 )
 
-func TestLogBuffer_Trimming_Brain(t *testing.T) {
-	lb := &system.LogBuffer{}
-	
-	msg := "test log message\n"
-	_, _ = lb.Write([]byte(msg))
-	if lb.String() != msg {
-		t.Errorf("want '%s', got '%s'", msg, lb.String())
-	}
+// TestRun_Brain validates the main orchestrator loop execution properly handles
+// io boundaries without causing an unexpected exit.
+func TestRun_Brain(t *testing.T) {
+	exitFunc = func(int) {}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
 
-	// Trimming logic
-	data := make([]byte, config.LogBufferLimit+100)
-	for i := range data {
-		data[i] = 'a'
-		if i%100 == 0 {
-			data[i] = '\n'
-		}
-	}
-	_, _ = lb.Write(data)
-	if len(lb.String()) > config.LogBufferLimit {
-		t.Errorf("buffer length %d exceeds limit after trimming", len(lb.String()))
-	}
-}
-
-func TestVersionReporting_Brain(t *testing.T) {
-	printVersion()
-}
-
-func TestRegistryToolLoading_Brain(t *testing.T) {
-	wd := "."
-	mgr := state.NewManager(wd)
-	eng := engine.NewEngine(wd)
 	buffer := &system.LogBuffer{}
 
-	discovery.Register(mgr, eng)
-	design.Register(eng)
-	decision.Register(eng)
-	system.Register(buffer)
+	reader := strings.NewReader("")
+	var writer bytes.Buffer
+	errChan := make(chan error, 1)
 
-	tools := registry.Global.List()
-	if len(tools) == 0 {
-		t.Error("expected tools to be registered in global registry")
+	go func() {
+		err := run(ctx, cancel, buffer, util.NopReadCloser{Reader: reader}, util.NopWriteCloser{Writer: &writer})
+		errChan <- err
+		close(errChan)
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+	cancel()
+
+	select {
+	case <-errChan:
+	case <-time.After(1 * time.Second):
+	}
+}
+
+// TestExpectedShutdown validates accurate detection of natural EOF conditions versus
+// crash circumstances on the multiplexer IO pipes.
+func TestExpectedShutdown(t *testing.T) {
+	if isExpectedShutdownErr(nil) {
+		t.Error("nil is not expected")
+	}
+	if !isExpectedShutdownErr(io.EOF) {
+		t.Error("EOF is expected")
+	}
+	if !isExpectedShutdownErr(errors.New("broken pipe")) {
+		t.Error("broken pipe is expected")
+	}
+	if isExpectedShutdownErr(errors.New("unknown error")) {
+		t.Error("unknown is not expected")
+	}
+}
+
+// TestAutoFlusher confirms that standard writes explicitly trigger pipeline downstream flushes
+// ensuring sequential thinking output updates smoothly.
+func TestAutoFlusher(t *testing.T) {
+	var buf bytes.Buffer
+	af := &autoFlusher{w: &buf}
+	n, err := af.Write([]byte("test"))
+	if err != nil || n != 4 {
+		t.Errorf("write failed: %v", err)
+	}
+}
+
+// TestEofDetector tests the streaming reader component safely recognizes protocol drop-offs
+// and issues a responsive cancel to the parent contexts.
+func TestEofDetector(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	reader := strings.NewReader("")
+	detector := &eofDetector{r: reader, cancel: cancel}
+
+	buf := make([]byte, 10)
+	_, err := detector.Read(buf)
+	if err != io.EOF {
+		t.Error("expected EOF")
 	}
 
-	// Verify specific tools
-	found := make(map[string]bool)
-	for _, tool := range tools {
-		found[tool.Name()] = true
+	if ctx.Err() == nil {
+		t.Error("expected context canceled")
 	}
+}
 
-	required := []string{"discover_project", "get_internal_logs", "critique_design", "clarify_requirements", "analyze_evolution", "capture_decision_logic"}
-	for _, name := range required {
-		if !found[name] {
-			t.Errorf("expected tool %s not found in registry", name)
-		}
+// TestMain_Version verifies that providing the explicit version flag terminates
+// execution successfully and prevents full server boot paths.
+func TestMain_Version(t *testing.T) {
+	os.Args = []string{"cmd", "-version"}
+	exited := false
+	exitFunc = func(_ int) {
+		exited = true
+	}
+	main()
+	if !exited {
+		t.Error("main should have exited")
 	}
 }

@@ -2,105 +2,358 @@ package design
 
 import (
 	"context"
+	"fmt"
+	"log/slog"
+	"os"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"mcp-server-brainstorm/internal/engine"
+	"mcp-server-brainstorm/internal/models"
 	"mcp-server-brainstorm/internal/registry"
+	"mcp-server-brainstorm/internal/state"
+	"mcp-server-brainstorm/internal/util"
 )
 
 // CritiqueDesignTool handles design assessment.
 type CritiqueDesignTool struct {
-	Engine *engine.Engine
+	Manager *state.Manager
+	Engine  *engine.Engine
 }
 
 func (t *CritiqueDesignTool) Name() string {
 	return "critique_design"
 }
 
-func (t *CritiqueDesignTool) Register(s *mcp.Server) {
-	mcp.AddTool(s, &mcp.Tool{
+func (t *CritiqueDesignTool) Register(s util.SessionProvider) {
+	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
-		Description: "HARDENING AUDIT: Subjects an architectural design to a rigorous, multi-perspective review. Call this BEFORE implementation to prevent regressions and identify hidden assumptions. Cascades to analyze_evolution.",
+		Description: "[ROLE: CRITIC] DESIGN CRITIQUE ENGINE: Subjects architectural designs, feature plans, and major modifications to a rigorous, multi-perspective review. Evaluates quality metrics and generates red-team challenges. [TRIGGERS: The subsequent multi-perspective component evaluation phase] [Routing Tags: critique, review, red-team, design-check, evaluate-plan]",
 	}, t.Handle)
 }
 
 type DesignInput struct {
-	Design string `json:"design" jsonschema:"The design text to critique"`
+	models.UniversalPipelineInput
 }
 
 func (t *CritiqueDesignTool) Handle(ctx context.Context, req *mcp.CallToolRequest, input DesignInput) (*mcp.CallToolResult, any, error) {
-	resp, err := t.Engine.CritiqueDesign(ctx, input.Design)
+	session, err := t.Manager.LoadSession(ctx)
+	if err != nil {
+		res := &mcp.CallToolResult{}
+		res.SetError(fmt.Errorf("failed to load session: %v", err))
+		return res, nil, nil
+	}
+
+	isOrchestrator := os.Getenv("MCP_ORCHESTRATOR_OWNED") == "true"
+	recallAvailable := isOrchestrator && t.Engine.ExternalClient != nil && t.Engine.ExternalClient.RecallEnabled()
+	if isOrchestrator && !recallAvailable {
+		slog.Warn("[ORCHESTRATOR] recall unavailable — degrading to standalone", "tool", t.Name())
+	}
+
+	var goldenTruth string
+	if standards, ok := session.Metadata["standards"].(string); ok && standards != "" {
+		goldenTruth = standards
+	}
+
+	if recallAvailable && session.ProjectRoot != "" {
+		if critHistory := t.Engine.LoadCrossSessionFromRecall(ctx, "brainstorm", session.ProjectRoot); critHistory != "" {
+			if session.Metadata == nil {
+				session.Metadata = make(map[string]any)
+			}
+			session.Metadata["historical_critiques"] = critHistory
+		}
+	}
+
+	if goldenTruth == "" && recallAvailable {
+		goldenTruth = t.Engine.EnsureRecallCache(ctx, session, "critique_design", "search", map[string]interface{}{"namespace": "ecosystem", "query": "anti-patterns edge cases", "domain": "design", "limit": 10})
+		if session.Metadata == nil {
+			session.Metadata = make(map[string]any)
+		}
+		session.Metadata["standards"] = goldenTruth
+	}
+
+	var traceMap map[string]interface{}
+	if recallAvailable && session.ProjectRoot != "" {
+		if tm, err := t.Engine.ExternalClient.AggregateSessionFromRecall(ctx, "go-refactor", session.ProjectRoot); err == nil && tm != nil {
+			traceMap = tm
+		}
+	}
+
+	resp, err := t.Engine.CritiqueDesign(ctx, input.Context, goldenTruth, traceMap)
 	if err != nil {
 		res := &mcp.CallToolResult{}
 		res.SetError(err)
 		return res, nil, nil
 	}
-	return &mcp.CallToolResult{}, resp, nil
+
+	if session.Metadata == nil {
+		session.Metadata = make(map[string]any)
+	}
+	session.Metadata["critique_findings"] = []string{resp.Data.Narrative}
+
+	if err := t.Manager.SaveSession(ctx, session); err != nil {
+		res := &mcp.CallToolResult{}
+		res.SetError(fmt.Errorf("save session failed: %v", err))
+		return res, nil, nil
+	}
+
+	if recallAvailable && session.ProjectRoot != "" {
+		t.Engine.PublishSessionToRecall(ctx, input.SessionID, session.ProjectRoot, "critique_completed", "native", "critique_design", "", session.Metadata)
+	}
+
+	var returnData any = resp
+	var returnSummary string = resp.Summary
+
+	if input.SessionID != "" && recallAvailable {
+		saveErr := t.Engine.ExternalClient.SaveSession(ctx, input.SessionID, input.SessionID, resp)
+		if saveErr == nil {
+			returnSummary += fmt.Sprintf("\n[CSSA STATUS]: Complete structural data saved successfully to recall session '%s'", input.SessionID)
+			returnData = struct {
+				Summary string `json:"summary"`
+				Data    any    `json:"data,omitempty"`
+			}{
+				Summary: returnSummary,
+				Data:    nil,
+			}
+		} else {
+			returnSummary += "\n[CSSA STATUS]: Could not save to recall. Falling back to standard JSON-RPC."
+			resp.Summary = returnSummary
+			returnData = resp
+		}
+	}
+
+	return &mcp.CallToolResult{}, returnData, nil
 }
 
 // AnalyzeEvolutionTool handles risk identification in changes.
 type AnalyzeEvolutionTool struct {
-	Engine *engine.Engine
+	Manager *state.Manager
+	Engine  *engine.Engine
 }
 
 func (t *AnalyzeEvolutionTool) Name() string {
 	return "analyze_evolution"
 }
 
-func (t *AnalyzeEvolutionTool) Register(s *mcp.Server) {
-	mcp.AddTool(s, &mcp.Tool{
+func (t *AnalyzeEvolutionTool) Register(s util.SessionProvider) {
+	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
-		Description: "RISK ASSESSMENT / BLAST RADIUS: Evaluates potential risks associated with proposed architectural changes. Call this during planning to assess feasibility and safety. Cascades to sequential_thinking for planning.",
+		Description: "[ROLE: CRITIC] EVOLUTION RISK ANALYZER: Evaluates and predicts the potential cascading risks and future blast radius of proposed architectural changes or refactors. Categorizes change impact and assesses risk level. [Routing Tags: risk, impact, blast-radius, evolution, analyze-future]",
 	}, t.Handle)
 }
 
 type EvolutionInput struct {
-	Proposal string `json:"proposal" jsonschema:"The proposed change or extension"`
+	models.UniversalPipelineInput
 }
 
 func (t *AnalyzeEvolutionTool) Handle(ctx context.Context, req *mcp.CallToolRequest, input EvolutionInput) (*mcp.CallToolResult, any, error) {
-	result, err := t.Engine.AnalyzeEvolution(ctx, input.Proposal)
+	session, err := t.Manager.LoadSession(ctx)
+	if err != nil {
+		res := &mcp.CallToolResult{}
+		res.SetError(fmt.Errorf("load session: %v", err))
+		return res, nil, nil
+	}
+
+	isOrchestrator := os.Getenv("MCP_ORCHESTRATOR_OWNED") == "true"
+	recallAvailable := isOrchestrator && t.Engine.ExternalClient != nil && t.Engine.ExternalClient.RecallEnabled()
+	if isOrchestrator && !recallAvailable {
+		slog.Warn("[ORCHESTRATOR] recall unavailable — degrading to standalone", "tool", t.Name())
+	}
+
+	var standards string
+	if stds, ok := session.Metadata["standards"].(string); ok {
+		standards = stds
+	}
+
+	if recallAvailable && session.ProjectRoot != "" {
+		if evoHistory := t.Engine.LoadCrossSessionFromRecall(ctx, "brainstorm", session.ProjectRoot); evoHistory != "" {
+			if session.Metadata == nil {
+				session.Metadata = make(map[string]any)
+			}
+			session.Metadata["historical_evolution"] = evoHistory
+		}
+	}
+
+	if standards == "" && recallAvailable {
+		standards = t.Engine.EnsureRecallCache(ctx, session, "analyze_evolution", "search", map[string]interface{}{"namespace": "ecosystem", "query": "technical debt blast radius compatibility", "domain": "evolution", "limit": 10})
+		if session.Metadata == nil {
+			session.Metadata = make(map[string]any)
+		}
+		session.Metadata["standards"] = standards
+	}
+
+	var traceMap map[string]interface{}
+	if recallAvailable && session.ProjectRoot != "" {
+		if tm, err := t.Engine.ExternalClient.AggregateSessionFromRecall(ctx, "go-refactor", session.ProjectRoot); err == nil && tm != nil {
+			traceMap = tm
+		}
+	}
+
+	result, err := t.Engine.AnalyzeEvolution(ctx, input.Context, standards, traceMap)
 	if err != nil {
 		res := &mcp.CallToolResult{}
 		res.SetError(err)
 		return res, nil, nil
 	}
-	return &mcp.CallToolResult{}, result, nil
+
+	if session.Metadata == nil {
+		session.Metadata = make(map[string]any)
+	}
+	session.Metadata["evolution_findings"] = []string{result.Data.Narrative}
+
+	if err := t.Manager.SaveSession(ctx, session); err != nil {
+		res := &mcp.CallToolResult{}
+		res.SetError(fmt.Errorf("save session failed: %v", err))
+		return res, nil, nil
+	}
+
+	if recallAvailable && session.ProjectRoot != "" {
+		t.Engine.PublishSessionToRecall(ctx, input.SessionID, session.ProjectRoot, "evolution_analyzed", "native", "analyze_evolution", "", session.Metadata)
+	}
+
+	var returnData any = result
+	var returnSummary string = result.Summary
+
+	if input.SessionID != "" && recallAvailable {
+		saveErr := t.Engine.ExternalClient.SaveSession(ctx, input.SessionID, input.SessionID, result)
+		if saveErr == nil {
+			returnSummary += fmt.Sprintf("\n[CSSA STATUS]: Complete structural data saved successfully to recall session '%s'", input.SessionID)
+			returnData = struct {
+				Summary string `json:"summary"`
+				Data    any    `json:"data,omitempty"`
+			}{
+				Summary: returnSummary,
+				Data:    nil,
+			}
+		} else {
+			returnSummary += "\n[CSSA STATUS]: Could not save to recall. Falling back to standard JSON-RPC."
+			result.Summary = returnSummary
+			returnData = result
+		}
+	}
+
+	return &mcp.CallToolResult{}, returnData, nil
 }
 
 // ClarifyRequirementsTool handles requirement grounding.
 type ClarifyRequirementsTool struct {
-	Engine *engine.Engine
+	Manager *state.Manager
+	Engine  *engine.Engine
 }
 
 func (t *ClarifyRequirementsTool) Name() string {
 	return "clarify_requirements"
 }
 
-func (t *ClarifyRequirementsTool) Register(s *mcp.Server) {
-	mcp.AddTool(s, &mcp.Tool{
+func (t *ClarifyRequirementsTool) Register(s util.SessionProvider) {
+	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
-		Description: "REQUIREMENTS GROUNDING: Analyzes high-level requirements to detect architectural ambiguity. Call this after discovery to ensure the technical foundation matches the goal. Cascades to critique_design.",
+		Description: "[ROLE: ANALYZER] [PHASE: BOOTSTRAP] REQUIREMENTS CLARIFIER: Analyzes feature requirements to detect architectural ambiguity before design. Identifies decision forks and provides Socratic prompts. Populates session with requirements_findings. [Routing Tags: requirements, clarify, questions, specifications, ambiguity]",
 	}, t.Handle)
 }
 
 type RequirementsInput struct {
-	Requirements string `json:"requirements" jsonschema:"The requirement text to analyze"`
+	models.UniversalPipelineInput
 }
 
 func (t *ClarifyRequirementsTool) Handle(ctx context.Context, req *mcp.CallToolRequest, input RequirementsInput) (*mcp.CallToolResult, any, error) {
-	resp, err := t.Engine.ClarifyRequirements(ctx, input.Requirements)
+	session, err := t.Manager.LoadSession(ctx)
+	if err != nil {
+		res := &mcp.CallToolResult{}
+		res.SetError(fmt.Errorf("load session: %v", err))
+		return res, nil, nil
+	}
+
+	isOrchestrator := os.Getenv("MCP_ORCHESTRATOR_OWNED") == "true"
+	recallAvailable := isOrchestrator && t.Engine.ExternalClient != nil && t.Engine.ExternalClient.RecallEnabled()
+	if isOrchestrator && !recallAvailable {
+		slog.Warn("[ORCHESTRATOR] recall unavailable — degrading to standalone", "tool", t.Name())
+	}
+
+	var standards string
+	if stds, ok := session.Metadata["standards"].(string); ok {
+		standards = stds
+	}
+
+	if recallAvailable && session.ProjectRoot != "" {
+		if reqHistory := t.Engine.LoadCrossSessionFromRecall(ctx, "brainstorm", session.ProjectRoot); reqHistory != "" {
+			if session.Metadata == nil {
+				session.Metadata = make(map[string]any)
+			}
+			session.Metadata["historical_requirements"] = reqHistory
+		}
+	}
+
+	if standards == "" && recallAvailable {
+		standards = t.Engine.EnsureRecallCache(ctx, session, "clarify_requirements", "search", map[string]interface{}{"namespace": "ecosystem", "query": "architectural ambiguity requirements constraints", "domain": "architecture", "limit": 10})
+		if session.Metadata == nil {
+			session.Metadata = make(map[string]any)
+		}
+		session.Metadata["standards"] = standards
+	}
+
+	// TraceMap enrichment: ground requirements in actual code structure.
+	if recallAvailable && session.ProjectRoot != "" {
+		if tm, err := t.Engine.ExternalClient.AggregateSessionFromRecall(ctx, "go-refactor", session.ProjectRoot); err == nil && tm != nil {
+			if session.Metadata == nil {
+				session.Metadata = make(map[string]any)
+			}
+			session.Metadata["go_refactor_trace"] = tm
+		}
+	}
+
+	resp, err := t.Engine.ClarifyRequirements(ctx, input.Context, standards)
 	if err != nil {
 		res := &mcp.CallToolResult{}
 		res.SetError(err)
 		return res, nil, nil
 	}
-	return &mcp.CallToolResult{}, resp, nil
+
+	if session.Metadata == nil {
+		session.Metadata = make(map[string]any)
+	}
+	session.Metadata["requirements_findings"] = []string{resp.Data.Narrative}
+
+	if err := t.Manager.SaveSession(ctx, session); err != nil {
+		res := &mcp.CallToolResult{}
+		res.SetError(fmt.Errorf("save session failed: %v", err))
+		return res, nil, nil
+	}
+
+	if recallAvailable && session.ProjectRoot != "" {
+		t.Engine.PublishSessionToRecall(ctx, input.SessionID, session.ProjectRoot, "requirements_clarified", "native", "clarify_requirements", "", session.Metadata)
+	}
+
+	var returnData any = resp
+	var returnSummary string = resp.Summary
+
+	if input.SessionID != "" && recallAvailable {
+		saveErr := t.Engine.ExternalClient.SaveSession(ctx, input.SessionID, input.SessionID, resp)
+		if saveErr == nil {
+			returnSummary += fmt.Sprintf("\n[CSSA STATUS]: Complete structural data saved successfully to recall session '%s'", input.SessionID)
+			returnData = struct {
+				Summary string `json:"summary"`
+				Data    any    `json:"data,omitempty"`
+			}{
+				Summary: returnSummary,
+				Data:    nil,
+			}
+		} else {
+			returnSummary += "\n[CSSA STATUS]: Could not save to recall. Falling back to standard JSON-RPC."
+			resp.Summary = returnSummary
+			returnData = resp
+		}
+	}
+
+	return &mcp.CallToolResult{}, returnData, nil
 }
 
 // Register adds the design tools to the registry.
-func Register(eng *engine.Engine) {
-	registry.Global.Register(&CritiqueDesignTool{Engine: eng})
-	registry.Global.Register(&AnalyzeEvolutionTool{Engine: eng})
-	registry.Global.Register(&ClarifyRequirementsTool{Engine: eng})
+func Register(mgr *state.Manager, eng *engine.Engine) {
+	registry.Global.Register(&CritiqueDesignTool{Manager: mgr, Engine: eng})
+	registry.Global.Register(&AnalyzeEvolutionTool{Manager: mgr, Engine: eng})
+	registry.Global.Register(&ClarifyRequirementsTool{Manager: mgr, Engine: eng})
+	registry.Global.Register(&ArchitecturalDiagrammerTool{Manager: mgr, Engine: eng})
+	registry.Global.Register(&PeerReviewTool{Manager: mgr, Engine: eng})
+	registry.Global.Register(&ThesisArchitectTool{Manager: mgr, Engine: eng})
+	registry.Global.Register(&AntithesisSkepticTool{Manager: mgr, Engine: eng})
 }

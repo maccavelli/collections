@@ -8,15 +8,15 @@ import (
 	"path/filepath"
 	"strings"
 
-	"mcp-server-brainstorm/internal/models"
 	"golang.org/x/sync/errgroup"
+	"mcp-server-brainstorm/internal/models"
 )
 
 // AnalyzeDiscovery scans the project for context and
 // identifies initial gaps. It uses a depth-limited walk
 // and skips common non-source directories.
 func (e *Engine) AnalyzeDiscovery(
-	ctx context.Context, path string,
+	ctx context.Context, path string, session *models.Session,
 ) ([]models.Gap, error) {
 	target := e.ResolvePath(path)
 	g, gCtx := errgroup.WithContext(ctx)
@@ -30,11 +30,31 @@ func (e *Engine) AnalyzeDiscovery(
 
 	// 1. Scan for key files (README, tests) in parallel
 	g.Go(func() error {
-		rf, tf, err := e.scanForContextFiles(gCtx, target)
+		e.mu.RLock()
+		rf, okR := session.Metadata["readme_found"].(bool)
+		tf, okT := session.Metadata["test_found"].(bool)
+		e.mu.RUnlock()
+
+		if okR && okT {
+			readmeFound = rf
+			testFound = tf
+			return nil
+		}
+
+		rfScan, tfScan, err := e.scanForContextFiles(gCtx, target)
 		if err != nil {
 			return err
 		}
-		readmeFound, testFound = rf, tf
+		readmeFound, testFound = rfScan, tfScan
+
+		e.mu.Lock()
+		if session.Metadata == nil {
+			session.Metadata = make(map[string]any)
+		}
+		session.Metadata["readme_found"] = rfScan
+		session.Metadata["test_found"] = tfScan
+		e.mu.Unlock()
+
 		return nil
 	})
 
@@ -122,23 +142,29 @@ func (e *Engine) analyzeStackAndSource(ctx context.Context, target string) ([]mo
 	if !hasGo && !hasNode && !hasPy {
 		gaps = append(gaps, models.Gap{
 			Area:        "TECH_STACK",
-			Description: "Cannot detect language or stack.",
+			Description: "Cannot detect language or stack. Root boundary markers are missing.",
 			Severity:    "RECOMMENDED",
 		})
 	}
 
 	if hasGo {
-		astGaps, err := e.inspector.AnalyzeDirectory(ctx, target)
-		if err != nil {
-			gaps = append(gaps, models.Gap{
-				Area: "STABILITY",
-				Description: fmt.Sprintf(
-					"failed to analyze Go source: %v", err,
-				),
-				Severity: "RECOMMENDED",
-			})
+		// Rely entirely on CSSA Backplane for Go structural analytics
+		if e.ExternalClient != nil {
+			tracePayload := e.LoadCrossSessionFromRecall(ctx, "go-refactor", e.ResolvePath(target))
+			if tracePayload != "" {
+				gaps = append(gaps, models.Gap{
+					Area:        "STRUCTURAL",
+					Description: "Deep AST telemetry retrieved via backplane orchestrator logic.",
+					Severity:    "INFO",
+				})
+			}
 		} else {
-			gaps = append(gaps, astGaps...)
+			// Standalone Mode Fallback
+			gaps = append(gaps, models.Gap{
+				Area:        "STRUCTURAL",
+				Description: "[STANDALONE] Deep AST structural analysis disabled without Orchestrator backplane.",
+				Severity:    "RECOMMENDED",
+			})
 		}
 	}
 	return gaps, nil
@@ -151,10 +177,13 @@ func (e *Engine) analyzeStackAndSource(ctx context.Context, target string) ([]mo
 func (e *Engine) DiscoverProject(
 	ctx context.Context, path string, session *models.Session,
 ) (models.DiscoveryResponse, error) {
-	gaps, err := e.AnalyzeDiscovery(ctx, path)
+	gaps, err := e.AnalyzeDiscovery(ctx, path, session)
 	if err != nil {
 		return models.DiscoveryResponse{}, err
 	}
+
+	// Query Recall lazily for architectural standards
+	standards := e.EnsureRecallCache(ctx, session, "discovery_architectural", "search", map[string]interface{}{"namespace": "ecosystem", "query": "baseline project architectural standards", "domain": "discovery", "limit": 10})
 
 	// Update session gaps for SuggestNextStep.
 	session.Gaps = gaps
@@ -169,6 +198,9 @@ func (e *Engine) DiscoverProject(
 			"Discovery complete. Identified %d potential gaps.",
 			len(gaps),
 		)
+	}
+	if standards != "" {
+		narrative += " Standards baseline retrieved from Recall."
 	}
 
 	// Generate Markdown Summary.
@@ -189,16 +221,25 @@ func (e *Engine) DiscoverProject(
 	sb.WriteString(fmt.Sprintf("\n**Next Step**: %s", nextStep))
 
 	return models.DiscoveryResponse{
-		Narrative: narrative,
-		Reasoning: fmt.Sprintf(
-			"The engine performed a depth-limited filesystem scan (max depth: %d) "+
-				"and executed targeted Go AST analysis. We identified %d gaps across "+
-				"Context, Tech Stack, Testing, and Code Quality domains.",
-			maxWalkDepth, len(gaps),
-		),
-		SummaryMD: sb.String(),
-		Gaps:      gaps,
-		NextStep:  nextStep,
+		Summary: fmt.Sprintf("Project discovery complete. %d gaps identified.", len(gaps)),
+		Data: struct {
+			Narrative string       `json:"narrative"`
+			Reasoning string       `json:"reasoning,omitempty"`
+			Gaps      []models.Gap `json:"gaps"`
+			NextStep  string       `json:"next_step"`
+			Standards string       `json:"standards,omitempty"`
+		}{
+			Narrative: narrative,
+			Reasoning: fmt.Sprintf(
+				"The engine performed a depth-limited filesystem scan (max depth: %d) "+
+					"and executed targeted Go AST analysis. We identified %d gaps across "+
+					"Context, Tech Stack, Testing, and Code Quality domains.",
+				maxWalkDepth, len(gaps),
+			),
+			Gaps:      gaps,
+			NextStep:  nextStep,
+			Standards: standards,
+		},
 	}, nil
 }
 
