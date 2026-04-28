@@ -17,11 +17,14 @@ type Info struct {
 	Diff      string
 }
 
+// lookPath is a package variable to allow mocking in tests.
+var lookPath = exec.LookPath
+
 // GatherInfo collects staged file names, diff stats, and the unified diff from git.
 func GatherInfo(maxDiffBytes int) (*Info, error) {
 	info := &Info{}
 
-	gitBin, err := exec.LookPath("git")
+	gitBin, err := lookPath("git")
 	if err != nil {
 		return nil, fmt.Errorf("A working git is required for this program to function.")
 	}

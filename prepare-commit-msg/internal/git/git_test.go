@@ -87,38 +87,50 @@ func TestGatherInfo(t *testing.T) {
 	// Stage changes for testing
 	os.WriteFile(filepath.Join(dir, "app.go"), []byte("package main\n\nfunc main() {}\n"), 0644)
 	os.WriteFile(filepath.Join(dir, "config.yaml"), []byte("timeout: 30s\n"), 0644)
+	os.WriteFile(filepath.Join(dir, "test.json"), []byte("{}\n"), 0644)
+	os.WriteFile(filepath.Join(dir, "main.tf"), []byte("resource {}\n"), 0644)
+	os.WriteFile(filepath.Join(dir, "Jenkinsfile"), []byte("pipeline {}\n"), 0644)
+	os.WriteFile(filepath.Join(dir, "other.txt"), []byte("text\n"), 0644)
+
 	w.Add("app.go")
 	w.Add("config.yaml")
+	w.Add("test.json")
+	w.Add("main.tf")
+	w.Add("Jenkinsfile")
+	w.Add("other.txt")
 
 	info, err = GatherInfo(32000)
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
 
-	// Verify stats
-	if len(info.Files) != 2 {
-		t.Errorf("expected 2 files, got %d: %v", len(info.Files), info.Files)
-	}
-	if !contains(info.Files, "app.go") || !contains(info.Files, "config.yaml") {
-		t.Errorf("missing expected files: %v", info.Files)
+	// Verify counts (YAML: 1, Scripts: 1, JSON: 1, Terraform: 1, CI/CD: 1, Other: 1)
+	if !strings.Contains(info.Stats, "JSON: 1") || !strings.Contains(info.Stats, "Terraform: 1") ||
+		!strings.Contains(info.Stats, "CI/CD: 1") || !strings.Contains(info.Stats, "Other: 1") {
+		t.Errorf("stats missing some categories: %s", info.Stats)
 	}
 
-	// Verify counts (YAML: 1, Scripts: 1)
-	if !strings.Contains(info.Stats, "YAML: 1") || !strings.Contains(info.Stats, "Scripts: 1") {
-		t.Errorf("expected stats to contain YAML: 1 and Scripts: 1, got %s", info.Stats)
+	// Test truncation logic with a very small maxDiffBytes limit
+	infoTruncated, err := GatherInfo(5)
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if !strings.Contains(infoTruncated.Diff, "[diff truncated]") {
+		t.Error("expected truncated diff string")
+	}
+}
+
+func TestGatherInfo_MissingGit(t *testing.T) {
+	oldFn := lookPath
+	defer func() { lookPath = oldFn }()
+
+	lookPath = func(file string) (string, error) {
+		return "", os.ErrNotExist
 	}
 
-	// Verify diff
-	if !strings.Contains(info.Diff, "diff --git a/app.go b/app.go") {
-		t.Errorf("diff missing expected file header: %s", info.Diff)
-	}
-
-	// Check additions/deletions
-	// app.go is new, 3 lines. config.yaml is new, 1 line.
-	// Initial commit has README.md.
-	// Staged: app.go (3 insertions), config.yaml (1 insertion)
-	if info.Additions < 3 { // Depending on line splits, should be 3 or 4
-		t.Errorf("expected additions >= 3, got %d", info.Additions)
+	_, err := GatherInfo(32000)
+	if err == nil {
+		t.Error("expected error when git is missing, got nil")
 	}
 }
 

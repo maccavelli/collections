@@ -24,13 +24,16 @@ type Config struct {
 
 // ProviderConfig stores credentials and model selection for a single LLM provider.
 type ProviderConfig struct {
-	APIKey string `json:"api_key"`
-	Model  string `json:"model"`
+	APIKey         string   `json:"api_key"`
+	Model          string   `json:"model"`
+	FallbackModels []string `json:"fallback_models,omitempty"`
 }
+
+var userHomeDir = os.UserHomeDir
 
 // GetConfigPath returns the absolute path to the configuration file.
 func GetConfigPath() (string, error) {
-	home, err := os.UserHomeDir()
+	home, err := userHomeDir()
 	if err != nil {
 		return "", err
 	}
@@ -49,7 +52,7 @@ func Load() (*Config, error) {
 	if err != nil {
 		if os.IsNotExist(err) {
 			// Migration check
-			home, _ := os.UserHomeDir()
+			home, _ := userHomeDir()
 			oldPath := filepath.Join(home, ".config", "prepare-commit-msg-embedded", "config.json")
 			if oldData, err := os.ReadFile(oldPath); err == nil {
 				return migrateConfig(oldData, path)
@@ -161,7 +164,7 @@ func migrateConfig(data []byte, newPath string) (*Config, error) {
 	if err := os.MkdirAll(filepath.Dir(newPath), 0755); err == nil {
 		if err := os.WriteFile(newPath, data, 0600); err == nil {
 			// Succeeded migrating file, now try to clean up old dir
-			home, _ := os.UserHomeDir()
+			home, _ := userHomeDir()
 			oldDir := filepath.Join(home, ".config", "prepare-commit-msg-embedded")
 			os.RemoveAll(oldDir)
 		}

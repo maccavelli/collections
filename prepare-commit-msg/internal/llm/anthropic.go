@@ -6,6 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
+	"sync"
+	"time"
 )
 
 // AnthropicProvider implements the Provider interface using the Anthropic API via standard http client.
@@ -74,4 +77,33 @@ func (p *AnthropicProvider) Generate(ctx context.Context, prompt string) (string
 	}
 
 	return result.Content[0].Text, nil
+}
+
+// DiscoverModels tests the default Anthropic models concurrently
+// and returns only the responsive ones.
+func (p *AnthropicProvider) DiscoverModels(ctx context.Context) ([]string, error) {
+	candidates := []string{"claude-3-5-sonnet-latest", "claude-3-5-haiku-latest"}
+	var results []string
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+
+	for _, id := range candidates {
+		wg.Add(1)
+		go func(modelID string) {
+			defer wg.Done()
+			tCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			defer cancel()
+
+			tp, _ := NewAnthropic(p.apiKey, modelID)
+			tp.baseURL = p.baseURL // inherit mock URLs in tests
+			res, err := tp.Generate(tCtx, "Respond with ONLY the word Hello")
+			if err == nil && strings.Contains(strings.ToLower(res), "hello") {
+				mu.Lock()
+				results = append(results, modelID)
+				mu.Unlock()
+			}
+		}(id)
+	}
+	wg.Wait()
+	return results, nil
 }
