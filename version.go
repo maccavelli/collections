@@ -1,4 +1,13 @@
 package main
 
+import (
+	"fmt"
+	"os"
+)
+
 // Version is the current version of the Recall MCP server.
-var Version = "0.0.0-dev"
+var Version = "v4.2.9"
+
+func printVersion() {
+	fmt.Fprintf(os.Stderr, "mcp-server-recall version %s\n", Version)
+}
