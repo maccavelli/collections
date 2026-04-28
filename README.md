@@ -1,91 +1,77 @@
-# MagicSkills Server
+# ✨ MagicSkills MCP Server
 
-A specialized MCP server for high-density knowledge retrieval, skill discovery, and automated workflow bootstrapping.
+A specialized Model Context Protocol (MCP) server for high-density knowledge retrieval, skill discovery, and
+automated workflow bootstrapping.
 
-## Overview
+## 🚀 Overview
 
-The MagicSkills server manages a sophisticated repository of expert-level "skills"—complex, multi-step procedures and domain knowledge. It is designed to act as a long-term memory and procedural accelerator for developers and AI agents.
+The MagicSkills server manages a sophisticated repository of expert-level "skills"—complex, multi-step procedures
+and domain knowledge. It acts as a long-term memory and procedural accelerator for developers and AI agents.
 
-### What it does (Core Pillars)
+### 📋 Core Pillars
 
-1.  **Skill Discovery & Matching**: Intelligent searching for relevant procedures using semantic matching (BM25) and tag filtering.
-2.  **Density & Compression**: Refines large, verbose documentation into "Dense Summaries" optimized for LLM context windows.
-3.  **Workflow Bootstrapping**: Automatically extracts checklists and validation steps from skill definitions.
-4.  **Host Verification**: Audits and validates the necessary environment dependencies (binaries, permissions) required for a specific skill.
+1. **Skill Discovery & Matching**: Intelligent searching for relevant procedures using semantic matching (BM25)
+   and tag filtering.
+2. **Density & Compression**: Refines large, verbose documentation into "Dense Summaries" optimized for LLM
+   context windows.
+3. **Workflow Bootstrapping**: Automatically extracts checklists and validation steps from skill definitions.
+4. **Host Verification**: Audits and validates the necessary environment dependencies required for a specific skill.
 
-### How it works (Architecture)
+---
 
-Built in Go for maximum performance and memory efficiency, MagicSkills follows a robust, repository-based architecture:
+## 🛠️ Tools
 
--   **Multi-Root Knowledge Index**: Can index and serve skills from multiple local or remote directories, allowing for partitioned knowledge bases (e.g., internal corp vs. public community).
--   **Parallel Skill Discovery**: Uses high-performance parallel directory walking via `errgroup` to rapidly identify and index `SKILL.md` files across complex projects.
--   **Advanced Scoring Engine**: Uses a BM25-based similarity engine to find the most relevant skill for a given user intent, even if keywords aren't exact.
--   **Structured Extraction**: Tools like `magicskills_bootstrap` use AST-like parsing to pull actionable task lists directly from YAML/Markdown skill definitions.
--   **Dynamic Resource Loading**: Skills are treated as dynamic resources that can be updated in real-time without server restarts.
+### `magicskills_list`
 
-### Why it exists (Rationale)
+Provides a comprehensive list of all skills available in the current index.
 
-LLMs are excellent at reasoning but struggle to remember company-specific workflows, complex internal setup guides, or precise semantic patterns. MagicSkills provides:
+### `magicskills_match`
 
--   **Expertise Persistence**: Captures senior developer knowledge into a machine-readable format.
--   **Automated Assurance**: Reduces "hallucination" by providing the LLM with direct, validated checklists.
--   **Rapid Onboarding**: New developers or agents can immediately "bootstrap" into a complex project with all dependencies verified.
+Automatically finds the best-matching skills for a given goal and returns a dense digest.
 
-## Tools
+- **Parameter**: `intent` (string)
 
-### Skill Navigation
--   `magicskills_list()`: Provides a comprehensive list of all skills available in the current index.
--   `magicskills_match(intent)`: Automatically finds the best-matching skills for a given goal and returns a dense digest.
--   `magicskills_get(name, [section], [version])`: Fetches high-relevance expert knowledge for a specific skill.
+### `magicskills_get`
 
-### Operational Support
--   `magicskills_bootstrap(name)`: Generates a structured task checklist directly from a skill's defined workflow.
--   `magicskills_validate_deps(name)`: Checks the host environment for required binary dependencies.
--   `magicskills_add_root(path)`: Dynamically adds and indexes a new skill directory to the server's knowledge base.
+Fetches high-relevance expert knowledge for a specific skill.
 
-### System Support
--   `get_internal_logs(max_lines)`: Accesses the server's internal logs for auditing and debugging.
+- **Parameters**: `name` (string), `section` (string, optional), `version` (string, optional)
 
-## Installation
+### `magicskills_validate_deps`
+
+Checks the host environment for required binary dependencies for a skill.
+
+- **Parameter**: `name` (string)
+
+---
+
+## ⚙️ Installation
 
 ### 1. Build the Binary
-
-Ensure you have Go installed, then build the binary:
 
 ```bash
 go build -o dist/mcp-server-magicskills main.go
 ```
 
-The compiled binary will be located in the `dist` directory.
+### 2. Configure for IDEs
 
-### 2. Configuration for AI Agents (Antigravity, Claude, Cline)
+#### **Antigravity**
 
-To use this server with an MCP-compatible agent, add it to your `mcpServers` configuration file.
-
-#### **Windows**
-> [!IMPORTANT]
-> On Windows, you **MUST** include the `.exe` extension in the command path for the agent to correctly invoke the binary.
-
-```json
-{
-  "mcpServers": {
-    "magicskills": {
-      "command": "C:\\path\\to\\mcp-server-magicskills.exe",
-      "args": [],
-      "env": {
-        "PATH": "C:\\Program Files\\Go\\bin;C:\\Windows\\system32"
-      }
-    }
-  }
-}
+```yaml
+mcpServers:
+  magicskills:
+    command: "/absolute/path/to/dist/mcp-server-magicskills"
 ```
 
-#### **Linux / MacOS**
+#### **VS Code (MCP Extension / Cline)**
+
+Add to your `mcp_config.json`:
+
 ```json
 {
   "mcpServers": {
     "magicskills": {
-      "command": "/usr/local/bin/mcp-server-magicskills",
+      "command": "/absolute/path/to/dist/mcp-server-magicskills",
       "args": [],
       "env": {
         "PATH": "/usr/local/go/bin:/usr/local/bin:/usr/bin"
@@ -95,12 +81,32 @@ To use this server with an MCP-compatible agent, add it to your `mcpServers` con
 }
 ```
 
-## Use Cases
+#### **Cursor IDE**
 
-- **Standardized Deployments**: Use `magicskills_bootstrap` to ensure every deployment follows the EXACT company-approved steps.
-- **Intent-Based Assistance**: When a user says "I need to fix the database," the system calls `magicskills_match` to suggest the right troubleshooting skill.
-- **Knowledge Transfer**: Document a complex migration as a skill, and any future agent can follow it exactly.
+1. **Settings** -> **Features** -> **MCP**.
+2. **+ Add New MCP Server**.
+3. Name: `MagicSkills`
+4. Type: `stdio`
+5. Command: `/absolute/path/to/dist/mcp-server-magicskills`
 
 ---
 
-Created in Go for flexibility and speed.
+## 📖 Use Cases
+
+- **Intent-Based Assistance**: Automatically find the right troubleshooting guide for a specific error.
+- **Knowledge Transfer**: Capture senior developer knowledge into machine-readable skills for universal reuse.
+- **Dependency Guarding**: Ensure all team members have required tools installed before starting a task.
+
+---
+
+## 💻 CLI Functionality
+
+Check version and manage roots:
+
+```bash
+./mcp-server-magicskills -version
+```
+
+---
+
+*Built with Go for maximum knowledge density and speed.*

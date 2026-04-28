@@ -1,15 +1,21 @@
 package discovery
 
 import (
+	"mcp-server-magicskills/internal/state"
+
 	"context"
 	"testing"
 
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"mcp-server-magicskills/internal/engine"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 func TestListTool_Handle(t *testing.T) {
-	eng := engine.NewEngine()
+	store, _ := state.NewStore(t.TempDir())
+	eng, _ := engine.NewEngine(store, t.TempDir()+"/idx")
+	close(eng.ReadyCh)
+	defer store.Close()
 	tool := &ListTool{Engine: eng}
 
 	ctx := context.Background()
@@ -24,7 +30,10 @@ func TestListTool_Handle(t *testing.T) {
 }
 
 func TestMatchTool_Handle(t *testing.T) {
-	eng := engine.NewEngine()
+	store, _ := state.NewStore(t.TempDir())
+	eng, _ := engine.NewEngine(store, t.TempDir()+"/idx")
+	close(eng.ReadyCh)
+	defer store.Close()
 	tool := &MatchTool{Engine: eng}
 
 	ctx := context.Background()
@@ -37,4 +46,19 @@ func TestMatchTool_Handle(t *testing.T) {
 	if tool.Name() != "magicskills_match" {
 		t.Errorf("expected magicskills_match, got %s", tool.Name())
 	}
+}
+
+func TestRegister(t *testing.T) {
+	store, _ := state.NewStore(t.TempDir())
+	eng, _ := engine.NewEngine(store, t.TempDir()+"/idx")
+	close(eng.ReadyCh)
+	defer store.Close()
+	Register(eng, nil)
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test"}, &mcp.ServerOptions{})
+	list := &ListTool{Engine: eng}
+	list.Register(srv)
+
+	match := &MatchTool{Engine: eng}
+	match.Register(srv)
 }

@@ -1,6 +1,8 @@
 package registry
 
 import (
+	"sync"
+
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -14,6 +16,7 @@ type Tool interface {
 
 // Registry manages a central collection of available MagicSkills tools.
 type Registry struct {
+	mu    sync.RWMutex
 	tools map[string]Tool
 }
 
@@ -29,21 +32,26 @@ func NewRegistry() *Registry {
 
 // Register adds a tool to the registry.
 func (r *Registry) Register(tool Tool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.tools[tool.Name()] = tool
 }
 
 // Get retrieves a tool by its name.
 func (r *Registry) Get(name string) (Tool, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	t, ok := r.tools[name]
 	return t, ok
 }
 
 // List returns all registered tools.
 func (r *Registry) List() []Tool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	var list []Tool
 	for _, t := range r.tools {
 		list = append(list, t)
 	}
 	return list
 }
-

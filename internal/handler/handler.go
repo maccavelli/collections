@@ -4,16 +4,15 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 	"sync"
 
-	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"mcp-server-magicskills/internal/config"
 	"mcp-server-magicskills/internal/engine"
-)
+	"mcp-server-magicskills/internal/external"
 
-const (
-	logBufferLimit = 1024 * 512 // 512KB
-	logTrimTarget  = 256 * 1024 // 256KB
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // LogBuffer implements io.Writer with ring-buffer semantics for slog
@@ -22,18 +21,22 @@ type LogBuffer struct {
 	buf bytes.Buffer
 }
 
+var secretRegex = regexp.MustCompile(config.ResolveRedactionPattern())
+
 func (lb *LogBuffer) Write(p []byte) (n int, err error) {
 	lb.mu.Lock()
 	defer lb.mu.Unlock()
 
-	n, err = lb.buf.Write(p)
+	redacted := secretRegex.ReplaceAll(p, []byte("[REDACTED]"))
+	_, err = lb.buf.Write(redacted)
 	if err != nil {
-		return n, err
+		return len(p), err
 	}
+	n = len(p)
 
-	if lb.buf.Len() > logBufferLimit {
+	if lb.buf.Len() > config.LogBufferLimit {
 		data := lb.buf.Bytes()
-		trimPoint := len(data) - logTrimTarget
+		trimPoint := len(data) - config.LogTrimTarget
 		if idx := bytes.IndexByte(data[trimPoint:], '\n'); idx >= 0 {
 			trimPoint += idx + 1
 		}
@@ -56,8 +59,9 @@ func (lb *LogBuffer) String() string {
 
 // MagicSkillsHandler provides shared resources for MagicSkills tools and resources.
 type MagicSkillsHandler struct {
-	Engine *engine.Engine
-	Logs   *LogBuffer
+	Engine       *engine.Engine
+	Logs         *LogBuffer
+	RecallClient *external.MCPClient
 }
 
 // HandleReadResource handles dashboard and log resource requests.
@@ -67,7 +71,7 @@ func (h *MagicSkillsHandler) HandleReadResource(ctx context.Context, request *mc
 		var b strings.Builder
 		b.Grow(512)
 		b.WriteString("# MagicSkills Dashboard\n\n")
-		b.WriteString(fmt.Sprintf("Total Skills Indexed: %d\n\n", len(h.Engine.Skills)))
+		b.WriteString(fmt.Sprintf("Total Skills Indexed: %d\n\n", h.Engine.SkillCount()))
 		b.WriteString("## Available Skills\n")
 
 		for s := range h.Engine.AllSkills() {
@@ -114,4 +118,3 @@ func (h *MagicSkillsHandler) RegisterResources(s *mcp.Server) {
 		MIMEType:    "text/plain",
 	}, h.HandleReadResource)
 }
-

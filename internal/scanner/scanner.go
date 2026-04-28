@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/fsnotify/fsnotify"
 	"golang.org/x/sync/errgroup"
@@ -46,7 +47,7 @@ func FindProjectSkillsRoots() []string {
 		for _, name := range []string{".agents/skills", ".agent/skills", ".gemini/skills", ".claude/rules", ".claude/skills", ".cursor/rules", ".github/skills", ".github/instructions"} {
 			target := filepath.Join(searchCwd, name)
 			if info, err := os.Stat(target); err == nil && info.IsDir() {
-				if !contains(roots, target) {
+				if !slices.Contains(roots, target) {
 					roots = append(roots, target)
 				}
 			}
@@ -59,15 +60,6 @@ func FindProjectSkillsRoots() []string {
 		searchCwd = parent
 	}
 	return roots
-}
-
-func contains(slice []string, val string) bool {
-	for _, item := range slice {
-		if item == val {
-			return true
-		}
-	}
-	return false
 }
 
 // Discover finds all SKILL.md files using parallel walking.
@@ -124,7 +116,10 @@ func (s *Scanner) Discover(ctx context.Context) ([]string, error) {
 		slog.Warn("Discovery produced some root errors", "error", err)
 	}
 
-	cwd, _ := os.Getwd()
+	cwd, err := os.Getwd()
+	if err != nil {
+		cwd = ""
+	}
 	slices.SortFunc(skillFiles, func(a, b string) int {
 		aLocal := strings.HasPrefix(a, cwd)
 		bLocal := strings.HasPrefix(b, cwd)
@@ -140,23 +135,51 @@ func (s *Scanner) Discover(ctx context.Context) ([]string, error) {
 	return skillFiles, nil
 }
 
-// Listen starts a callback loop for incremental updates.
+// Listen starts a callback loop for incremental updates with 150ms debounce.
 func (s *Scanner) Listen(ctx context.Context, onUpdate func(path string), onDelete func(path string)) {
-	go func() {
+	go func(c context.Context) {
+		var mu sync.Mutex
+		debounce := make(map[string]*time.Timer)
+		const debounceDelay = 150 * time.Millisecond
+
 		for {
 			select {
-			case <-ctx.Done():
+			case <-c.Done():
+				mu.Lock()
+				for _, t := range debounce {
+					t.Stop()
+				}
+				mu.Unlock()
 				return
 			case event, ok := <-s.Watcher.Events:
 				if !ok {
 					return
 				}
 				if strings.HasSuffix(event.Name, "SKILL.md") {
-					if event.Has(fsnotify.Write | fsnotify.Create) {
-						onUpdate(event.Name)
-					} else if event.Has(fsnotify.Remove | fsnotify.Rename) {
-						onDelete(event.Name)
+					path := event.Name
+					isWrite := event.Has(fsnotify.Write | fsnotify.Create)
+					isDelete := event.Has(fsnotify.Remove | fsnotify.Rename)
+
+					mu.Lock()
+					if t, ok := debounce[path]; ok {
+						t.Stop()
 					}
+					if isWrite {
+						debounce[path] = time.AfterFunc(debounceDelay, func() {
+							onUpdate(path)
+							mu.Lock()
+							delete(debounce, path)
+							mu.Unlock()
+						})
+					} else if isDelete {
+						debounce[path] = time.AfterFunc(debounceDelay, func() {
+							onDelete(path)
+							mu.Lock()
+							delete(debounce, path)
+							mu.Unlock()
+						})
+					}
+					mu.Unlock()
 				}
 			case err, ok := <-s.Watcher.Errors:
 				if !ok {
@@ -165,5 +188,5 @@ func (s *Scanner) Listen(ctx context.Context, onUpdate func(path string), onDele
 				slog.Error("Watcher error", "error", err)
 			}
 		}
-	}()
+	}(ctx)
 }

@@ -8,9 +8,17 @@ import (
 
 // Config holds the application-wide configuration for MagicSkills.
 type Config struct {
-	Version string
-	Roots   []string
+	Version   string
+	Roots     []string
+	RecallURL string // Canonical endpoint for mcp-server-recall (HTTP-streaming)
 }
+
+const (
+	// Logging: get_internal_logs buffer limits
+	LogBufferLimit  = 1024 * 1024 // 1MB max log buffer
+	LogTrimTarget   = 512 * 1024  // 512KB trim target
+	DefaultLogLines = 25          // Default lines returned by get_internal_logs
+)
 
 // ResolveRoots canonicalizes and discovers skill roots from environment and default paths.
 func ResolveRoots() []string {
@@ -61,4 +69,35 @@ func ResolveRoots() []string {
 		}
 	}
 	return unique
+}
+
+// ResolveDataDir returns the path for the persistent BadgerDB.
+func ResolveDataDir() string {
+	if val := os.Getenv("MAGIC_SKILLS_DATA_DIR"); val != "" {
+		return val
+	}
+	configDir, err := os.UserConfigDir()
+	if err != nil {
+		return "/tmp/mcp-server-magicskills-data"
+	}
+	return filepath.Join(configDir, "mcp-server-magicskills")
+}
+
+// ResolveRecallURL identifies the MCP recall server endpoint for cross-server talk.
+func ResolveRecallURL() string {
+	if val := os.Getenv("MCP_RECALL_URL"); val != "" {
+		return val
+	}
+	if val := os.Getenv("MCP_API_URL"); val != "" {
+		return val
+	}
+	return "http://localhost:8080/sse"
+}
+
+// ResolveRedactionPattern fetches the standard redaction regex for logs or defaults it.
+func ResolveRedactionPattern() string {
+	if val := os.Getenv("MAGIC_SKILLS_REDACTION_PATTERN"); val != "" {
+		return val
+	}
+	return `(?i)(token_|sk_|key_|secret_)[a-zA-Z0-9_-]+`
 }

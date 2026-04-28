@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/fsnotify/fsnotify"
@@ -80,11 +81,11 @@ func TestScanner_Discover(t *testing.T) {
 
 func TestScanner_Contains(t *testing.T) {
 	slice := []string{"foo", "bar", "baz"}
-	if !contains(slice, "bar") {
-		t.Error("contains should return true for 'bar'")
+	if !slices.Contains(slice, "bar") {
+		t.Error("slices.Contains should return true for 'bar'")
 	}
-	if contains(slice, "unknown") {
-		t.Error("contains should return false for 'unknown'")
+	if slices.Contains(slice, "unknown") {
+		t.Error("slices.Contains should return false for 'unknown'")
 	}
 }
 
