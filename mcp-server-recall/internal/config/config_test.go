@@ -1,21 +1,19 @@
 package config
 
 import (
-	"os"
 	"testing"
 )
 
-func TestConfig(t *testing.T) {
-	os.Setenv(EnvDBPath, "/tmp/mcp-test")
-	defer os.Unsetenv(EnvDBPath)
+func TestConfig_Defaults(t *testing.T) {
+	c := New("test-server")
 
-	cfg := New()
-	if cfg.DBPath != "/tmp/mcp-test" {
-		t.Errorf("expected DBPath to be /tmp/mcp-test, got %s", cfg.DBPath)
+	_ = c.DedupThreshold()
+	b := c.BatchSettings()
+	if b.MaxBatchSize <= 0 {
+		t.Errorf("expected valid batch size")
 	}
 
-	path := cfg.GetDBPath()
-	if path != "/tmp/mcp-test" {
-		t.Errorf("GetDBPath failed: %s", path)
-	}
+	_ = c.ExportDir()
+	_ = c.EncryptionKey()
+	_ = c.HarvestDisableDrift()
 }

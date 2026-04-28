@@ -1,0 +1,300 @@
+package server
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"log/slog"
+	"strings"
+	"time"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"mcp-server-recall/internal/config"
+	"mcp-server-recall/internal/harvest"
+	"mcp-server-recall/internal/memory"
+)
+
+// harvestTools returns the tool catalog additions for harvest plugins.
+func (rs *MCPRecallServer) harvestTools() []toolDef {
+	return []toolDef{
+		{
+			Name:        "harvest_standards",
+			Description: "Harvests a Go package for canonical representations, detects interfaces, and tracks API drift using go doc hashes. Scoped exclusively to the standards namespace. Saves output natively into BadgerDB and Bleve. THIS SHOULD ONLY BE RUN FROM THE CLI INTERFACE, NOT FROM THE IDE/AGENT!!! CLI Command: `mcp-server-recall harvest standards [package_path]`",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"package": { "type": "string", "description": "Go package path (e.g., github.com/blevesearch/bleve/v2) or a local directory." }
+				},
+				"required": ["package"]
+			}`),
+			Handler: rs.handleHarvestStandards,
+		},
+		{
+			Name:        "harvest_projects",
+			Description: "Harvests a local Go project for canonical representations, detects interfaces, and tracks API drift. Scoped exclusively to the projects namespace. Saves output natively into BadgerDB and Bleve. THIS SHOULD ONLY BE RUN FROM THE CLI INTERFACE, NOT FROM THE IDE/AGENT!!! CLI Command: `mcp-server-recall harvest projects [project_path]`",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"package": { "type": "string", "description": "Local project directory path to harvest." }
+				},
+				"required": ["package"]
+			}`),
+			Handler: rs.handleHarvestProjects,
+		},
+	}
+}
+
+func (rs *MCPRecallServer) handleHarvestStandards(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	return rs.handleHarvest(ctx, req, memory.DomainStandards)
+}
+
+func (rs *MCPRecallServer) handleHarvestProjects(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	return rs.handleHarvest(ctx, req, memory.DomainProjects)
+}
+
+func (rs *MCPRecallServer) handleHarvest(ctx context.Context, req *mcp.CallToolRequest, targetDomain string) (*mcp.CallToolResult, error) {
+	startHarvest := time.Now()
+	var args struct {
+		TargetPath string `json:"target_path"`
+	}
+	if err := json.Unmarshal(req.Params.Arguments, &args); err != nil {
+		return nil, fmt.Errorf("invalid parameters: %w", err)
+	}
+
+	resolvedPkg, err := harvest.ResolveSource(ctx, args.TargetPath)
+	if err != nil {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Resolver Error: %v", err)}},
+			IsError: true,
+		}, nil
+	}
+
+	var res *harvest.HarvestResult
+	if strings.HasPrefix(resolvedPkg, "http://") || strings.HasPrefix(resolvedPkg, "https://") {
+		slog.Info("[Perf] Start ScrapeWebDocument", "url", resolvedPkg)
+		res, err = harvest.ScrapeWebDocument(ctx, resolvedPkg)
+		slog.Info("[Perf] End ScrapeWebDocument", "dur_ms", time.Since(startHarvest).Milliseconds())
+	} else {
+		slog.Info("[Perf] Start engine.Run", "pkg", resolvedPkg)
+		engine := harvest.NewEngine()
+		res, err = engine.Run(ctx, resolvedPkg)
+		slog.Info("[Perf] End engine.Run", "dur_ms", time.Since(startHarvest).Milliseconds())
+	}
+	if err != nil {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Harvest Engine critical failure: %v", err)}},
+			IsError: true,
+		}, nil
+	}
+
+	// Maintenance Mode: CheckDrift
+	tDrift := time.Now()
+	drifted := rs.hasDrifted(ctx, targetDomain, resolvedPkg, res.Checksum)
+	slog.Info("[Perf] hasDrifted check", "drifted", drifted, "domain", targetDomain, "dur_ms", time.Since(tDrift).Milliseconds())
+
+	if !drifted {
+		return &mcp.CallToolResult{
+			StructuredContent: map[string]interface{}{
+				"summary": fmt.Sprintf("No API drift detected in %s domain. Package structurally identical to stored record.", targetDomain),
+				"data": map[string]string{
+					"checksum": res.Checksum,
+					"status":   "unchanged",
+					"domain":   targetDomain,
+				},
+			},
+		}, nil
+	}
+
+	// We drift! Process the ingestion natively.
+	tIngest := time.Now()
+	stored, batchErrs, err := rs.ingestHarvestResult(ctx, resolvedPkg, res, targetDomain)
+	slog.Info("[Perf] End ingestHarvestResult", "stored", stored, "domain", targetDomain, "dur_ms", time.Since(tIngest).Milliseconds())
+
+	msg := "Harvest Reindex Complete."
+	if err == nil {
+		msg = fmt.Sprintf("Harvest Update (Drift Detected) Complete [%s]. Old versions have been superseded.", targetDomain)
+	}
+
+	return &mcp.CallToolResult{
+		StructuredContent: map[string]interface{}{
+			"summary": fmt.Sprintf("%s Extracted %d structural symbols.", msg, stored),
+			"data": map[string]interface{}{
+				"symbols_harvested": len(res.Symbols),
+				"batch_errors":      batchErrs,
+				"checksum":          res.Checksum,
+				"package":           resolvedPkg,
+				"domain":            targetDomain,
+			},
+		},
+	}, nil
+}
+
+func (rs *MCPRecallServer) hasDrifted(ctx context.Context, domain, pkg string, newChecksum string) bool {
+	if rs.cfg.HarvestDisableDrift() {
+		return true // Bypasses cache check through dynamic configuration
+	}
+	driftKey := fmt.Sprintf("pkg:%s:%s:CheckDrift", domain, pkg)
+	oldChecksum, err := rs.store.Get(ctx, driftKey)
+	if err == nil && oldChecksum.Category == "SysDrift" && oldChecksum.Content == newChecksum {
+		return false
+	}
+	return true
+}
+
+func (rs *MCPRecallServer) ingestHarvestResult(ctx context.Context, resolvedPkg string, res *harvest.HarvestResult, targetDomain string) (int, []string, error) {
+	batchCfg := rs.cfg.BatchSettings()
+	driftKey := fmt.Sprintf("pkg:%s:%s:CheckDrift", targetDomain, resolvedPkg)
+	var batch []memory.BatchEntry
+
+	for _, sym := range res.Symbols {
+		entry, err := buildSymbolEntry(sym, targetDomain)
+		if err != nil {
+			slog.Warn("Failed to marshal harvested symbol", "name", sym.Name, "error", err)
+			continue
+		}
+		entry.Domain = targetDomain
+		batch = append(batch, entry)
+	}
+
+	// Store new checksum
+	batch = append(batch, memory.BatchEntry{
+		Key:      driftKey,
+		Value:    res.Checksum,
+		Category: "SysDrift",
+		Domain:   targetDomain,
+	})
+
+	for pkg, pDoc := range res.PackageDocs {
+		batch = append(batch, memory.BatchEntry{
+			Key:      fmt.Sprintf("pkg:%s:PackageOverview", pkg),
+			Value:    pDoc,
+			Category: "PackageDoc",
+			Tags:     []string{"packagedoc", fmt.Sprintf("source:%s", targetDomain)},
+			Domain:   targetDomain,
+		})
+	}
+
+	return rs.writeHarvestBatch(ctx, batch, batchCfg)
+}
+
+// buildSymbolEntry creates a BatchEntry from a harvested symbol, including tags and domain detection.
+func buildSymbolEntry(sym harvest.HarvestedSymbol, targetDomain string) (memory.BatchEntry, error) {
+	key := fmt.Sprintf("pkg:%s:%s", sym.PkgPath, sym.Name)
+
+	valBytes, err := json.MarshalIndent(sym, "", "  ")
+	if err != nil {
+		return memory.BatchEntry{}, err
+	}
+
+	tags := []string{"harvested", fmt.Sprintf("source:%s", targetDomain)}
+	if mod := extractModuleName(sym.PkgPath); mod != "" {
+		tags = append(tags, fmt.Sprintf("module:%s", mod))
+	}
+	if sym.SymbolType != "" {
+		tags = append(tags, fmt.Sprintf("type:%s", sym.SymbolType))
+	}
+	for _, iface := range sym.Interfaces {
+		tags = append(tags, fmt.Sprintf("implements:%s", iface))
+	}
+	if sym.Receiver != "" {
+		tags = append(tags, fmt.Sprintf("receiver:%s", sym.Receiver))
+	}
+	for _, dep := range sym.Dependencies {
+		tags = append(tags, fmt.Sprintf("depends_on:%s", dep))
+	}
+	tags = append(tags, detectDomainTags(sym.Doc)...)
+
+	return memory.BatchEntry{
+		Key:      key,
+		Value:    string(valBytes),
+		Category: "HarvestedCode",
+		Tags:     tags,
+	}, nil
+}
+
+// extractModuleName derives a short module name from a Go package path for module-level tagging.
+// External: github.com/blevesearch/bleve/v2/... → bleve
+// Local: mcp-server-recall/internal/memory → mcp-server-recall
+func extractModuleName(pkgPath string) string {
+	parts := strings.Split(pkgPath, "/")
+	if len(parts) == 0 {
+		return ""
+	}
+	// External modules (github.com, gitlab.com, golang.org, etc.)
+	if len(parts) >= 3 && strings.Contains(parts[0], ".") {
+		name := parts[2]
+		// If the third segment is a version (v2, v3), use the repo name
+		if len(name) >= 2 && name[0] == 'v' && name[1] >= '0' && name[1] <= '9' {
+			name = parts[1] // fallback to org name
+		}
+		return name
+	}
+	// Local modules: first path segment is the module name
+	return parts[0]
+}
+
+// detectDomainTags scans documentation text for domain-indicating keywords.
+func detectDomainTags(doc string) []string {
+	docLower := strings.ToLower(doc)
+	domains := map[string]string{
+		"auth":          "auth",
+		"security":      "auth",
+		"database":      "database",
+		"sql":           "database",
+		"api":           "api",
+		"middleware":    "middleware",
+		"architecture":  "architecture",
+		"observability": "observability",
+		"metrics":       "metrics",
+		"telemetry":     "telemetry",
+		"concurrency":   "concurrency",
+		"network":       "network",
+		"orchestrator":  "orchestrator",
+		"design":        "design",
+		"test":          "test",
+	}
+	var tags []string
+	for kw, domain := range domains {
+		if strings.Contains(docLower, kw) {
+			tags = append(tags, fmt.Sprintf("domain:%s", domain))
+		}
+	}
+	return tags
+}
+
+// writeHarvestBatch writes batch entries in chunks with optional throttling.
+func (rs *MCPRecallServer) writeHarvestBatch(ctx context.Context, batch []memory.BatchEntry, batchCfg config.BatchConfig) (int, []string, error) {
+	stored := 0
+	var batchErrs []string
+
+	chunkSize := batchCfg.HarvestChunkSize
+	sleepMs := batchCfg.HarvestInterBatchSleepMs
+
+	// Fast mode: when load_fast_writes_enabled=1, zero sleep and double chunks
+	if batchCfg.LoadFastWritesEnabled == 1 {
+		sleepMs = 0
+		chunkSize = chunkSize * 2
+	}
+
+	for i := 0; i < len(batch); i += chunkSize {
+		end := i + chunkSize
+		if end > len(batch) {
+			end = len(batch)
+		}
+		chunk := batch[i:end]
+		count, errors, bErr := rs.store.SaveBatch(ctx, chunk)
+		stored += count
+		if bErr != nil {
+			batchErrs = append(batchErrs, bErr.Error())
+		}
+		for _, e := range errors {
+			batchErrs = append(batchErrs, fmt.Sprintf("Key %s: %v", e.Key, e.Error))
+		}
+		// Throttle between batches to prevent memtable saturation and system starvation
+		if sleepMs > 0 {
+			time.Sleep(time.Duration(sleepMs) * time.Millisecond)
+		}
+	}
+
+	return stored, batchErrs, nil
+}
