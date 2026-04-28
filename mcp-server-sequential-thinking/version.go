@@ -6,7 +6,7 @@ import (
 )
 
 // Version is the current version of the Sequential Thinking MCP server.
-var Version = "v4.2.8"
+var Version = "v4.2.9"
 
 func printVersion() {
 	fmt.Fprintf(os.Stderr, "mcp-server-sequential-thinking version %s\n", Version)
