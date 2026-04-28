@@ -22,6 +22,9 @@ type ConfigChangeHandler interface {
 	// (magictools gains ownership). Available for next sync_ecosystem.
 	OnServerDemoted(name string)
 
+	// OnServerUpdated is called when a server's configuration parameters change.
+	OnServerUpdated(name string)
+
 	// OnConfigReloaded is called when the configuration file has been re-read.
 	OnConfigReloaded(cfg *Config)
 
@@ -210,6 +213,12 @@ func (w *Watcher) handleServersChange() {
 		return
 	}
 
+	oldServersList := w.liveConfig.GetManagedServers()
+	oldServersMap := make(map[string]string)
+	for _, sc := range oldServersList {
+		oldServersMap[sc.Name] = sc.Hash()
+	}
+
 	// Update the live config with new server list
 	w.liveConfig.UpdateManagedServers(servers)
 	newManaged := w.liveConfig.GetManagedServerNames()
@@ -227,11 +236,24 @@ func (w *Watcher) handleServersChange() {
 		}
 	}
 
-	// Detect servers added to servers.yaml
+	// Detect servers added to servers.yaml or parameters changed
 	for name := range newManaged {
 		if !oldManaged[name] {
 			slog.Info("server added to servers.yaml", "component", "config", "server_id", name)
 			w.handler.OnServerDemoted(name)
+		} else {
+			// Check if parameters changed
+			var newHash string
+			for _, sc := range servers {
+				if sc.Name == name {
+					newHash = sc.Hash()
+					break
+				}
+			}
+			if oldHash, ok := oldServersMap[name]; ok && newHash != "" && oldHash != newHash {
+				slog.Info("server config mutated in servers.yaml", "component", "config", "server_id", name)
+				w.handler.OnServerUpdated(name)
+			}
 		}
 	}
 

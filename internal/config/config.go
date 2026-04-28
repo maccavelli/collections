@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -180,6 +181,7 @@ type ServerConfig struct {
 	GoMemLimitMB  int
 	MaxCPULimit   int
 	DeferredBoot  bool
+	Disabled      bool
 }
 
 // Configuration options shared with SaveInternalTools
@@ -352,13 +354,21 @@ func New(version, flagPath string) (*Config, error) {
 
 		v.SetDefault("configuration.squeezeLevel", 3)
 		v.SetDefault("configuration.logLevel", "DEBUG")
+		v.SetDefault("configuration.mcpLogLevel", "INFO")
+		v.SetDefault("configuration.logFormat", "json")
+		v.SetDefault("configuration.validateProxyCalls", true)
 		v.SetDefault("configuration.scoreThreshold", 0.3)
 		v.SetDefault("configuration.tokenSpendThresh", 1500000)
 		v.SetDefault("configuration.lruLimit", 2048)
 		v.SetDefault("configuration.synthesisBiasVector", 0.7)
 		v.SetDefault("configuration.synthesisBiasSynergy", 0.3)
+		v.SetDefault("configuration.synthesisBiasRole", 0.0)
+		v.SetDefault("configuration.scoreFusionAlpha", 0.5)
+		v.SetDefault("configuration.squeezeBypass", []string{})
+		v.SetDefault("configuration.ringBufferTargets", []string{})
+		v.SetDefault("configuration.pinnedServers", []string{})
 
-		if err := os.WriteFile(configPath, []byte("mcpServers: {}\nconfiguration:\n  squeezeLevel: 3\n  logLevel: DEBUG\n  scoreThreshold: 0.3\n  tokenSpendThresh: 1500000\n  lruLimit: 2048\n  synthesisBiasVector: 0.7\n  synthesisBiasSynergy: 0.3\n"), 0644); err != nil {
+		if err := os.WriteFile(configPath, []byte("configuration:\n  squeezeLevel: 3\n  logLevel: DEBUG\n  mcpLogLevel: INFO\n  logFormat: json\n  validateProxyCalls: true\n  scoreThreshold: 0.3\n  tokenSpendThresh: 1500000\n  lruLimit: 2048\n  synthesisBiasVector: 0.7\n  synthesisBiasSynergy: 0.3\n  synthesisBiasRole: 0.0\n  scoreFusionAlpha: 0.5\n  squeezeBypass: []\n  ringBufferTargets: []\n  pinnedServers: []\n"), 0644); err != nil {
 			return nil, fmt.Errorf("failed to create default config: %w", err)
 		}
 		// Retry read after create
@@ -683,18 +693,147 @@ func LoadFromViper(v *viper.Viper) (*Config, error) {
 		}
 	}
 
-	// 🛡️ NATIVE REGISTRY: Load managed servers from servers.yaml (orchestrator-owned).
-	// Auto-migration: if servers.yaml doesn't exist, extract from IDE config and write it.
 	managed, err := LoadManagedServers()
 	if err != nil {
-		slog.Info("config: servers.yaml not found, migrating from IDE config", "error", err)
-		managed = extractManaged(&ide)
-		if len(managed) > 0 {
-			if saveErr := SaveManagedServers(managed); saveErr != nil {
-				slog.Warn("config: failed to write servers.yaml during migration", "error", saveErr)
-			} else {
-				slog.Info("config: auto-migrated servers to servers.yaml", "count", len(managed))
+		slog.Info("config: servers.yaml not found, generating defaults", "error", err)
+
+		homeDir, _ := os.UserHomeDir()
+		binPath := filepath.Join(homeDir, ".local", "bin")
+
+		managed = append(managed, []ServerConfig{
+			{
+				Name:          "brainstorm",
+				Command:       filepath.Join(binPath, "mcp-server-brainstorm"),
+				Args:          []string{},
+				Env:           map[string]string{"HOME": homeDir, "MCP_API_URL": "http://localhost:7000/mcp"},
+				DisabledTools: []string{},
+				MemoryLimitMB: 4096,
+				GoMemLimitMB:  1024,
+				MaxCPULimit:   2,
+				DeferredBoot:  false,
+				Disabled:      true,
+			},
+			{
+				Name:          "duckduckgo",
+				Command:       filepath.Join(binPath, "mcp-server-duckduckgo"),
+				Args:          []string{},
+				Env:           map[string]string{"HOME": homeDir},
+				DisabledTools: []string{},
+				MemoryLimitMB: 1024,
+				GoMemLimitMB:  1024,
+				MaxCPULimit:   2,
+				DeferredBoot:  true,
+				Disabled:      true,
+			},
+			{
+				Name:          "filesystem",
+				Command:       filepath.Join(binPath, "mcp-server-filesystem"),
+				Args: []string{
+					filepath.Join(homeDir, "gitrepos"),
+					filepath.Join(homeDir, ".local"),
+					filepath.Join(homeDir, ".gemini"),
+					filepath.Join(homeDir, ".venv-global"),
+				},
+				Env: map[string]string{
+					"HOME": homeDir,
+					"PATH": filepath.Join(homeDir, ".local", "bin") + ":/usr/local/bin:/usr/bin",
+				},
+				DisabledTools: []string{},
+				MemoryLimitMB: 1024,
+				GoMemLimitMB:  1024,
+				MaxCPULimit:   2,
+				DeferredBoot:  true,
+				Disabled:      true,
+			},
+			{
+				Name:          "go-refactor",
+				Command:       filepath.Join(binPath, "mcp-server-go-refactor"),
+				Args:          []string{},
+				Env: map[string]string{
+					"HOME":        homeDir,
+					"MCP_API_URL": "http://localhost:7000/mcp",
+					"PATH":        filepath.Join(homeDir, ".local", "go", "bin") + ":" + filepath.Join(homeDir, ".local", "bin") + ":/usr/local/bin:/usr/bin",
+				},
+				DisabledTools: []string{},
+				MemoryLimitMB: 6144,
+				GoMemLimitMB:  2048,
+				MaxCPULimit:   2,
+				DeferredBoot:  false,
+				Disabled:      true,
+			},
+			{
+				Name:          "magicskills",
+				Command:       filepath.Join(binPath, "mcp-server-magicskills"),
+				Args:          []string{},
+				Env:           map[string]string{"HOME": homeDir, "MCP_API_URL": "http://localhost:7000/mcp"},
+				DisabledTools: []string{},
+				MemoryLimitMB: 2048,
+				GoMemLimitMB:  1024,
+				MaxCPULimit:   2,
+				DeferredBoot:  false,
+				Disabled:      true,
+			},
+			{
+				Name:          "recall",
+				Command:       filepath.Join(binPath, "mcp-server-recall"),
+				Args:          []string{},
+				Env:           map[string]string{"HOME": homeDir, "MCP_RECALL_API_PORT": "7000"},
+				DisabledTools: []string{},
+				MemoryLimitMB: 4096,
+				GoMemLimitMB:  1024,
+				MaxCPULimit:   2,
+				DeferredBoot:  false,
+				Disabled:      true,
+			},
+			{
+				Name:          "sequential-thinking",
+				Command:       filepath.Join(binPath, "mcp-server-sequential-thinking"),
+				Args:          []string{},
+				Env:           map[string]string{"HOME": homeDir},
+				DisabledTools: []string{},
+				MemoryLimitMB: 1024,
+				GoMemLimitMB:  1024,
+				MaxCPULimit:   2,
+				DeferredBoot:  false,
+				Disabled:      true,
+			},
+		}...)
+
+		idePath, _ := DiscoverIDEConfig()
+		if data, err := os.ReadFile(idePath); err == nil {
+			var rawIDE IDEConfig
+			if err := json.Unmarshal(data, &rawIDE); err == nil {
+				for name, entry := range rawIDE.McpServers {
+					if name == SelfName {
+						continue // strictly never migrate the magictools orchestrator
+					}
+					
+					exists := false
+					for _, m := range managed {
+						if m.Name == name {
+							exists = true
+							break
+						}
+					}
+					
+					if !exists {
+						managed = append(managed, ServerConfig{
+							Name:          name,
+							Command:       entry.Command,
+							Args:          entry.Args,
+							Env:           entry.Env,
+							DisabledTools: entry.DisabledTools,
+							Disabled:      false, // actively migrate them as enabled so they boot
+						})
+					}
+				}
 			}
+		}
+
+		if saveErr := SaveManagedServers(managed); saveErr != nil {
+			slog.Warn("config: failed to write servers.yaml during generation", "error", saveErr)
+		} else {
+			slog.Info("config: generated default servers.yaml", "count", len(managed))
 		}
 	}
 
@@ -918,27 +1057,6 @@ func (c *Config) GetManagedServerNames() map[string]bool {
 	return names
 }
 
-// extractManaged filters IDE config for disabled: true entries, excluding self.
-// Used only during auto-migration to seed servers.yaml from legacy IDE config.
-func extractManaged(ide *IDEConfig) []ServerConfig {
-	var servers []ServerConfig
-	for name, entry := range ide.McpServers {
-		if name == SelfName {
-			continue // never manage ourselves
-		}
-		if !entry.Disabled {
-			continue // IDE manages enabled servers
-		}
-		servers = append(servers, ServerConfig{
-			Name:          name,
-			Command:       entry.Command,
-			Args:          entry.Args,
-			Env:           entry.Env,
-			DisabledTools: entry.DisabledTools,
-		})
-	}
-	return servers
-}
 
 // serversYAML is the on-disk format for the native server registry.
 type serversYAML struct {
@@ -948,13 +1066,14 @@ type serversYAML struct {
 type serverEntry struct {
 	Name          string            `yaml:"name"`
 	Command       string            `yaml:"command"`
-	Args          []string          `yaml:"args,omitempty"`
-	Env           map[string]string `yaml:"env,omitempty"`
-	DisabledTools []string          `yaml:"disabled_tools,omitempty"`
-	MemoryLimitMB int               `yaml:"memory_limit_mb,omitempty"`
+	Args          []string          `yaml:"args"`
+	Env           map[string]string `yaml:"env"`
+	DisabledTools []string          `yaml:"disabled_tools"`
+	MemoryLimitMB int               `yaml:"memory_limit_mb"`
 	GoMemLimitMB  int               `yaml:"gomemlimit_mb,omitempty"`
-	MaxCPULimit   int               `yaml:"max_cpu_limit,omitempty"`
-	DeferredBoot  bool              `yaml:"deferred_boot,omitempty"`
+	MaxCPULimit   int               `yaml:"max_cpu_limit"`
+	DeferredBoot  bool              `yaml:"deferred_boot"`
+	Disabled      bool              `yaml:"disabled"`
 }
 
 // LoadManagedServers reads the native server registry from servers.yaml.
@@ -982,6 +1101,7 @@ func LoadManagedServers() ([]ServerConfig, error) {
 			GoMemLimitMB:  e.GoMemLimitMB,
 			MaxCPULimit:   e.MaxCPULimit,
 			DeferredBoot:  e.DeferredBoot,
+			Disabled:      e.Disabled,
 		})
 	}
 
@@ -998,16 +1118,31 @@ func SaveManagedServers(servers []ServerConfig) error {
 
 	reg := serversYAML{Servers: make([]serverEntry, 0, len(servers))}
 	for _, sc := range servers {
+		// Ensure nil slices/maps are written as empty [] / {}
+		args := sc.Args
+		if args == nil {
+			args = []string{}
+		}
+		env := sc.Env
+		if env == nil {
+			env = make(map[string]string)
+		}
+		disabledTools := sc.DisabledTools
+		if disabledTools == nil {
+			disabledTools = []string{}
+		}
+
 		reg.Servers = append(reg.Servers, serverEntry{
 			Name:          sc.Name,
 			Command:       sc.Command,
-			Args:          sc.Args,
-			Env:           sc.Env,
-			DisabledTools: sc.DisabledTools,
+			Args:          args,
+			Env:           env,
+			DisabledTools: disabledTools,
 			MemoryLimitMB: sc.MemoryLimitMB,
 			GoMemLimitMB:  sc.GoMemLimitMB,
 			MaxCPULimit:   sc.MaxCPULimit,
 			DeferredBoot:  sc.DeferredBoot,
+			Disabled:      sc.Disabled,
 		})
 	}
 
@@ -1016,7 +1151,15 @@ func SaveManagedServers(servers []ServerConfig) error {
 		return fmt.Errorf("failed to marshal servers.yaml: %w", err)
 	}
 
-	if err := os.WriteFile(path, data, 0644); err != nil {
+	yamlStr := string(data)
+	// Inject filesystem arguments comment natively before writing
+	yamlStr = strings.Replace(yamlStr, "      args:\n        - ", "      args:\n        # List of allowed filesystem paths\n        - ", 1)
+	
+	// Inject gomemlimit_mb comment for go servers
+	re := regexp.MustCompile(`( +)gomemlimit_mb: ([0-9]+)`)
+	yamlStr = re.ReplaceAllString(yamlStr, "${1}# This setting only applies to go mcp servers\n${1}gomemlimit_mb: ${2}")
+
+	if err := os.WriteFile(path, []byte(yamlStr), 0644); err != nil {
 		return fmt.Errorf("failed to write servers.yaml: %w", err)
 	}
 

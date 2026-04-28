@@ -10,21 +10,29 @@ import (
 )
 
 type mockHandler struct {
+	sync.Mutex
 	promoted []string
 	demoted  []string
-	mu       sync.Mutex
+	updated  []string
+	reloaded int
 }
 
 func (m *mockHandler) OnServerPromoted(name string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	m.Lock()
+	defer m.Unlock()
 	m.promoted = append(m.promoted, name)
 }
 
 func (m *mockHandler) OnServerDemoted(name string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	m.Lock()
+	defer m.Unlock()
 	m.demoted = append(m.demoted, name)
+}
+
+func (m *mockHandler) OnServerUpdated(name string) {
+	m.Lock()
+	defer m.Unlock()
+	m.updated = append(m.updated, name)
 }
 
 func (m *mockHandler) OnConfigReloaded(cfg *Config) {}

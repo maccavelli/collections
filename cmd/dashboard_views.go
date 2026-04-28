@@ -13,7 +13,7 @@ import (
 const loadingText = "⏳ Loading telemetry data..."
 
 // DashboardTabs natively defines the active array of menu items, allowing dashboard.go to dynamically scale keyboard constraints avoiding boundary panics explicitly.
-var DashboardTabs = []string{"Overview", "Tool-Registry", "Intelligence", "Orchestration", "Storage", "Gateway", "Diagnostics", "Quit"}
+var DashboardTabs = []string{"Overview", "Tool-Registry", "Intelligence", "Orchestration", "DAG-Status", "Storage", "Gateway", "Diagnostics", "Quit"}
 
 func mergeVertical(boxes ...string) string {
 	var layout [][]pterm.Panel
@@ -55,12 +55,14 @@ func renderPtermDashboard(snapshot map[string]any, logs []string, uiState *Inter
 	case 4:
 		contentBox = mergeVertical(renderPipeline(snapshot), renderSpans(logs, uiState))
 	case 5:
-		contentBox = mergeVertical(renderDatabases(snapshot), renderCollisions(snapshot))
+		contentBox = renderDAGStatus(snapshot)
 	case 6:
-		contentBox = mergeVertical(renderProxy(snapshot), renderTokenValue(snapshot), renderComms(snapshot))
+		contentBox = mergeVertical(renderDatabases(snapshot), renderCollisions(snapshot))
 	case 7:
-		contentBox = mergeVertical(renderErrors(snapshot), renderRuntime(snapshot))
+		contentBox = mergeVertical(renderProxy(snapshot), renderTokenValue(snapshot), renderComms(snapshot))
 	case 8:
+		contentBox = mergeVertical(renderErrors(snapshot), renderRuntime(snapshot))
+	case 9:
 		contentBox = pterm.DefaultBox.WithTitle("Quit").Sprint("Press ENTER to exit the dashboard.")
 	default:
 		contentBox = mergeVertical(renderOverview(snapshot, logs), renderFleet(snapshot))
@@ -211,7 +213,54 @@ func renderScores(snapshot map[string]any) string {
 
 	table, _ := pterm.DefaultTable.WithHasHeader().WithData(rows).Srender()
 	title := fmt.Sprintf("Tool Reliability (Top %d) — 10s refresh", len(arr))
-	return pterm.DefaultBox.WithTitle(title).Sprint(table)
+	relBox := pterm.DefaultBox.WithTitle(title).Sprint(table)
+
+	// Drift Factors Panel
+	driftContent := "Waiting for drift telemetry..."
+	if driftRaw, dOk := snapshot["scoring_factors"].([]any); dOk && len(driftRaw) > 0 {
+		dRows := [][]string{{"Factor Category", "Impact Count", "Penalty/Reward"}}
+		for _, d := range driftRaw {
+			if m, ok := d.(map[string]any); ok {
+				dRows = append(dRows, []string{
+					str(m, "category"),
+					fmt.Sprint(numI64(m, "count")),
+					str(m, "impact_type"),
+				})
+			}
+		}
+		driftContent, _ = pterm.DefaultTable.WithHasHeader().WithData(dRows).Srender()
+	}
+	driftBox := pterm.DefaultBox.WithTitle("Scoring Drift Factors").Sprint(driftContent)
+
+	// Volatility Tracking
+	volatilityContent := "Waiting for volatility index..."
+	if volRaw, vOk := snapshot["volatility_index"].([]any); vOk && len(volRaw) > 0 {
+		vRows := [][]string{{"URN", "Volatility Score", "Stability Status"}}
+		for _, v := range volRaw {
+			if m, ok := v.(map[string]any); ok {
+				score := numF64(m, "score")
+				scoreStr := fmt.Sprintf("%.2f", score)
+				status := pterm.Green("STABLE")
+				if score > 5.0 {
+					status = pterm.Red("HIGH VOLATILITY")
+					scoreStr = pterm.Red(scoreStr)
+				} else if score > 2.0 {
+					status = pterm.Yellow("ELEVATED")
+					scoreStr = pterm.Yellow(scoreStr)
+				}
+				vRows = append(vRows, []string{str(m, "urn"), scoreStr, status})
+			}
+		}
+		volatilityContent, _ = pterm.DefaultTable.WithHasHeader().WithData(vRows).Srender()
+	}
+	volBox := pterm.DefaultBox.WithTitle("Tool Volatility Tracking").Sprint(volatilityContent)
+
+	panels, _ := pterm.DefaultPanel.WithPanels(pterm.Panels{
+		{{Data: relBox}},
+		{{Data: driftBox}, {Data: volBox}},
+	}).Srender()
+
+	return panels
 }
 
 // colorDelta formats a float delta with +/- sign and green/red/neutral coloring.
@@ -376,7 +425,40 @@ func renderTools(snapshot map[string]any) string {
 	}
 
 	table, _ := pterm.DefaultTable.WithHasHeader().WithData(rows).Srender()
-	return pterm.DefaultBox.WithTitle("Tool Analytics").Sprint(table)
+	mainBox := pterm.DefaultBox.WithTitle("Tool Analytics").Sprint(table)
+
+	// Cross-Server Routing Graph
+	routeContent := "Waiting for cross-server routing telemetry..."
+	if routesRaw, rOk := snapshot["cross_server_routes"].([]any); rOk && len(routesRaw) > 0 {
+		rRows := [][]string{{"Source Server", "Target Server", "Proxy Invocations", "Status"}}
+		for _, r := range routesRaw {
+			if m, ok := r.(map[string]any); ok {
+				source := str(m, "source")
+				target := str(m, "target")
+				calls := numI64(m, "calls")
+				faults := numI64(m, "faults")
+				
+				status := pterm.Green("● HEALTHY")
+				if faults > 0 && calls > 0 {
+					if float64(faults)/float64(calls) > 0.1 {
+						status = pterm.Red("● DEGRADED")
+					} else {
+						status = pterm.Yellow("● FLAKY")
+					}
+				}
+				rRows = append(rRows, []string{source, pterm.Cyan("➔ ") + target, fmt.Sprint(calls), status})
+			}
+		}
+		routeContent, _ = pterm.DefaultTable.WithHasHeader().WithData(rRows).Srender()
+	}
+	routeBox := pterm.DefaultBox.WithTitle("Cross-Server Routing Matrix").Sprint(routeContent)
+
+	panels, _ := pterm.DefaultPanel.WithPanels(pterm.Panels{
+		{{Data: mainBox}},
+		{{Data: routeBox}},
+	}).Srender()
+
+	return panels
 }
 
 // ── Tab 4: Pipeline ─────────────────────────────────────────────────────────
@@ -687,9 +769,34 @@ func renderProxy(snapshot map[string]any) string {
 	}
 	digestBox := pterm.DefaultBox.WithTitle("Session Digest").Sprint(digestContent)
 
+	// Network Dynamics (Velocity & Backpressure)
+	netContent := "Waiting for network dynamics telemetry..."
+	if netRaw, nOk := snapshot["network_dynamics"].(map[string]any); nOk {
+		vel := numF64(netRaw, "token_velocity_tps")
+		sqSat := numF64(netRaw, "squeeze_saturation_pct")
+		hfSat := numF64(netRaw, "hfsc_saturation_pct")
+		
+		velStr := fmt.Sprintf("%.1f", vel)
+		sqStr := fmt.Sprintf("%.1f%%", sqSat)
+		hfStr := fmt.Sprintf("%.1f%%", hfSat)
+		
+		if sqSat > 80 { sqStr = pterm.Red(sqStr) } else if sqSat > 50 { sqStr = pterm.Yellow(sqStr) } else { sqStr = pterm.Green(sqStr) }
+		if hfSat > 80 { hfStr = pterm.Red(hfStr) } else if hfSat > 50 { hfStr = pterm.Yellow(hfStr) } else { hfStr = pterm.Green(hfStr) }
+
+		netRows := [][]string{
+			{"Metric", "Value"},
+			{"Token Velocity (tokens/sec)", velStr},
+			{"Gateway Squeeze Saturation", sqStr},
+			{"HFSC Fragmenter Saturation", hfStr},
+		}
+		netContent, _ = pterm.DefaultTable.WithHasHeader().WithData(netRows).Srender()
+	}
+	netBox := pterm.DefaultBox.WithTitle("Network Dynamics (Backpressure & Velocity)").Sprint(netContent)
+
 	panels, _ := pterm.DefaultPanel.WithPanels(pterm.Panels{
 		{{Data: serverBox}},
 		{{Data: latBox}, {Data: digestBox}},
+		{{Data: netBox}},
 	}).Srender()
 
 	return panels
@@ -779,10 +886,48 @@ func renderSearch(snapshot map[string]any) string {
 		{"Search Latency (total ms)", fmt.Sprint(numI64(searchRaw, "total_latency_ms"))},
 		{"Cache Hits", fmt.Sprint(numI64(searchRaw, "cache_hits"))},
 		{"Cache Misses", fmt.Sprint(numI64(searchRaw, "cache_misses"))},
+		{"Learning Weight", fmt.Sprintf("%.4f", numF64(searchRaw, "learning_weight"))},
 	}
 
 	table, _ := pterm.DefaultTable.WithHasHeader().WithData(rows).Srender()
-	return pterm.DefaultBox.WithTitle("Search Intelligence").Sprint(table)
+	mainBox := pterm.DefaultBox.WithTitle("Search Intelligence").Sprint(table)
+
+	// Index Comparison Matrix
+	compContent := "Waiting for routing comparison telemetry..."
+	bleveTop, bOk := searchRaw["bleve_top_5"].([]any)
+	hnswTop, hOk := searchRaw["hnsw_top_5"].([]any)
+	if bOk || hOk {
+		compRows := [][]string{
+			{"Rank", "Bleve (BM25) Baseline", "Vector (HNSW) Routing"},
+		}
+		for i := 0; i < 5; i++ {
+			bStr, hStr := "-", "-"
+			if i < len(bleveTop) {
+				if s, ok := bleveTop[i].(string); ok {
+					bStr = s
+				}
+			}
+			if i < len(hnswTop) {
+				if s, ok := hnswTop[i].(string); ok {
+					hStr = s
+					if bStr != hStr {
+						hStr = pterm.Green(hStr) // highlight vector divergence
+					}
+				}
+			}
+			compRows = append(compRows, []string{fmt.Sprintf("#%d", i+1), bStr, hStr})
+		}
+		compTable, _ := pterm.DefaultTable.WithHasHeader().WithData(compRows).Srender()
+		compContent = compTable
+	}
+	compBox := pterm.DefaultBox.WithTitle("Index Decision Matrix").Sprint(compContent)
+
+	panels, _ := pterm.DefaultPanel.WithPanels(pterm.Panels{
+		{{Data: mainBox}},
+		{{Data: compBox}},
+	}).Srender()
+
+	return panels
 }
 
 // ── Tab 15: Comms ───────────────────────────────────────────────────────────
@@ -1194,4 +1339,119 @@ func renderRAG(snapshot map[string]any) string {
 
 	table, _ := pterm.DefaultTable.WithHasHeader().WithData(rows).Srender()
 	return pterm.DefaultBox.WithTitle("Vector Search Confidence Map (RAG)").Sprint(table)
+}
+
+// ── Tab: DAG Status ─────────────────────────────────────────────────────────
+
+func renderDAGStatus(snapshot map[string]any) string {
+	dagRaw, ok := snapshot["dag_status"].(map[string]any)
+	if !ok || len(dagRaw) == 0 {
+		return pterm.DefaultBox.WithTitle("DAG Pipeline Status").Sprint("Waiting for real-time compose_pipeline DAG data...")
+	}
+
+	// 1. Global Status Bar
+	sessionID := str(dagRaw, "session_id")
+	status := str(dagRaw, "status")
+	totalNodes := numI64(dagRaw, "total_nodes")
+	currentNode := numI64(dagRaw, "current_node_index")
+	globalLatency := str(dagRaw, "global_latency")
+	
+	statusColor := pterm.NewStyle(pterm.FgBlack, pterm.BgCyan)
+	if status == "EXECUTING" {
+		statusColor = pterm.NewStyle(pterm.FgBlack, pterm.BgYellow)
+	} else if status == "FAILED" {
+		statusColor = pterm.NewStyle(pterm.FgBlack, pterm.BgRed)
+	} else if status == "COMPLETED" {
+		statusColor = pterm.NewStyle(pterm.FgBlack, pterm.BgGreen)
+	}
+
+	headerText := fmt.Sprintf(" [STATUS: %s] | Session ID: %s | Total Nodes: %d | Current Node: %d | Global Latency: %s ", status, sessionID, totalNodes, currentNode, globalLatency)
+	header := statusColor.Sprint(headerText)
+
+	// 2. Cascade Table (Left Block)
+	var cascadeContent string
+	nodesRaw, nOk := dagRaw["nodes"].([]any)
+	if nOk && len(nodesRaw) > 0 {
+		rows := [][]string{{"Step", "Node / Tool URN", "State", "Latency"}}
+		for i, n := range nodesRaw {
+			node, _ := n.(map[string]any)
+			state := str(node, "state")
+			stateStr := state
+			switch state {
+			case "DONE":
+				stateStr = pterm.Green(state)
+			case "EXECUTING":
+				stateStr = pterm.Yellow("▶ " + state)
+			case "WAITING", "READY":
+				stateStr = pterm.Gray(state)
+			case "FAILED":
+				stateStr = pterm.Red("✖ " + state)
+			}
+			
+			rows = append(rows, []string{
+				fmt.Sprintf("%d", i+1),
+				str(node, "name"),
+				stateStr,
+				str(node, "latency"),
+			})
+		}
+		cascadeContent, _ = pterm.DefaultTable.WithHasHeader().WithData(rows).Srender()
+	} else {
+		cascadeContent = "No nodes generated."
+	}
+	cascadeBox := pterm.DefaultBox.WithTitle("Execution Cascade").Sprint(cascadeContent)
+
+	// 3. Payload & Validation Inspector (Right Block)
+	inspectorContent := "Waiting for node activation..."
+	activeNode, aOk := dagRaw["active_node"].(map[string]any)
+	if aOk && len(activeNode) > 0 {
+		inspRows := [][]string{
+			{"Metric", "Value"},
+			{"Active Target", pterm.Cyan(str(activeNode, "name"))},
+			{"Raw Payload (bytes)", fmt.Sprint(numI64(activeNode, "bytes_raw"))},
+			{"Minified (bytes)", fmt.Sprint(numI64(activeNode, "bytes_minified"))},
+			{"Tokens Processed", fmt.Sprint(numI64(activeNode, "tokens"))},
+			{"Cache Action", str(activeNode, "cache_action")},
+			{"CSSA Matrix Hash", str(activeNode, "cssa_hash")},
+		}
+		inspectorContent, _ = pterm.DefaultTable.WithHasHeader().WithData(inspRows).Srender()
+	}
+	inspectorBox := pterm.DefaultBox.WithTitle("Payload Inspector").Sprint(inspectorContent)
+
+	// 4. Structural Entropy Metric & 5. Self-Healing Trajectory (Bottom Boxes)
+	entropyStr := "N/A"
+	if eRaw := numF64(dagRaw, "entropy_ratio"); eRaw > 0 {
+		eStr := fmt.Sprintf("%.2f", eRaw)
+		if eRaw > 1.5 {
+			entropyStr = pterm.Red(eStr + " (Highly Complex)")
+		} else if eRaw > 1.0 {
+			entropyStr = pterm.Yellow(eStr + " (Elevated)")
+		} else {
+			entropyStr = pterm.Green(eStr + " (Optimized)")
+		}
+	}
+	entropyRows := [][]string{
+		{"Metric", "Value"},
+		{"Graph Entropy Ratio", entropyStr},
+		{"Total Edges", fmt.Sprint(numI64(dagRaw, "total_edges"))},
+		{"Tree Depth", fmt.Sprint(numI64(dagRaw, "tree_depth"))},
+	}
+	entropyContent, _ := pterm.DefaultTable.WithHasHeader().WithData(entropyRows).Srender()
+	entropyBox := pterm.DefaultBox.WithTitle("Structural Entropy").Sprint(entropyContent)
+
+	healContent := "No faults detected in active node."
+	if faultsRaw := numI64(activeNode, "faults"); faultsRaw > 0 {
+		healContent = pterm.Red(fmt.Sprintf("Soft-Failures Detected: %d\n", faultsRaw))
+		healContent += fmt.Sprintf("Rollback Strategy: %s\n", str(activeNode, "rollback_strategy"))
+		healContent += fmt.Sprintf("Retry Limit: %d/%d\n", numI64(activeNode, "retry_count"), numI64(activeNode, "retry_limit"))
+		healContent += pterm.Yellow("Alternative URN Route: ") + str(activeNode, "fallback_urn")
+	}
+	healBox := pterm.DefaultBox.WithTitle("Self-Healing Trajectory").Sprint(healContent)
+
+	// Layout arrangement
+	panels, _ := pterm.DefaultPanel.WithPanels(pterm.Panels{
+		{{Data: cascadeBox}, {Data: mergeVertical(inspectorBox, healBox, entropyBox)}},
+	}).Srender()
+
+	return header + "\n" + panels
 }
