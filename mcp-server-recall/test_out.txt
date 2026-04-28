@@ -1,0 +1,9 @@
+FAIL	mcp-server-recall [build failed]
+FAIL	mcp-server-recall/cmd [build failed]
+ok  	mcp-server-recall/internal/config	0.011s
+?   	mcp-server-recall/internal/harvest	[no test files]
+ok  	mcp-server-recall/internal/memory	6.962s
+ok  	mcp-server-recall/internal/search	1.559s
+ok  	mcp-server-recall/internal/server	1.034s
+ok  	mcp-server-recall/internal/util	0.231s
+FAIL
