@@ -164,6 +164,9 @@ func (h *OrchestratorHandler) WakeServers(ctx context.Context, req *mcp.CallTool
 	)
 
 	for _, sc := range servers {
+		if sc.Disabled {
+			continue
+		}
 		if _, ok := h.Registry.GetServerSession(sc.Name); ok {
 			alreadyOnline = append(alreadyOnline, sc.Name)
 			continue
@@ -299,4 +302,10 @@ func (h *OrchestratorHandler) OnServerPromoted(name string) {
 // OnServerDemoted handles a server transitioning from IDE-managed to magictools-managed
 func (h *OrchestratorHandler) OnServerDemoted(name string) {
 	slog.Info("server available for magictools management", "server", name)
+}
+
+// OnServerUpdated seamlessly reloads the sub-server process to apply new config parameters
+func (h *OrchestratorHandler) OnServerUpdated(name string) {
+	slog.Info("hot-reloading server due to parameter changes", "server", name)
+	_, _ = h.executeSelectiveReload(context.Background(), []string{name})
 }
