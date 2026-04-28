@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"golang.org/x/sync/errgroup"
 	"strings"
 
 	"mcp-server-brainstorm/internal/models"
@@ -94,7 +95,7 @@ var generalChallenges = []string{
 // returns domain-matched challenges; falls back to a
 // single general challenge when nothing matches.
 func (e *Engine) ChallengeAssumption(
-	ctx context.Context, design string,
+	ctx context.Context, design string, traceMap map[string]interface{},
 ) ([]string, error) {
 	select {
 	case <-ctx.Done():
@@ -125,153 +126,11 @@ func (e *Engine) ChallengeAssumption(
 	return challenges, nil
 }
 
-type evolutionPattern struct {
-	keywords []string
-	result   models.EvolutionResult
-}
-
-// evolutionPatterns maps keywords to structured evolution
-// analysis results.
-var evolutionPatterns = []evolutionPattern{
-	{
-		keywords: []string{"refactor"},
-		result: models.EvolutionResult{
-			Category:  "refactor",
-			RiskLevel: "HIGH",
-			Reasoning: "Refactoring often involves heavy logic " +
-				"displacement with high regression risk.",
-			Recommendation: "Identify all upstream" +
-				" dependencies before proceeding." +
-				" Ensure existing tests cover" +
-				" current behavior.",
-		},
-	},
-	{
-		keywords: []string{"deprecat"},
-		result: models.EvolutionResult{
-			Category:  "deprecation",
-			RiskLevel: "HIGH",
-			Reasoning: "Removing established APIs can " +
-				"break downstream consumers " +
-				"permanently.",
-			Recommendation: "Ensure backward" +
-				" compatibility or provide a" +
-				" migration guide.",
-		},
-	},
-	{
-		keywords: []string{"rename"},
-		result: models.EvolutionResult{
-			Category:  "rename",
-			RiskLevel: "MEDIUM",
-			Reasoning: "Naming changes require broad " +
-				"re-factoring and can cause build " +
-				"failures if missed.",
-			Recommendation: "Update all references." +
-				" Consider aliasing the old name" +
-				" during transition.",
-		},
-	},
-	{
-		keywords: []string{"split", "extract"},
-		result: models.EvolutionResult{
-			Category:  "split",
-			RiskLevel: "MEDIUM",
-			Reasoning: "Breaking down components " +
-				"introduces communication overhead " +
-				"and interface debt.",
-			Recommendation: "Define clear interfaces" +
-				" between the split components." +
-				" Verify no circular dependencies.",
-		},
-	},
-	{
-		keywords: []string{"merge", "consolidat"},
-		result: models.EvolutionResult{
-			Category:  "merge",
-			RiskLevel: "MEDIUM",
-			Reasoning: "Consolidating logic can " +
-				"obscure individual responsibilities " +
-				"and create monoliths.",
-			Recommendation: "Reconcile divergent" +
-				" behaviors and configurations." +
-				" Test combined edge cases.",
-		},
-	},
-	{
-		keywords: []string{"rewrite"},
-		result: models.EvolutionResult{
-			Category:  "rewrite",
-			RiskLevel: "HIGH",
-			Reasoning: "Full rewrites often ignore " +
-				"legacy bugfixes and critical edge " +
-				"cases.",
-			Recommendation: "Consider incremental" +
-				" replacement over full rewrite." +
-				" Maintain a compatibility layer.",
-		},
-	},
-	{
-		keywords: []string{"dependency", "upgrade",
-			"update"},
-		result: models.EvolutionResult{
-			Category:  "dependency_change",
-			RiskLevel: "MEDIUM",
-			Reasoning: "Third-party updates can " +
-				"introduce silent regressions or " +
-				"security vulnerabilities.",
-			Recommendation: "Check changelogs for" +
-				" breaking changes. Pin and test" +
-				" the exact version.",
-		},
-	},
-	{
-		keywords: []string{"remove", "delete", "drop"},
-		result: models.EvolutionResult{
-			Category:  "removal",
-			RiskLevel: "HIGH",
-			Reasoning: "Deletions are irreversible " +
-				"in runtime and might orphan " +
-				"critical dependencies.",
-			Recommendation: "Verify no downstream" +
-				" consumers depend on the removed" +
-				" component.",
-		},
-	},
-	{
-		keywords: []string{"add", "new", "implement"},
-		result: models.EvolutionResult{
-			Category:  "addition",
-			RiskLevel: "LOW",
-			Reasoning: "New additions have lower " +
-				"impact on existing paths but " +
-				"increase maintenance surface.",
-			Recommendation: "Define acceptance" +
-				" criteria. Ensure new component" +
-				" follows existing conventions.",
-		},
-	},
-	{
-		keywords: []string{"replace", "swap",
-			"substitut"},
-		result: models.EvolutionResult{
-			Category:  "replacement",
-			RiskLevel: "MEDIUM",
-			Reasoning: "Swapping implementations " +
-				"requires strict behavioral parity " +
-				"alignment.",
-			Recommendation: "Ensure the replacement" +
-				" covers all use cases of the" +
-				" original. Run comparative tests.",
-		},
-	},
-}
-
 // AnalyzeEvolution identifies risks when extending or
 // modifying existing project logic. Returns a structured
 // result with category, risk level, and recommendation.
 func (e *Engine) AnalyzeEvolution(
-	ctx context.Context, proposal string,
+	ctx context.Context, proposal string, standards string, traceMap map[string]interface{},
 ) (models.EvolutionResult, error) {
 	select {
 	case <-ctx.Done():
@@ -282,40 +141,85 @@ func (e *Engine) AnalyzeEvolution(
 
 	var res models.EvolutionResult
 	found := false
-	for _, pat := range evolutionPatterns {
-		for _, kw := range pat.keywords {
-			if strings.Contains(lower, kw) {
-				res = pat.result
-				found = true
-				break
-			}
+
+	// Empirical Evolutionary Ledger (Angle 5)
+	if traceMap != nil {
+		nodeCount := 0.0
+		if nc, ok := traceMap["total_nodes"].(float64); ok {
+			nodeCount = nc
+		} else if intNc, ok := traceMap["total_nodes"].(int); ok {
+			nodeCount = float64(intNc)
 		}
-		if found {
-			break
+
+		funcsCount := 0.0
+		if fc, ok := traceMap["total_functions"].(float64); ok {
+			funcsCount = fc
+		}
+
+		if nodeCount > 500 || funcsCount > 20 {
+			res = models.EvolutionResult{
+				Summary: "Massive evolutionary footprint detected (HIGH risk)",
+				Data: struct {
+					Category       string `json:"category"`
+					RiskLevel      string `json:"risk_level"`
+					Reasoning      string `json:"reasoning,omitempty"`
+					Recommendation string `json:"recommendation"`
+					Narrative      string `json:"narrative,omitempty"`
+				}{
+					Category:       "large_scale_refactor",
+					RiskLevel:      "HIGH",
+					Reasoning:      fmt.Sprintf("Empirical footprint proves a massive blast radius (%.0f nodes, %.0f functions).", nodeCount, funcsCount),
+					Recommendation: "Decompose into smaller isolated merges to mathematically reduce regression severity.",
+				},
+			}
+			found = true
+		} else if nodeCount > 100 || funcsCount > 5 || strings.Contains(lower, "split") || strings.Contains(lower, "merge") {
+			res = models.EvolutionResult{
+				Summary: "Structural displacement detected (MEDIUM risk)",
+				Data: struct {
+					Category       string `json:"category"`
+					RiskLevel      string `json:"risk_level"`
+					Reasoning      string `json:"reasoning,omitempty"`
+					Recommendation string `json:"recommendation"`
+					Narrative      string `json:"narrative,omitempty"`
+				}{
+					Category:       "structural_displacement",
+					RiskLevel:      "MEDIUM",
+					Reasoning:      fmt.Sprintf("Moderate structural mutation detected (%.0f nodes) requiring interface compliance.", nodeCount),
+					Recommendation: "Define rigorous interface compliance boundaries prior to displacement.",
+				},
+			}
+			found = true
 		}
 	}
 
 	if !found {
 		res = models.EvolutionResult{
-			Category:  "general",
-			RiskLevel: "LOW",
-			Reasoning: "Proposal contains no known high-risk keywords.",
-			Recommendation: "Evolution path looks stable." +
-				" Define specific components next.",
+			Summary: "No high-risk changes detected",
+			Data: struct {
+				Category       string `json:"category"`
+				RiskLevel      string `json:"risk_level"`
+				Reasoning      string `json:"reasoning,omitempty"`
+				Recommendation string `json:"recommendation"`
+				Narrative      string `json:"narrative,omitempty"`
+			}{
+				Category:       "general",
+				RiskLevel:      "LOW",
+				Reasoning:      "Proposal contains no known high-risk keywords.",
+				Recommendation: "Evolution path looks stable. Define specific components next.",
+			},
 		}
 	}
 
-	res.Narrative = fmt.Sprintf(
-		"Evolution analysis: %s change detected with %s risk.",
-		res.Category, res.RiskLevel,
-	)
+	stdNote := ""
+	if standards != "" {
+		stdNote = " (Evaluated against Enterprise Standards)"
+	}
 
-	var sb strings.Builder
-	sb.WriteString("### Evolution Analysis\n\n")
-	sb.WriteString(fmt.Sprintf("- **Category**: %s\n", res.Category))
-	sb.WriteString(fmt.Sprintf("- **Risk Level**: %s\n", res.RiskLevel))
-	sb.WriteString(fmt.Sprintf("- **Recommendation**: %s\n", res.Recommendation))
-	res.SummaryMD = sb.String()
+	res.Data.Narrative = fmt.Sprintf(
+		"Evolution analysis: %s change detected with %s risk.%s",
+		res.Data.Category, res.Data.RiskLevel, stdNote,
+	)
 
 	return res, nil
 }
@@ -323,10 +227,10 @@ func (e *Engine) AnalyzeEvolution(
 // qualityRubric defines a quality attribute with a base
 // score, keyword bonuses, and a base observation.
 type qualityRubric struct {
-	attribute   string
-	baseScore   int
-	baseObs     string
-	bonuses     []struct {
+	attribute string
+	baseScore int
+	baseObs   string
+	bonuses   []struct {
 		keyword string
 		bonus   int
 	}
@@ -432,7 +336,7 @@ var qualityRubrics = []qualityRubric{
 // additive keyword matching. Each matched keyword adds
 // its bonus to the base score, capped at 10.
 func (e *Engine) EvaluateQualityAttributes(
-	ctx context.Context, design string,
+	ctx context.Context, design string, traceMap map[string]interface{},
 ) ([]models.QualityMetric, error) {
 	select {
 	case <-ctx.Done():
@@ -447,35 +351,52 @@ func (e *Engine) EvaluateQualityAttributes(
 		obs := rubric.baseObs
 		matchedAny := false
 
-		// Check for negation patterns first.
-		negated := false
-		for _, neg := range rubric.negPatterns {
-			if strings.Contains(lower, neg) {
-				negated = true
-				break
+		// Angle 6: Negation heuristics deleted completely in favor of AST telemetry
+		var matched []string
+		for _, b := range rubric.bonuses {
+			if strings.Contains(lower, b.keyword) {
+				score += b.bonus
+				matched = append(
+					matched, b.keyword,
+				)
+				matchedAny = true
 			}
 		}
 
-		if !negated {
-			var matched []string
-			for _, b := range rubric.bonuses {
-				if strings.Contains(lower, b.keyword) {
-					score += b.bonus
-					matched = append(
-						matched, b.keyword,
-					)
-					matchedAny = true
+		// Empirical Telemetry Override (Angle 6)
+		if traceMap != nil {
+			if imports, ok := traceMap["imports"].([]interface{}); ok {
+				for _, imp := range imports {
+					pkg, _ := imp.(string)
+					switch rubric.attribute {
+					case "Observability":
+						if strings.Contains(pkg, "prometheus") || strings.Contains(pkg, "telemetry") || strings.Contains(pkg, "zap") {
+							score += 5
+							matchedAny = true
+							matched = append(matched, "AST:"+pkg)
+						}
+					case "Security":
+						if strings.Contains(pkg, "crypto") || strings.Contains(pkg, "bcrypt") {
+							score += 5
+							matchedAny = true
+							matched = append(matched, "AST:"+pkg)
+						}
+					case "Modularity":
+						if strings.Contains(pkg, "testing") || strings.Contains(pkg, "go/ast") {
+							score += 3
+							matchedAny = true
+							matched = append(matched, "AST:"+pkg)
+						}
+					}
 				}
 			}
-			if matchedAny {
-				obs = fmt.Sprintf(
-					"Detected keywords [%s].",
-					strings.Join(matched, ", "),
-				)
-			}
-		} else {
-			obs = "Negation detected —" +
-				" explicit absence noted."
+		}
+
+		if matchedAny {
+			obs = fmt.Sprintf(
+				"Detected keywords [%s].",
+				strings.Join(matched, ", "),
+			)
 		}
 
 		// Cap at 10.
@@ -493,160 +414,38 @@ func (e *Engine) EvaluateQualityAttributes(
 	return metrics, nil
 }
 
-// RedTeamReview simulates adversarial personas to
-// challenge the design from multiple angles. Returns
-// compact structured challenges.
-func (e *Engine) RedTeamReview(
-	ctx context.Context, design string,
-) ([]models.RedTeamChallenge, error) {
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	default:
-	}
-	lower := strings.ToLower(design)
-	var out []models.RedTeamChallenge
-
-	// Run all persona checks
-	out = append(out, e.checkMaintenancePersona(lower)...)
-	out = append(out, e.checkSecurityPersona(lower)...)
-	out = append(out, e.checkScalabilityPersona(lower)...)
-	out = append(out, e.checkCompatibilityPersona(lower)...)
-	out = append(out, e.checkReliabilityPersona(lower)...)
-	out = append(out, e.checkPerformancePersona(lower)...)
-	out = append(out, e.checkCompliancePersona(lower)...)
-	out = append(out, e.checkOperationsPersona(lower)...)
-
-	// Fallback if no issues found
-	if len(out) == 0 {
-		out = append(out,
-			models.RedTeamChallenge{
-				Persona:  "Maintenance",
-				Question: "Where is the documentation?",
-			},
-			models.RedTeamChallenge{
-				Persona:  "Scalability",
-				Question: "What if load triples?",
-			},
-		)
-	}
-
-	return out, nil
-}
-
-func (e *Engine) checkMaintenancePersona(design string) []models.RedTeamChallenge {
-	if !strings.Contains(design, "log") &&
-		!strings.Contains(design, "debug") &&
-		!strings.Contains(design, "monitor") {
-		return []models.RedTeamChallenge{{
-			Persona:  "Maintenance",
-			Question: "How do you debug this at 3 AM?",
-		}}
-	}
-	return nil
-}
-
-func (e *Engine) checkSecurityPersona(design string) []models.RedTeamChallenge {
-	if strings.Contains(design, "api") ||
-		strings.Contains(design, "token") ||
-		strings.Contains(design, "secret") ||
-		strings.Contains(design, "password") {
-		return []models.RedTeamChallenge{{
-			Persona:  "Security",
-			Question: "What if the API key leaks? Is data encrypted at rest?",
-		}}
-	}
-	return nil
-}
-
-func (e *Engine) checkScalabilityPersona(design string) []models.RedTeamChallenge {
-	if strings.Contains(design, "single") ||
-		strings.Contains(design, "monolith") ||
-		!strings.Contains(design, "scale") {
-		return []models.RedTeamChallenge{{
-			Persona:  "Scalability",
-			Question: "What if load triples? Where is the bottleneck?",
-		}}
-	}
-	return nil
-}
-
-func (e *Engine) checkCompatibilityPersona(design string) []models.RedTeamChallenge {
-	if strings.Contains(design, "change") ||
-		strings.Contains(design, "migrat") ||
-		strings.Contains(design, "deprecat") {
-		return []models.RedTeamChallenge{{
-			Persona:  "Compatibility",
-			Question: "Will existing clients break?",
-		}}
-	}
-	return nil
-}
-
-func (e *Engine) checkReliabilityPersona(design string) []models.RedTeamChallenge {
-	if !strings.Contains(design, "retry") &&
-		!strings.Contains(design, "fallback") &&
-		!strings.Contains(design, "circuit break") {
-		return []models.RedTeamChallenge{{
-			Persona:  "Reliability",
-			Question: "What is the failure recovery strategy?",
-		}}
-	}
-	return nil
-}
-
-func (e *Engine) checkPerformancePersona(design string) []models.RedTeamChallenge {
-	if strings.Contains(design, "loop") ||
-		strings.Contains(design, "recursive") ||
-		strings.Contains(design, "search") {
-		return []models.RedTeamChallenge{{
-			Persona:  "Performance",
-			Question: "How does this scale with O(n) or O(n^2)? Potential bottlenecks?",
-		}}
-	}
-	return nil
-}
-
-func (e *Engine) checkCompliancePersona(design string) []models.RedTeamChallenge {
-	if strings.Contains(design, "log") ||
-		strings.Contains(design, "persist") ||
-		strings.Contains(design, "store") {
-		return []models.RedTeamChallenge{{
-			Persona:  "Compliance",
-			Question: "Are we logging sensitive data? Is it GDPR/PII compliant?",
-		}}
-	}
-	return nil
-}
-
-func (e *Engine) checkOperationsPersona(design string) []models.RedTeamChallenge {
-	if strings.Contains(design, "deploy") ||
-		strings.Contains(design, "update") ||
-		strings.Contains(design, "config") {
-		return []models.RedTeamChallenge{{
-			Persona:  "Operations",
-			Question: "Can this be rolled back? Are there health checks?",
-		}}
-	}
-	return nil
-}
-
-
 // CritiqueDesign provides a consolidated, multi-dimensional
 // assessment of a design snippet.
 func (e *Engine) CritiqueDesign(
-	ctx context.Context, design string,
+	ctx context.Context, design string, standards string, traceMap map[string]interface{},
 ) (models.CritiqueResponse, error) {
-	challenges, err := e.ChallengeAssumption(ctx, design)
-	if err != nil {
-		return models.CritiqueResponse{}, err
-	}
-	metrics, err := e.EvaluateQualityAttributes(ctx, design)
-	if err != nil {
-		return models.CritiqueResponse{}, err
-	}
-	redTeam, err := e.RedTeamReview(ctx, design)
-	if err != nil {
+	var (
+		challenges []string
+		metrics    []models.QualityMetric
+		redTeam    []models.RedTeamChallenge
+	)
+
+	g, gCtx := errgroup.WithContext(ctx)
+
+	g.Go(func() error {
+		var err error
+		challenges, err = e.ChallengeAssumption(gCtx, design, traceMap)
+		return err
+	})
+
+	g.Go(func() error {
+		var err error
+		metrics, err = e.EvaluateQualityAttributes(gCtx, design, traceMap)
+		return err
+	})
+
+	g.Go(func() error {
+		var err error
+		redTeam, err = e.RedTeamReview(gCtx, design, traceMap)
+		return err
+	})
+
+	if err := g.Wait(); err != nil {
 		return models.CritiqueResponse{}, err
 	}
 
@@ -691,12 +490,29 @@ func (e *Engine) CritiqueDesign(
 		}
 	}
 
+	// Architectural Standards Context (Recall)
+	if standards != "" {
+		sb.WriteString("\n#### Relevant Code Standards (Recall)\n")
+		sb.WriteString(standards)
+		sb.WriteString("\n")
+	}
+
 	return models.CritiqueResponse{
-		Narrative:  narrative,
-		Reasoning:  "Consolidated feedback based on 5 point quality rubric and adversarial Red Team simulations. Targeted Socratic challenges address domain-specific architecture gaps.",
-		SummaryMD:  sb.String(),
-		Challenges: challenges,
-		Metrics:    metrics,
-		RedTeam:    redTeam,
+		Summary: fmt.Sprintf("Design critique complete: %d critical challenges, %d red team concerns.", len(challenges), len(redTeam)),
+		Data: struct {
+			Narrative  string                    `json:"narrative"`
+			Reasoning  string                    `json:"reasoning,omitempty"`
+			Challenges []string                  `json:"challenges"`
+			Metrics    []models.QualityMetric    `json:"metrics"`
+			RedTeam    []models.RedTeamChallenge `json:"red_team"`
+			Standards  string                    `json:"standards,omitempty"`
+		}{
+			Narrative:  narrative,
+			Reasoning:  "Consolidated feedback based on 5 point quality rubric and adversarial Red Team simulations. Targeted Socratic challenges address domain-specific architecture gaps.",
+			Challenges: challenges,
+			Metrics:    metrics,
+			RedTeam:    redTeam,
+			Standards:  standards,
+		},
 	}, nil
 }

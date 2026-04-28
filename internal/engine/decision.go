@@ -16,6 +16,7 @@ func (e *Engine) CaptureDecisionLogic(
 	ctx context.Context,
 	decision string,
 	alternatives string,
+	standards string,
 ) (models.ADR, error) {
 	select {
 	case <-ctx.Done():
@@ -28,43 +29,43 @@ func (e *Engine) CaptureDecisionLogic(
 		title = title[:80] + "..."
 	}
 
-	// Generate consequences from the decision text.
+	// Fallback heuristic generation.
 	lower := strings.ToLower(decision)
-	consequences := "Requires consistent" +
-		" implementation across the team."
+	consequences := "Requires consistent implementation across the team."
 	if strings.Contains(lower, "performance") {
-		consequences = "May add complexity but" +
-			" improves runtime performance."
+		consequences = "May add complexity but improves runtime performance."
 	}
-	if strings.Contains(lower, "simplicity") ||
-		strings.Contains(lower, "simple") {
-		consequences = "Reduces maintenance cost" +
-			" but may limit future extensibility."
+	if strings.Contains(lower, "simplicity") || strings.Contains(lower, "simple") {
+		consequences = "Reduces maintenance cost but may limit future extensibility."
 	}
 
+	if standards != "" {
+		consequences = fmt.Sprintf("%s\nMust strictly align with enterprise standards.", consequences)
+	}
+
+	id := fmt.Sprintf("ADR-%d", time.Now().Unix())
 	res := models.ADR{
-		ID: fmt.Sprintf(
-			"ADR-%d", time.Now().Unix(),
-		),
-		Title:              title,
-		Date:               time.Now(),
-		Status:             "PROPOSED",
-		Context:            decision,
-		Decision:           decision,
-		RejectedAlternates: alternatives,
-		Consequences:       consequences,
+		Summary: fmt.Sprintf("ADR Drafted: %s", title),
+		Data: struct {
+			ID                 string    `json:"id"`
+			Title              string    `json:"title"`
+			Date               time.Time `json:"date"`
+			Status             string    `json:"status"`
+			Decision           string    `json:"decision"`
+			RejectedAlternates string    `json:"rejected_alternates"`
+			Consequences       string    `json:"consequences"`
+			Narrative          string    `json:"narrative,omitempty"`
+		}{
+			ID:                 id,
+			Title:              title,
+			Date:               time.Now(),
+			Status:             "PROPOSED",
+			Decision:           decision,
+			RejectedAlternates: alternatives,
+			Consequences:       consequences,
+			Narrative:          fmt.Sprintf("Captured architectural decision: %s", title),
+		},
 	}
-
-	res.Narrative = fmt.Sprintf(
-		"Captured architectural decision: %s", title,
-	)
-
-	var sb strings.Builder
-	sb.WriteString("### Architecture Decision Record\n\n")
-	sb.WriteString(fmt.Sprintf("- **Title**: %s\n", title))
-	sb.WriteString(fmt.Sprintf("- **Status**: %s\n", res.Status))
-	sb.WriteString(fmt.Sprintf("- **Consequences**: %s\n", consequences))
-	res.SummaryMD = sb.String()
 
 	return res, nil
 }

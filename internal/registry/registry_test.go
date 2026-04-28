@@ -1,17 +1,16 @@
 package registry
 
 import (
+	"mcp-server-brainstorm/internal/util"
 	"testing"
-
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 type mockTool struct {
 	name string
 }
 
-func (m *mockTool) Name() string { return m.name }
-func (m *mockTool) Register(s *mcp.Server) {}
+func (m *mockTool) Name() string                    { return m.name }
+func (m *mockTool) Register(s util.SessionProvider) {}
 
 func TestRegistry(t *testing.T) {
 	reg := &Registry{

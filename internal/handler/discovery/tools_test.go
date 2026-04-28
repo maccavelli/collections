@@ -3,11 +3,16 @@ package discovery
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"testing"
 
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"mcp-server-brainstorm/internal/engine"
+	"mcp-server-brainstorm/internal/models"
 	"mcp-server-brainstorm/internal/state"
+	"mcp-server-brainstorm/internal/util"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/tidwall/buntdb"
 )
 
 func TestDiscoverProjectTool_Handle(t *testing.T) {
@@ -17,8 +22,13 @@ func TestDiscoverProjectTool_Handle(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
+	// Add a sentinel to prevent walking up to system /tmp
+	_ = os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte("module test"), 0644)
+
 	mgr := state.NewManager(tmpDir)
-	eng := engine.NewEngine(tmpDir)
+	db, _ := buntdb.Open(":memory:")
+	defer db.Close()
+	eng := engine.NewEngine(tmpDir, db)
 	tool := &DiscoverProjectTool{
 		Manager: mgr,
 		Engine:  eng,
@@ -26,7 +36,9 @@ func TestDiscoverProjectTool_Handle(t *testing.T) {
 
 	ctx := context.Background()
 	input := DiscoverInput{
-		Path: tmpDir,
+		UniversalPipelineInput: models.UniversalPipelineInput{
+			Target: tmpDir,
+		},
 	}
 
 	// Test Handle
@@ -42,4 +54,17 @@ func TestDiscoverProjectTool_Handle(t *testing.T) {
 	if tool.Name() != "discover_project" {
 		t.Errorf("expected discover_project, got %s", tool.Name())
 	}
+}
+
+func TestRegister(t *testing.T) {
+	mgr := state.NewManager(".")
+	db, _ := buntdb.Open(":memory:")
+	defer db.Close()
+	eng := engine.NewEngine(".", db)
+
+	Register(mgr, eng)
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1"}, &mcp.ServerOptions{})
+	tool := &DiscoverProjectTool{Manager: mgr, Engine: eng}
+	tool.Register(&util.MockSessionProvider{Srv: srv})
 }

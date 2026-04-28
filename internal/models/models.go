@@ -8,24 +8,59 @@ import "time"
 // Session represents a brainstorming session state persisted
 // to disk as .brainstorm.json.
 type Session struct {
-	ProjectRoot string    `json:"project_root"`
-	ProjectName string    `json:"project_name"`
-	Language    string    `json:"language"`
-	Status      string    `json:"status"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
-	Gaps        []Gap     `json:"gaps"`
-	History     []Event   `json:"history"`
+	ProjectRoot string            `json:"project_root"`
+	ProjectName string            `json:"project_name"`
+	Language    string            `json:"language"`
+	Status      string            `json:"status"`
+	CreatedAt   time.Time         `json:"created_at"`
+	UpdatedAt   time.Time         `json:"updated_at"`
+	Gaps        []Gap             `json:"gaps"`
+	History     []Event           `json:"history"`
+	Metadata    map[string]any    `json:"metadata,omitempty"`
+	Artifacts   map[string]string `json:"artifacts,omitempty"`
 }
 
-// DiscoveryResponse provides a unified view of project gaps
-// and the recommended next step.
+// GetInt securely unmarshals untyped JSON numerals from the metadata map mitigating float64 panics
+func (s *Session) GetInt(key string) (int, bool) {
+	if s.Metadata == nil {
+		return 0, false
+	}
+	val, ok := s.Metadata[key]
+	if !ok {
+		return 0, false
+	}
+	switch v := val.(type) {
+	case int:
+		return v, true
+	case int64:
+		return int(v), true
+	case float64:
+		return int(v), true
+	default:
+		return 0, false
+	}
+}
+
+// UniversalPipelineInput defines the mandatory common schema for all CSSA-aware analytical tools.
+// It ensures strict correlation via SessionID, eliminates fragmentation in targeting,
+// and safely routes edge-case parameters via the Flags map.
+type UniversalPipelineInput struct {
+	SessionID string         `json:"session_id" jsonschema:"REQUIRED: CSSA backend correlation ID and HFSC tracking ID."`
+	Target    string         `json:"target" jsonschema:"REQUIRED: Absolute path, package, or workspace URI to analyze."`
+	Context   string         `json:"context,omitempty" jsonschema:"Optional: Contextual text required for this specific stage."`
+	Flags     map[string]any `json:"flags,omitempty" jsonschema:"Optional: Key-value map for stage-specific execution flags."`
+}
+
+// DiscoveryResponse provides a unified view of project gaps.
 type DiscoveryResponse struct {
-	Narrative string   `json:"narrative"`
-	Reasoning string   `json:"reasoning,omitempty"` // Added for smarter Agent reasoning
-	SummaryMD string   `json:"summary_md"`
-	Gaps      []Gap    `json:"gaps"`
-	NextStep  string   `json:"next_step"`
+	Summary string `json:"summary"`
+	Data    struct {
+		Narrative string `json:"narrative"`
+		Reasoning string `json:"reasoning,omitempty"`
+		Gaps      []Gap  `json:"gaps"`
+		NextStep  string `json:"next_step"`
+		Standards string `json:"standards,omitempty"`
+	} `json:"data"`
 }
 
 // Gap represents a missing piece of information detected by the
@@ -43,19 +78,19 @@ type Event struct {
 	Description string    `json:"description"`
 }
 
-// ADR represents an Architecture Decision Record capturing the
-// context, decision, rejected alternatives, and consequences.
+// ADR represents an Architecture Decision Record.
 type ADR struct {
-	ID                 string    `json:"id"`
-	Title              string    `json:"title"`
-	Date               time.Time `json:"date"`
-	Status             string    `json:"status"`
-	Context            string    `json:"-"`
-	Decision           string    `json:"decision"`
-	RejectedAlternates string    `json:"rejected_alternates"`
-	Consequences       string    `json:"consequences"`
-	Narrative          string    `json:"narrative,omitempty"`
-	SummaryMD          string    `json:"summary_md,omitempty"`
+	Summary string `json:"summary"`
+	Data    struct {
+		ID                 string    `json:"id"`
+		Title              string    `json:"title"`
+		Date               time.Time `json:"date"`
+		Status             string    `json:"status"`
+		Decision           string    `json:"decision"`
+		RejectedAlternates string    `json:"rejected_alternates"`
+		Consequences       string    `json:"consequences"`
+		Narrative          string    `json:"narrative,omitempty"`
+	} `json:"data"`
 }
 
 // QualityMetric represents a score and observation for a
@@ -66,16 +101,16 @@ type QualityMetric struct {
 	Observation string `json:"observation"`
 }
 
-// EvolutionResult captures a structured analysis of a
-// proposed change, including its category, risk level,
-// and actionable recommendation.
+// EvolutionResult captures a structured analysis of a proposed change.
 type EvolutionResult struct {
-	Category       string `json:"category"`
-	RiskLevel      string `json:"risk_level"`
-	Reasoning      string `json:"reasoning,omitempty"` // Added for systematic analysis
-	Recommendation string `json:"recommendation"`
-	Narrative      string `json:"narrative,omitempty"`
-	SummaryMD      string `json:"summary_md,omitempty"`
+	Summary string `json:"summary"`
+	Data    struct {
+		Category       string `json:"category"`
+		RiskLevel      string `json:"risk_level"`
+		Reasoning      string `json:"reasoning,omitempty"`
+		Recommendation string `json:"recommendation"`
+		Narrative      string `json:"narrative,omitempty"`
+	} `json:"data"`
 }
 
 // RedTeamChallenge is a compact representation of an
@@ -85,16 +120,17 @@ type RedTeamChallenge struct {
 	Question string `json:"q"`
 }
 
-// CritiqueResponse is a consolidated assessment of a design
-// including quality rubrics, red team challenges, and
-// socratic questions.
+// CritiqueResponse is a consolidated assessment of a design.
 type CritiqueResponse struct {
-	Narrative  string             `json:"narrative"`
-	Reasoning  string             `json:"reasoning,omitempty"` // Added for Agent transparency
-	SummaryMD  string             `json:"summary_md"`
-	Challenges []string           `json:"challenges"`
-	Metrics    []QualityMetric    `json:"metrics"`
-	RedTeam    []RedTeamChallenge `json:"red_team"`
+	Summary string `json:"summary"`
+	Data    struct {
+		Narrative  string             `json:"narrative"`
+		Reasoning  string             `json:"reasoning,omitempty"`
+		Challenges []string           `json:"challenges"`
+		Metrics    []QualityMetric    `json:"metrics"`
+		RedTeam    []RedTeamChallenge `json:"red_team"`
+		Standards  string             `json:"standards,omitempty"`
+	} `json:"data"`
 }
 
 // DecisionFork represents an architectural choice with options.
@@ -108,7 +144,59 @@ type DecisionFork struct {
 
 // ClarificationResponse is the result of a requirement analysis.
 type ClarificationResponse struct {
-	Narrative string         `json:"narrative"`
-	Forks     []DecisionFork `json:"forks"`
-	SummaryMD string         `json:"summary_md"`
+	Summary string `json:"summary"`
+	Data    struct {
+		Narrative string         `json:"narrative"`
+		Forks     []DecisionFork `json:"forks"`
+	} `json:"data"`
+}
+
+// STRIDEMetrics captures threat scores for specific vectors.
+type STRIDEMetrics struct {
+	Spoofing             int `json:"spoofing"`
+	Tampering            int `json:"tampering"`
+	Repudiation          int `json:"repudiation"`
+	InformationLeak      int `json:"information_leak"`
+	DenialOfService      int `json:"denial_of_service"`
+	ElevationOfPrivilege int `json:"elevation_of_privilege"`
+}
+
+// ThreatModelResponse captures the adversarial audit output.
+type ThreatModelResponse struct {
+	Summary string `json:"summary"`
+	Data    struct {
+		Narrative       string        `json:"narrative"`
+		Metrics         STRIDEMetrics `json:"metrics"`
+		Vulnerabilities []string      `json:"vulnerabilities"`
+		Recommendations []string      `json:"recommendations"`
+	} `json:"data"`
+}
+
+// TelemetryResponse models the raw structural context for orchestration rendering.
+type TelemetryResponse struct {
+	Summary string `json:"summary"`
+	Data    struct {
+		TraceData string `json:"trace_data"`
+	} `json:"data"`
+}
+
+// DialecticPillar represents a single analysis dimension shared by
+// thesis_architect (opportunity scoring) and antithesis_skeptic (risk scoring).
+// Using the same struct ensures 1:1 alignment for aporia cross-referencing.
+type DialecticPillar struct {
+	Name    string `json:"name"`  // Shared name across both tools
+	Score   int    `json:"score"` // 1-10
+	Finding string `json:"finding"`
+}
+
+// ThesisDocument is the structured output of the thesis_architect tool.
+// It evaluates a codebase across 6 modernization dimensions.
+type ThesisDocument struct {
+	Summary string `json:"summary"`
+	Verdict string `json:"verdict"` // APPROVE, REVIEW, REJECT
+	Data    struct {
+		Narrative string            `json:"narrative"`
+		Pillars   []DialecticPillar `json:"pillars"` // 6 unified pillars
+		Standards string            `json:"standards,omitempty"`
+	} `json:"data"`
 }

@@ -29,20 +29,40 @@ func TestModelsCoverage(t *testing.T) {
 	}
 
 	dr := DiscoveryResponse{
-		Narrative: "narrative",
-		SummaryMD: "summary",
-		Gaps:      s.Gaps,
-		NextStep:  "step",
+		Summary: "summary",
+		Data: struct {
+			Narrative string `json:"narrative"`
+			Reasoning string `json:"reasoning,omitempty"`
+			Gaps      []Gap  `json:"gaps"`
+			NextStep  string `json:"next_step"`
+			Standards string `json:"standards,omitempty"`
+		}{
+			Narrative: "narrative",
+			Gaps:      s.Gaps,
+			NextStep:  "step",
+		},
 	}
 
 	adr := ADR{
-		ID:                 "1",
-		Title:              "title",
-		Date:               now,
-		Status:             "accepted",
-		Decision:           "decision",
-		RejectedAlternates: "none",
-		Consequences:       "none",
+		Summary: "summary",
+		Data: struct {
+			ID                 string    `json:"id"`
+			Title              string    `json:"title"`
+			Date               time.Time `json:"date"`
+			Status             string    `json:"status"`
+			Decision           string    `json:"decision"`
+			RejectedAlternates string    `json:"rejected_alternates"`
+			Consequences       string    `json:"consequences"`
+			Narrative          string    `json:"narrative,omitempty"`
+		}{
+			ID:                 "1",
+			Title:              "title",
+			Date:               now,
+			Status:             "accepted",
+			Decision:           "decision",
+			RejectedAlternates: "none",
+			Consequences:       "none",
+		},
 	}
 
 	qm := QualityMetric{
@@ -52,9 +72,18 @@ func TestModelsCoverage(t *testing.T) {
 	}
 
 	er := EvolutionResult{
-		Category:       "cat",
-		RiskLevel:      "low",
-		Recommendation: "rec",
+		Summary: "summary",
+		Data: struct {
+			Category       string `json:"category"`
+			RiskLevel      string `json:"risk_level"`
+			Reasoning      string `json:"reasoning,omitempty"`
+			Recommendation string `json:"recommendation"`
+			Narrative      string `json:"narrative,omitempty"`
+		}{
+			Category:       "cat",
+			RiskLevel:      "low",
+			Recommendation: "rec",
+		},
 	}
 
 	rtc := RedTeamChallenge{
@@ -63,11 +92,20 @@ func TestModelsCoverage(t *testing.T) {
 	}
 
 	cr := CritiqueResponse{
-		Narrative:  "critique",
-		SummaryMD:  "summary",
-		Challenges: []string{"c1"},
-		Metrics:    []QualityMetric{qm},
-		RedTeam:    []RedTeamChallenge{rtc},
+		Summary: "summary",
+		Data: struct {
+			Narrative  string             `json:"narrative"`
+			Reasoning  string             `json:"reasoning,omitempty"`
+			Challenges []string           `json:"challenges"`
+			Metrics    []QualityMetric    `json:"metrics"`
+			RedTeam    []RedTeamChallenge `json:"red_team"`
+			Standards  string             `json:"standards,omitempty"`
+		}{
+			Narrative:  "critique",
+			Challenges: []string{"c1"},
+			Metrics:    []QualityMetric{qm},
+			RedTeam:    []RedTeamChallenge{rtc},
+		},
 	}
 
 	// Marshalt/Unmarshal to cover JSON tags and struct fields.

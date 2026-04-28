@@ -2,30 +2,30 @@ package state
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
-	"log/slog"
-	"os"
-	"path/filepath"
+	"sync"
 	"time"
 
 	"mcp-server-brainstorm/internal/models"
 )
 
-const StateFile = ".brainstorm.json"
-
-// Manager handles the lifecycle of the brainstorming
-// state.
+// Manager handles the lifecycle of brainstorming sessions
+// using an in-memory store keyed by project root.
 type Manager struct {
 	ProjectRoot string
+	mu          sync.RWMutex
+	sessions    map[string]*models.Session
 }
 
 // NewManager creates a Manager rooted at the given path.
 func NewManager(root string) *Manager {
-	return &Manager{ProjectRoot: root}
+	return &Manager{
+		ProjectRoot: root,
+		sessions:    make(map[string]*models.Session),
+	}
 }
 
-// LoadSession reads the state file from the project root.
+// LoadSession retrieves the session for the current project root.
+// If no session exists, a fresh one is created in-memory.
 func (m *Manager) LoadSession(ctx context.Context) (
 	*models.Session, error,
 ) {
@@ -34,36 +34,32 @@ func (m *Manager) LoadSession(ctx context.Context) (
 		return nil, ctx.Err()
 	default:
 	}
-	path := filepath.Join(m.ProjectRoot, StateFile)
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return &models.Session{
-				ProjectRoot: m.ProjectRoot,
-				Status:      "DISCOVERY",
-				CreatedAt:   time.Now(),
-				UpdatedAt:   time.Now(),
-				Gaps:        []models.Gap{},
-			}, nil
-		}
-		return nil, fmt.Errorf(
-			"failed to read state file: %w", err,
-		)
+
+	m.mu.RLock()
+	if s, ok := m.sessions[m.ProjectRoot]; ok {
+		m.mu.RUnlock()
+		return s, nil
+	}
+	m.mu.RUnlock()
+
+	// Create a fresh session.
+	s := &models.Session{
+		ProjectRoot: m.ProjectRoot,
+		Status:      "DISCOVERY",
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
+		Gaps:        []models.Gap{},
+		Metadata:    make(map[string]any),
 	}
 
-	var session models.Session
-	if err := json.Unmarshal(data, &session); err != nil {
-		return nil, fmt.Errorf(
-			"failed to parse session: %w", err,
-		)
-	}
+	m.mu.Lock()
+	m.sessions[m.ProjectRoot] = s
+	m.mu.Unlock()
 
-	return &session, nil
+	return s, nil
 }
 
-// SaveSession writes the session state to the project
-// root using atomic write-then-rename to prevent
-// corruption from interrupted writes.
+// SaveSession stores the session state in-memory.
 func (m *Manager) SaveSession(
 	ctx context.Context, session *models.Session,
 ) error {
@@ -73,36 +69,10 @@ func (m *Manager) SaveSession(
 	default:
 	}
 	session.UpdatedAt = time.Now()
-	data, err := json.MarshalIndent(session, "", "  ")
-	if err != nil {
-		return fmt.Errorf(
-			"failed to marshal session: %w", err,
-		)
-	}
 
-	finalPath := filepath.Join(
-		m.ProjectRoot, StateFile,
-	)
-	tmpPath := finalPath + ".tmp"
-
-	if err := os.WriteFile(
-		tmpPath, data, 0644,
-	); err != nil {
-		return fmt.Errorf(
-			"failed to write temp state file: %w", err,
-		)
-	}
-
-	if err := os.Rename(tmpPath, finalPath); err != nil {
-		// Best-effort cleanup of the temp file.
-		if removeErr := os.Remove(tmpPath); removeErr != nil {
-			slog.Debug("failed to cleanup temp state file",
-				"path", tmpPath, "error", removeErr)
-		}
-		return fmt.Errorf(
-			"failed to rename state file: %w", err,
-		)
-	}
+	m.mu.Lock()
+	m.sessions[m.ProjectRoot] = session
+	m.mu.Unlock()
 
 	return nil
 }

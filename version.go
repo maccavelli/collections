@@ -1,10 +1,13 @@
 package main
 
-import "fmt"
+import (
+	"fmt"
+	"os"
+)
 
 // Version is the current version of the Brainstorm MCP server.
-var Version = "3.2.0"
+var Version = "0.0.0-dev"
 
 func printVersion() {
-	fmt.Printf("mcp-server-brainstorm version %s\n", Version)
+	fmt.Fprintf(os.Stderr, "mcp-server-brainstorm version %s\n", Version)
 }
