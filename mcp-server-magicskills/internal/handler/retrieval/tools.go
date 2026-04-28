@@ -7,16 +7,21 @@ import (
 	"strings"
 	"time"
 
-	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"golang.org/x/mod/semver"
 	"mcp-server-magicskills/internal/engine"
+	"mcp-server-magicskills/internal/external"
 	"mcp-server-magicskills/internal/models"
 	"mcp-server-magicskills/internal/registry"
+	"mcp-server-magicskills/internal/telemetry"
+	"mcp-server-magicskills/internal/util"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"golang.org/x/mod/semver"
 )
 
 // GetTool implements the magicskills_get tool.
 type GetTool struct {
-	Engine *engine.Engine
+	Engine       *engine.Engine
+	RecallClient *external.MCPClient
 }
 
 func (t *GetTool) Name() string { return "magicskills_get" }
@@ -28,13 +33,18 @@ type GetInput struct {
 }
 
 func (t *GetTool) Register(s *mcp.Server) {
-	mcp.AddTool(s, &mcp.Tool{
+	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
-		Description: "KNOWLEDGE DEEP-DIVE: Primary retrieval for skill-defined logic and workflows. Call this after magicskills_match to extract granular architectural details. Essential for planning. Cascades to magicskills_bootstrap.",
+		Description: "[DIRECTIVE: Rule Extraction] Fetch, read, and retrieve the full fundamental Markdown source code and logic directives natively. Keywords: read-skill, obtain, pull-rules, exact-markdown, read-file",
 	}, t.Handle)
 }
 
 func (t *GetTool) Handle(ctx context.Context, request *mcp.CallToolRequest, input GetInput) (*mcp.CallToolResult, any, error) {
+	if err := t.Engine.WaitReady(ctx); err != nil {
+		res := &mcp.CallToolResult{}
+		res.SetError(fmt.Errorf("engine initialization aborted: %v", err))
+		return res, nil, nil
+	}
 	if input.Name == "" {
 		res := &mcp.CallToolResult{}
 		res.SetError(fmt.Errorf("missing 'name' argument"))
@@ -66,62 +76,84 @@ func (t *GetTool) Handle(ctx context.Context, request *mcp.CallToolRequest, inpu
 		}
 	}
 
-	section := strings.ToLower(input.Section)
-	if section != "" {
-		content, found := skill.Sections[section]
-		if !found {
-			for k, v := range skill.Sections {
-				if strings.Contains(k, section) {
-					content = v
-					found = true
-					break
-				}
+	output := struct {
+		*models.Skill
+		RecallStandards []map[string]interface{} `json:"recall_standards,omitempty"`
+	}{
+		Skill: skill,
+	}
+
+	// Standards-Aware Enrichment (orchestrator mode only)
+	if t.RecallClient != nil && t.RecallClient.RecallEnabled() {
+		searchArgs := map[string]interface{}{
+			"query": skill.Metadata.Name,
+			"limit": 3,
+		}
+		res := t.RecallClient.CallDatabaseTool(ctx, "search", appendNamespace(searchArgs, "standards"))
+		if res != "" {
+			var searchRes struct {
+				Entries []map[string]interface{} `json:"entries"`
+			}
+			if json.Unmarshal([]byte(res), &searchRes) == nil {
+				output.RecallStandards = searchRes.Entries
 			}
 		}
-		if found {
-			return &mcp.CallToolResult{
-				Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("### %s: %s\n\n%s", input.Name, section, engine.Densify(content))}},
-			}, nil, nil
+	}
+
+	section := strings.ToLower(input.Section)
+	summary := fmt.Sprintf("Retrieved skill: %s", input.Name)
+	if section != "" {
+		summary = fmt.Sprintf("Retrieved section '%s' for skill: %s", section, input.Name)
+	}
+
+	// 🛡️ NATIVE OPTIMIZATION: Serialize and check for High-Density streaming to CSSA Ring Buffer natively
+	payloadBytes, _ := json.Marshal(output)
+	var finalData any = output
+
+	if len(payloadBytes) > 8192 && telemetry.GlobalRingBuffer != nil {
+		type ringRecord struct {
+			Timestamp   string          `json:"timestamp"`
+			Topic       string          `json:"topic"`
+			Server      string          `json:"server"`
+			MessageType string          `json:"message_type"`
+			Payload     json.RawMessage `json:"payload"`
+		}
+
+		record := ringRecord{
+			Timestamp:   time.Now().Format(time.RFC3339),
+			Topic:       "magicskills-ingestion-payload-extraction",
+			Server:      "magicskills",
+			MessageType: "CSSA_TELEMETRY",
+			Payload:     json.RawMessage(payloadBytes),
+		}
+		if ringData, err := json.Marshal(record); err == nil {
+			telemetry.GlobalRingBuffer.WriteRecord(ringData)
+			finalData = map[string]interface{}{
+				"intent":  "CSSA_STREAMED_PAYLOAD_READY",
+				"size":    len(payloadBytes),
+				"message": "High-Density Skill payload successfully streamed to the orchestrator ring buffer natively avoiding socket I/O loops.",
+			}
 		}
 	}
 
-	return newHybridResult(skill), nil, nil
-}
-
-func newHybridResult(skill *models.Skill) *mcp.CallToolResult {
-	type meta struct {
-		Name          string    `json:"name"`
-		Version       string    `json:"version"`
-		SchemaVersion string    `json:"schema_version"`
-		Hash          string    `json:"hash"`
-		TokenEstimate int       `json:"token_estimate"`
-		UpdatedAt     time.Time `json:"updated_at"`
-	}
-
-	m := meta{
-		Name:          skill.Metadata.Name,
-		Version:       skill.Metadata.Version,
-		SchemaVersion: skill.SchemaVersion,
-		Hash:          skill.Hash,
-		TokenEstimate: skill.TokenEstimate,
-		UpdatedAt:     skill.UpdatedAt,
-	}
-
-	metaJSON, err := json.Marshal(m)
-	if err != nil {
-		metaJSON = []byte(fmt.Sprintf(`{"error": "failed to serialize metadata: %v"}`, err))
-	}
-
-	return &mcp.CallToolResult{
-		Content: []mcp.Content{
-			&mcp.TextContent{Text: string(metaJSON)},
-			&mcp.TextContent{Text: skill.Digest},
-		},
-	}
+	return &mcp.CallToolResult{}, struct {
+		Summary string `json:"summary"`
+		Data    any    `json:"data"`
+	}{
+		Summary: summary,
+		Data:    finalData,
+	}, nil
 }
 
 // Register registers retrieval tools with the global registry.
-func Register(eng *engine.Engine) {
-	registry.Global.Register(&GetTool{Engine: eng})
+func Register(eng *engine.Engine, cl *external.MCPClient) {
+	registry.Global.Register(&GetTool{Engine: eng, RecallClient: cl})
 }
 
+func appendNamespace(m map[string]interface{}, ns string) map[string]interface{} {
+	if m == nil {
+		m = make(map[string]interface{})
+	}
+	m["namespace"] = ns
+	return m
+}

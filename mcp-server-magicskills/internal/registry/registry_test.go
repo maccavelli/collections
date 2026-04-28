@@ -10,7 +10,7 @@ type mockTool struct {
 	name string
 }
 
-func (m *mockTool) Name() string { return m.name }
+func (m *mockTool) Name() string           { return m.name }
 func (m *mockTool) Register(s *mcp.Server) {}
 
 func TestRegistry(t *testing.T) {

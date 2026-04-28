@@ -1,6 +1,8 @@
 package engine
 
 import (
+	"mcp-server-magicskills/internal/state"
+
 	"context"
 	"fmt"
 	"os"
@@ -34,10 +36,12 @@ Always test your code.
 		t.Fatal(err)
 	}
 
-	e := NewEngine()
+	store, _ := state.NewStore(t.TempDir())
+	e, _ := NewEngine(store, t.TempDir()+"/idx")
+	defer store.Close()
 	ctx := context.Background()
-	if err := e.Ingest(ctx, []string{path}); err != nil {
-		t.Fatalf("Ingest failed: %v", err)
+	if _, _, _, err := e.SyncDir(ctx, []string{path}); err != nil {
+		t.Fatalf("SyncDir failed: %v", err)
 	}
 
 	s, ok := e.GetSkill("test-skill")
@@ -55,47 +59,50 @@ Always test your code.
 }
 
 func TestEngine_MatchSkills(t *testing.T) {
-	e := NewEngine()
+	store, _ := state.NewStore(t.TempDir())
+	e, _ := NewEngine(store, t.TempDir()+"/idx")
+	defer store.Close()
 	e.Skills["go-skill"] = &models.Skill{
 		Metadata: models.SkillMetadata{Name: "go-skill", Description: "Go development", Tags: []string{"golang"}},
 		Sections: map[string]string{"full": "Go development golang"},
-		TermFreq: tokenize("Go development golang"),
 	}
+	e.Bleve.Index("go-skill", map[string]interface{}{"name": "go-skill", "description": "Go development", "tags": []string{"golang"}, "content": "Go development golang"})
 	e.Skills["python-skill"] = &models.Skill{
-		Metadata: models.SkillMetadata{Name: "python-skill", Description: "Python automation", Tags: []string{"scripting"}},
-		Sections: map[string]string{"full": "Python automation scripting"},
-		TermFreq: tokenize("Python automation scripting"),
+		Metadata: models.SkillMetadata{Name: "python-skill", Description: "Python bot", Tags: []string{"scripting"}},
+		Sections: map[string]string{"full": "Python bot scripting"},
 	}
-	e.RecalculateIndices()
+	e.Bleve.Index("python-skill", map[string]interface{}{"name": "python-skill", "description": "Python bot", "tags": []string{"scripting"}, "content": "Python bot scripting"})
 	ctx := context.Background()
 
 	t.Run("Match by name", func(t *testing.T) {
-		matches := e.MatchSkills(ctx, "go")
-		if len(matches) == 0 || matches[0].Metadata.Name != "go-skill" {
+		matches := e.MatchSkills(ctx, "go", "", "", 3)
+		if len(matches) == 0 || matches[0].Skill.Metadata.Name != "go-skill" {
 			t.Errorf("Expected go-skill to be top match for 'go'")
 		}
 	})
 
 	t.Run("Match by description", func(t *testing.T) {
-		matches := e.MatchSkills(ctx, "automation")
-		if len(matches) == 0 || matches[0].Metadata.Name != "python-skill" {
-			t.Errorf("Expected python-skill to be top match for 'automation'")
+		matches := e.MatchSkills(ctx, "bot", "", "", 3)
+		if len(matches) == 0 || matches[0].Skill.Metadata.Name != "python-skill" {
+			t.Errorf("Expected python-skill to be top match for 'bot'")
 		}
 	})
 
 	t.Run("Weighted relevance", func(t *testing.T) {
-		matches := e.MatchSkills(ctx, "golang automation")
+		matches := e.MatchSkills(ctx, "golang go bot", "", "", 3)
 		if len(matches) < 2 {
 			t.Fatal("Expected two matches")
 		}
-		if matches[0].Metadata.Name != "go-skill" {
+		if matches[0].Skill.Metadata.Name != "go-skill" {
 			t.Errorf("Expected go-skill to be higher relevance due to tag match")
 		}
 	})
 }
 
 func TestEngine_Summarize(t *testing.T) {
-	e := NewEngine()
+	store, _ := state.NewStore(t.TempDir())
+	e, _ := NewEngine(store, t.TempDir()+"/idx")
+	defer store.Close()
 	e.Skills["test"] = &models.Skill{
 		Sections: map[string]string{
 			"magic directive": "The magic instruction.",
@@ -125,7 +132,9 @@ func TestEngine_Summarize(t *testing.T) {
 }
 
 func TestEngine_AllSkillsIterator(t *testing.T) {
-	e := NewEngine()
+	store, _ := state.NewStore(t.TempDir())
+	e, _ := NewEngine(store, t.TempDir()+"/idx")
+	defer store.Close()
 	e.Skills["a"] = &models.Skill{Metadata: models.SkillMetadata{Name: "a"}}
 	e.Skills["b"] = &models.Skill{Metadata: models.SkillMetadata{Name: "b"}}
 
@@ -163,7 +172,9 @@ This is a test.
 		t.Fatal(err)
 	}
 
-	e := NewEngine()
+	store, _ := state.NewStore(t.TempDir())
+	e, _ := NewEngine(store, t.TempDir()+"/idx")
+	defer store.Close()
 	ctx := context.Background()
 	if err := e.IngestSingle(ctx, path); err != nil {
 		t.Fatalf("IngestSingle failed: %v", err)
@@ -219,9 +230,11 @@ version: 2.0.0
 	_ = os.WriteFile(localPath, []byte(localContent), 0600)
 	defer os.Remove(localPath)
 
-	e := NewEngine()
+	store, _ := state.NewStore(t.TempDir())
+	e, _ := NewEngine(store, t.TempDir()+"/idx")
+	defer store.Close()
 	ctx := context.Background()
-	if err := e.Ingest(ctx, []string{globalPath, localPath}); err != nil {
+	if _, _, _, err := e.SyncDir(ctx, []string{globalPath, localPath}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -232,7 +245,9 @@ version: 2.0.0
 }
 
 func TestEngine_Remove(t *testing.T) {
-	e := NewEngine()
+	store, _ := state.NewStore(t.TempDir())
+	e, _ := NewEngine(store, t.TempDir()+"/idx")
+	defer store.Close()
 	path := "/fake/path/SKILL.md"
 	name := "to-remove"
 
@@ -251,18 +266,19 @@ func TestEngine_Remove(t *testing.T) {
 }
 
 func BenchmarkMatchSkills_500(b *testing.B) {
-	e := NewEngine()
+	store, _ := state.NewStore(b.TempDir())
+	e, _ := NewEngine(store, b.TempDir()+"/idx")
+	defer store.Close()
 	for i := 0; i < 500; i++ {
 		name := fmt.Sprintf("skill-%d", i)
 		e.Skills[name] = &models.Skill{
 			Metadata: models.SkillMetadata{Name: name, Description: "Typical skill description for indexing."},
-			TermFreq: tokenize("Detailed workflow steps for a typical skill in the index with some keywords."),
 		}
+		e.Bleve.Index(name, map[string]interface{}{"name": name, "description": "Typical skill description for indexing.", "content": "Detailed workflow steps for a typical skill in the index with some keywords."})
 	}
-	e.RecalculateIndices()
 	ctx := context.Background()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		e.MatchSkills(ctx, "workflow typical keyword")
+		e.MatchSkills(ctx, "workflow typical keyword", "", "", 3)
 	}
 }

@@ -15,13 +15,12 @@ type SkillMetadata struct {
 
 // Skill represents a fully parsed skill including its metadata and content sections
 type Skill struct {
-	Metadata      SkillMetadata     `json:"metadata"`
-	Sections      map[string]string `json:"sections"` // e.g., "Workflow", "Best Practices"
-	RawPath       string            `json:"raw_path"`
-	Hash          string            `json:"hash"`   // SHA-256 of the raw file content
-	Digest        string            `json:"digest"` // Densely formatted markdown for agent context
-	TermFreq      map[string]int    `json:"term_freq"`
-	TokenEstimate int               `json:"token_estimate"`
-	SchemaVersion string            `json:"schema_version"`
-	UpdatedAt     time.Time         `json:"updated_at"`
+	Metadata        SkillMetadata     `json:"metadata"`
+	Sections        map[string]string `json:"sections"` // e.g., "Workflow", "Best Practices"
+	RawPath         string            `json:"raw_path"`
+	Hash            string            `json:"hash"`   // SHA-256 of the raw file content
+	Digest          string            `json:"digest"` // Densely formatted markdown for agent context
+	EstimatedTokens int               `json:"estimated_tokens"`
+	SchemaVersion   string            `json:"schema_version"`
+	UpdatedAt       time.Time         `json:"updated_at"`
 }
