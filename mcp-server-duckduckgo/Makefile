@@ -1,6 +1,7 @@
 BINARY_NAME=mcp-server-duckduckgo
 DIST_DIR=dist
-VERSION?=$(shell git describe --tags --always --dirty 2>/dev/null || echo "1.0.0")
+GIT_VERSION=$(shell git describe --tags --always --dirty 2>/dev/null | sed 's/^v//')
+VERSION?=$(GIT_VERSION)
 
 .PHONY: all build clean test run install version build-all linux darwin-amd64 darwin-arm64 windows help fmt vet lint
 
@@ -8,13 +9,13 @@ all: help build-all
 
 build: ## Compiles the Go application for the local OS/Arch
 	@mkdir -p $(DIST_DIR)
-	@go build -ldflags "-X main.Version=$(VERSION)" -o $(DIST_DIR)/$(BINARY_NAME)-$(shell go env GOOS)-$(shell go env GOARCH)$(if $(filter windows,$(shell go env GOOS)),.exe,) .
+	@CGO_ENABLED=0 go build -tags netgo -ldflags "-extldflags '-static' -w -s -X main.Version=$(VERSION)" -o $(DIST_DIR)/$(BINARY_NAME)-$(shell go env GOOS)-$(shell go env GOARCH)$(if $(filter windows,$(shell go env GOOS)),.exe,) .
 
 build-all: linux darwin-amd64 darwin-arm64 windows ## Compiles for multiple platforms
 
 linux: ## Compiles for Linux AMD64
 	@mkdir -p $(DIST_DIR)
-	GOOS=linux GOARCH=amd64 go build -ldflags "-X main.Version=$(VERSION)" -o $(DIST_DIR)/$(BINARY_NAME)-linux-amd64 .
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -tags netgo -ldflags "-extldflags '-static' -w -s -X main.Version=$(VERSION)" -o $(DIST_DIR)/$(BINARY_NAME)-linux-amd64 .
 
 darwin-amd64: ## Compiles for macOS AMD64
 	@mkdir -p $(DIST_DIR)

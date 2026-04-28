@@ -15,13 +15,11 @@ import (
 
 // NewsSearch performs a high-concurrency news search across multiple providers.
 func (e *SearchEngine) NewsSearch(ctx context.Context, query string, maxResults int) ([]models.SearchResult, error) {
-	providers := []providerFunc{
-		func(c context.Context, q string, m int) ([]models.SearchResult, error) {
-			return e.ddgNewsSearch(c, q, m)
-		},
-		func(c context.Context, q string, m int) ([]models.SearchResult, error) {
+	providers := []SearchProvider{
+		&simpleProvider{name: "DuckDuckGo News", searchFunc: e.ddgNewsSearch},
+		&simpleProvider{name: "Google News", searchFunc: func(c context.Context, q string, m int) ([]models.SearchResult, error) {
 			return e.GoogleSearch(c, q, "nws", m)
-		},
+		}},
 	}
 
 	dedupeKey := func(r models.SearchResult) string {

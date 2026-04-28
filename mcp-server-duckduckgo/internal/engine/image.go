@@ -14,16 +14,12 @@ import (
 
 // ImageSearch performs a high-concurrency image search across multiple providers.
 func (e *SearchEngine) ImageSearch(ctx context.Context, query string, maxResults int) ([]models.SearchResult, error) {
-	providers := []providerFunc{
-		func(c context.Context, q string, m int) ([]models.SearchResult, error) {
-			return e.ddgImageSearch(c, q, m)
-		},
-		func(c context.Context, q string, m int) ([]models.SearchResult, error) {
+	providers := []SearchProvider{
+		&simpleProvider{name: "DuckDuckGo Images", searchFunc: e.ddgImageSearch},
+		&simpleProvider{name: "Google Images", searchFunc: func(c context.Context, q string, m int) ([]models.SearchResult, error) {
 			return e.GoogleSearch(c, q, "isch", m)
-		},
-		func(c context.Context, q string, m int) ([]models.SearchResult, error) {
-			return e.BingImageSearch(c, q, m)
-		},
+		}},
+		&simpleProvider{name: "Bing Images", searchFunc: e.BingImageSearch},
 	}
 
 	dedupeKey := func(r models.SearchResult) string {

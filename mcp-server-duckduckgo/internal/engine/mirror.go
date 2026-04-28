@@ -142,7 +142,10 @@ func (e *SearchEngine) extractMirrorResult(baseUrl string, s *goquery.Selection)
 
 	link, exists := anchor.Attr("href")
 	if !exists || link == "" {
-		link, _ = s.Find("a").First().Attr("href")
+		link, exists = s.Find("a").First().Attr("href")
+		if !exists {
+			return models.SearchResult{}
+		}
 	}
 
 	author := ""

@@ -75,7 +75,10 @@ func (e *SearchEngine) parseGoogleImageResults(doc *goquery.Document, maxResults
 
 		imgSrc, exists := s.Attr("data-src")
 		if !exists || imgSrc == "" {
-			imgSrc, _ = s.Attr("src")
+			imgSrc, exists = s.Attr("src")
+			if !exists {
+				return
+			}
 		}
 
 		// Avoid common tracking pixels

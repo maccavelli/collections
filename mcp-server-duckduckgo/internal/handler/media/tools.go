@@ -3,10 +3,12 @@ package media
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"mcp-server-duckduckgo/internal/models"
 	"mcp-server-duckduckgo/internal/registry"
+	"mcp-server-duckduckgo/internal/util"
 )
 
 // SearchEngine defines the interface for engine searches.
@@ -24,16 +26,17 @@ type MediaTool struct {
 }
 
 func (t *MediaTool) Name() string {
-	return fmt.Sprintf("ddg_search_%s", t.Type)
+	return fmt.Sprintf("search_%s", t.Type)
 }
 
 type MediaInput struct {
 	Query      string `json:"query" jsonschema:"The search keywords"`
 	MaxResults int    `json:"max_results" jsonschema:"Maximum results to return (default 5). Low counts are faster and more token-efficient."`
+	Format     string `json:"format" jsonschema:"Output format: 'hybrid' (JSON metadata + markdown content), 'json' (pure structured data), or 'markdown' (all markdown formatting).,enum=hybrid,enum=json,enum=markdown"`
 }
 
 func (t *MediaTool) Register(s *mcp.Server) {
-	mcp.AddTool(s, &mcp.Tool{
+	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
 		Description: t.Desc,
 	}, t.Handle)
@@ -42,6 +45,12 @@ func (t *MediaTool) Register(s *mcp.Server) {
 func (t *MediaTool) Handle(ctx context.Context, request *mcp.CallToolRequest, input MediaInput) (*mcp.CallToolResult, any, error) {
 	if input.MaxResults <= 0 {
 		input.MaxResults = 5
+	}
+	if input.Format == "" {
+		input.Format = os.Getenv("DDG_DEFAULT_FORMAT")
+		if input.Format == "" {
+			input.Format = "json"
+		}
 	}
 
 	results, err := t.SearchFunc(ctx, input.Query, input.MaxResults)
@@ -69,16 +78,27 @@ func (t *MediaTool) Handle(ctx context.Context, request *mcp.CallToolRequest, in
 	}
 
 	response := models.SearchResponse20{
-		Version: "2.0",
-		Metadata: &models.SearchMetadata{
-			Query:      input.Query,
-			TotalCount: len(results),
-			SearchType: t.Type,
-		},
-		Results: mediaResults,
+		Summary: fmt.Sprintf("Found %d %s results for '%s'", len(results), t.Type, input.Query),
 	}
+	response.Data.Version = "2.0"
+	response.Data.Metadata = &models.SearchMetadata{
+		Query:      input.Query,
+		TotalCount: len(results),
+		SearchType: t.Type,
+	}
+	response.Data.Results = mediaResults
 
-	return &mcp.CallToolResult{}, response, nil
+	switch input.Format {
+	case "markdown":
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: response.ToMarkdown()}},
+		}, nil, nil
+	case "hybrid":
+		response.ResultsMD = response.ToMarkdown()
+		return &mcp.CallToolResult{}, response, nil
+	default: // json
+		return &mcp.CallToolResult{}, response, nil
+	}
 }
 
 // Register adds the media tools to the registry.
@@ -87,12 +107,12 @@ func Register(engine SearchEngine) {
 		Engine:     engine,
 		Type:       "images",
 		SearchFunc: engine.ImageSearch,
-		Desc:       "VISUAL DISCOVERY: High-priority asset retrieval. Call this when the task requires UI/UX inspiration, technical diagrams, or creative assets. Cascades to ddg_search_videos for demonstrations.",
+		Desc:       "[DIRECTIVE: Visual Asset Retrieval] High-priority visual discovery to locate UI/UX inspiration, technical diagrams, photographs, and logos. Keywords: images, pictures, graphics, photos, diagrams, visual, assets, layouts",
 	})
 	registry.Global.Register(&MediaTool{
 		Engine:     engine,
 		Type:       "videos",
 		SearchFunc: engine.VideoSearch,
-		Desc:       "DEMONSTRATION RETRIEVAL: Targeted search for tutorials, walkthroughs, and multimedia reports. Call this when a text-based explanation is insufficient. Cascades to ddg_search_web for written documentation.",
+		Desc:       "[DIRECTIVE: Multimedia and Demonstration Retrieval] Targeted search for tutorials, walkthroughs, multimedia reports, and movies. Keywords: videos, multimedia, tutorials, walkthroughs, movies, clips, streaming, media",
 	})
 }

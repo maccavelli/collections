@@ -18,4 +18,9 @@ const (
 	MaxSnippetLength = 1000
 	VQDCacheTTL      = 5 * time.Minute
 	VQDCacheLimit    = 500 // Max unique queries in cache
+
+	// Logging: get_internal_logs buffer limits
+	LogBufferLimit  = 1024 * 1024 // 1MB max log buffer
+	LogTrimTarget   = 512 * 1024  // 512KB trim target
+	DefaultLogLines = 25          // Default lines returned by get_internal_logs
 )

@@ -13,8 +13,11 @@ type providerResult struct {
 	err  error
 }
 
-// providerFunc is a standard function signature for search providers.
-type providerFunc func(context.Context, string, int) ([]models.SearchResult, error)
+// SearchProvider is a standard interface for search engines.
+type SearchProvider interface {
+	Name() string
+	Search(ctx context.Context, query string, maxResults int) ([]models.SearchResult, error)
+}
 
 // runProviders executes multiple search providers in parallel, merges results, and deduplicates them.
 func (e *SearchEngine) runProviders(
@@ -22,7 +25,7 @@ func (e *SearchEngine) runProviders(
 	query string,
 	maxResults int,
 	dedupeKey func(models.SearchResult) string,
-	providers ...providerFunc,
+	providers ...SearchProvider,
 ) ([]models.SearchResult, error) {
 	ctx, cancel := context.WithTimeout(ctx, config.DefaultTimeout)
 	defer cancel()
@@ -30,8 +33,8 @@ func (e *SearchEngine) runProviders(
 	resChan := make(chan providerResult, len(providers))
 
 	for _, p := range providers {
-		go func(p providerFunc) {
-			data, err := p(ctx, query, maxResults)
+		go func(p SearchProvider) {
+			data, err := p.Search(ctx, query, maxResults)
 			select {
 			case resChan <- providerResult{data, err}:
 			case <-ctx.Done():
@@ -80,4 +83,14 @@ func (e *SearchEngine) runProviders(
 	}
 
 	return nil, fmt.Errorf("no results found across %d providers", len(providers))
+}
+
+type simpleProvider struct {
+	name       string
+	searchFunc func(context.Context, string, int) ([]models.SearchResult, error)
+}
+
+func (s *simpleProvider) Name() string { return s.name }
+func (s *simpleProvider) Search(ctx context.Context, query string, maxResults int) ([]models.SearchResult, error) {
+	return s.searchFunc(ctx, query, maxResults)
 }

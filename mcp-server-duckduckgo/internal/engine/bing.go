@@ -44,7 +44,10 @@ func (e *SearchEngine) BingImageSearch(ctx context.Context, query string, maxRes
 
 		imgSrc, exists := s.Attr("src")
 		if !exists || imgSrc == "" {
-			imgSrc, _ = s.Attr("data-src")
+			imgSrc, exists = s.Attr("data-src")
+			if !exists {
+				return
+			}
 		}
 
 		if imgSrc != "" && strings.HasPrefix(imgSrc, "http") {
