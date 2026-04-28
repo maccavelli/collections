@@ -6,6 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
+	"sync"
+	"time"
 )
 
 // OpenAIProvider implements Provider using the OpenAI API via standard http client.
@@ -70,4 +73,33 @@ func (p *OpenAIProvider) Generate(ctx context.Context, prompt string) (string, e
 	}
 
 	return result.Choices[0].Message.Content, nil
+}
+
+// DiscoverModels tests the default OpenAI fallback arrays concurrently
+// and returns only the responsive models.
+func (p *OpenAIProvider) DiscoverModels(ctx context.Context) ([]string, error) {
+	candidates := []string{"gpt-4o", "gpt-4o-mini", "gpt-3.5-turbo"}
+	var results []string
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+
+	for _, id := range candidates {
+		wg.Add(1)
+		go func(modelID string) {
+			defer wg.Done()
+			tCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			defer cancel()
+
+			tp := NewOpenAI(p.apiKey, modelID)
+			tp.baseURL = p.baseURL // inherit mock URLs in tests
+			res, err := tp.Generate(tCtx, "Respond with ONLY the word Hello")
+			if err == nil && strings.Contains(strings.ToLower(res), "hello") {
+				mu.Lock()
+				results = append(results, modelID)
+				mu.Unlock()
+			}
+		}(id)
+	}
+	wg.Wait()
+	return results, nil
 }

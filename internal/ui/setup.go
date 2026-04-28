@@ -11,6 +11,11 @@ import (
 	"github.com/AlecAivazis/survey/v2"
 )
 
+var surveyAskOne = func(p survey.Prompt, response interface{}, opts ...survey.AskOpt) error {
+	return survey.AskOne(p, response, opts...)
+}
+var osGetenv = os.Getenv
+
 // RunSetup runs the interactive configuration wizard for provider and model selection.
 func RunSetup(ctx context.Context, conf *config.Config) error {
 	fmt.Println("--- prepare-commit-msg Setup ---")
@@ -20,7 +25,7 @@ func RunSetup(ctx context.Context, conf *config.Config) error {
 		Message: "Choose LLM Provider:",
 		Options: []string{"gemini", "openai", "anthropic"},
 	}
-	if err := survey.AskOne(prompt, &provider); err != nil {
+	if err := surveyAskOne(prompt, &provider); err != nil {
 		return err
 	}
 
@@ -41,14 +46,14 @@ func RunSetup(ctx context.Context, conf *config.Config) error {
 	}
 
 	if envVar != "" {
-		if val := os.Getenv(envVar); val != "" {
+		if val := osGetenv(envVar); val != "" {
 			fmt.Printf("%s detected in environment! Importing API key...\n", envVar)
 			apiKey = val
 		}
 	}
 
 	if apiKey == "" {
-		if err := survey.AskOne(&survey.Password{
+		if err := surveyAskOne(&survey.Password{
 			Message: fmt.Sprintf("Enter %s API Key:", provider),
 		}, &apiKey); err != nil {
 			return err
@@ -91,7 +96,7 @@ func RunSetup(ctx context.Context, conf *config.Config) error {
 	models = append(models, "Other")
 
 	var model string
-	if err := survey.AskOne(&survey.Select{
+	if err := surveyAskOne(&survey.Select{
 		Message: "Select Model:",
 		Options: models,
 	}, &model); err != nil {
@@ -99,13 +104,21 @@ func RunSetup(ctx context.Context, conf *config.Config) error {
 	}
 
 	if model == "Other" {
-		if err := survey.AskOne(&survey.Input{
+		if err := surveyAskOne(&survey.Input{
 			Message: "Enter model name:",
 		}, &model); err != nil {
 			return err
 		}
 	}
 	pc.Model = model
+
+	var fallbacks []string
+	for _, m := range models {
+		if m != model && m != "Other" {
+			fallbacks = append(fallbacks, m)
+		}
+	}
+	pc.FallbackModels = fallbacks
 
 	conf.ActiveProvider = provider
 	conf.Providers[provider] = pc

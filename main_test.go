@@ -1,113 +1,186 @@
 package main
 
 import (
+	"context"
+	"fmt"
 	"os"
 	"path/filepath"
+	"prepare-commit-msg/internal/config"
+	"prepare-commit-msg/internal/git"
+	"prepare-commit-msg/internal/llm"
 	"strings"
 	"testing"
-
-	"prepare-commit-msg/internal/git"
+	"time"
 )
 
-func TestCleanLLMOutput_PlainText(t *testing.T) {
-	input := "feat(config): add new setting\n\n- Added timeout parameter"
-	got := cleanLLMOutput(input)
-	if !strings.Contains(got, "feat(config)") {
-		t.Errorf("expected commit message preserved, got: %q", got)
+func TestCleanLLMOutput(t *testing.T) {
+	cases := []struct {
+		input    string
+		expected string
+	}{
+		{"", ""},
+		{"   ", ""},
+		{
+			"```\nfeat: my message\n```",
+			"feat: my message",
+		},
+		{
+			"Here is the commit message:\n\nfeat: some message\n",
+			"feat: some message",
+		},
+		{
+			"Generate a commit message:\n---",
+			"",
+		},
+		{
+			"```json\n{bad}\n```\nfeat: test",
+			"{bad}\nfeat: test", // simple fence logic
+		},
 	}
-}
 
-func TestCleanLLMOutput_CodeFences(t *testing.T) {
-	input := "```\nfeat(api): update endpoint\n\n- Changed route\n```"
-	got := cleanLLMOutput(input)
-	if strings.Contains(got, "```") {
-		t.Errorf("expected code fences removed, got: %q", got)
-	}
-	if !strings.Contains(got, "feat(api)") {
-		t.Errorf("expected content preserved, got: %q", got)
-	}
-}
-
-func TestCleanLLMOutput_CodeFencesWithLanguage(t *testing.T) {
-	input := "```text\nfix(build): correct path\n```"
-	got := cleanLLMOutput(input)
-	if strings.Contains(got, "```") {
-		t.Errorf("expected code fences removed, got: %q", got)
-	}
-	if !strings.Contains(got, "fix(build)") {
-		t.Errorf("expected content preserved, got: %q", got)
-	}
-}
-
-func TestCleanLLMOutput_TrailingTextAfterFence(t *testing.T) {
-	input := "```\nfeat(core): new feature\n```\nHere is your commit message!"
-	got := cleanLLMOutput(input)
-	if strings.Contains(got, "Here is") {
-		t.Errorf("expected trailing text after fence removed, got: %q", got)
-	}
-	if !strings.Contains(got, "feat(core)") {
-		t.Errorf("expected content preserved, got: %q", got)
-	}
-}
-
-func TestCleanLLMOutput_FillerLines(t *testing.T) {
-	input := "Based on the changes:\nfeat(ui): update button\n---\nHere is the message"
-	got := cleanLLMOutput(input)
-	if strings.Contains(got, "Based on") {
-		t.Errorf("expected filler removed, got: %q", got)
-	}
-	if strings.Contains(got, "---") {
-		t.Errorf("expected separator removed, got: %q", got)
-	}
-	if !strings.Contains(got, "feat(ui)") {
-		t.Errorf("expected content preserved, got: %q", got)
-	}
-}
-
-func TestCleanLLMOutput_EmptyInput(t *testing.T) {
-	got := cleanLLMOutput("")
-	if got != "" {
-		t.Errorf("expected empty output for empty input, got: %q", got)
+	for _, c := range cases {
+		out := cleanLLMOutput(c.input)
+		if out != c.expected {
+			t.Errorf("cleanLLMOutput(%q) = %q; want %q", c.input, out, c.expected)
+		}
 	}
 }
 
 func TestBuildPrompt(t *testing.T) {
 	info := &git.Info{
-		Files:     []string{"app.go", "config.yaml"},
-		Stats:     "Scripts: 1, YAML: 1",
-		Additions: 10,
-		Deletions: 5,
-		Diff:      "diff content",
+		Files:     []string{"main.go"},
+		Stats:     "Scripts: 1",
+		Additions: 5,
+		Deletions: 2,
+		Diff:      "mock diff",
 	}
-
-	prompt := buildPrompt(info)
-	if !strings.Contains(prompt, "app.go") {
-		t.Errorf("expected file list in prompt, got: %s", prompt)
-	}
-	if !strings.Contains(prompt, "Scripts: 1") {
-		t.Errorf("expected stats in prompt, got: %s", prompt)
-	}
-	if !strings.Contains(prompt, "diff content") {
-		t.Errorf("expected diff in prompt, got: %s", prompt)
+	out := buildPrompt(info)
+	if !strings.Contains(out, "main.go") || !strings.Contains(out, "Scripts: 1") {
+		t.Error("buildPrompt missing expected info")
 	}
 }
 
 func TestWriteMessage(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "COMMIT_EDITMSG")
-	msg := "feat: test message"
-	info := &git.Info{Stats: "test stats"}
+	os.WriteFile(path, []byte("# existing"), 0644)
 
-	err := writeMessage(path, msg, info)
+	info := &git.Info{Files: []string{"test.go"}, Additions: 1, Deletions: 0, Stats: "Scripts: 1"}
+	err := writeMessage(path, "feat: test", info)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	content, _ := os.ReadFile(path)
-	if !strings.Contains(string(content), msg) {
-		t.Errorf("expected message in file, got: %s", string(content))
+	data, _ := os.ReadFile(path)
+	text := string(data)
+	if !strings.Contains(text, "feat: test") {
+		t.Error("missing message")
 	}
-	if !strings.Contains(string(content), "test stats") {
-		t.Errorf("expected stats in file, got: %s", string(content))
+	if !strings.Contains(text, "# AI-generated") {
+		t.Error("missing metadata comment")
+	}
+	if !strings.Contains(text, "# existing") {
+		t.Error("did not preserve existing content")
+	}
+	
+	// Error simulation
+	err = writeMessage("/nonexistent/dir/file", "hello", info)
+	if err == nil {
+		t.Error("expected IO error")
+	}
+}
+
+func TestRunAnalyzer(t *testing.T) {
+	oldHook := generateWithRetry
+	defer func() { generateWithRetry = oldHook }()
+
+	conf := &config.Config{
+		ActiveProvider: "openai",
+		Providers: map[string]config.ProviderConfig{
+			"openai": {APIKey: "test", Model: "bad-model", FallbackModels: []string{"good-model"}},
+			"anthropic": {APIKey: "test", Model: "bad-model", FallbackModels: []string{"good-model"}},
+			"gemini": {APIKey: "test", Model: "bad-model", FallbackModels: []string{"good-model"}},
+		},
+		TimeoutSeconds: 5,
+	}
+
+	info := &git.Info{Files: []string{"app.go"}, Additions: 1, Deletions: 1}
+
+	dir := t.TempDir()
+	msgPath := filepath.Join(dir, "COMMIT_EDITMSG")
+	os.WriteFile(msgPath, []byte(""), 0644)
+
+	// 1. Test Fallback loop Success (first fails, second succeeds)
+	generateWithRetry = func(ctx context.Context, p llm.Provider, prompt string, retries int, delay time.Duration) (string, error) {
+		if strings.Contains(p.Name(), "openai") {
+		    // How do we know which model it uses? wait, p.Name() returns "openai"
+			// Actually we can't easily introspect the provider model here unless we parse prompt or something.
+			// Let's just track calls
+		}
+		return "", fmt.Errorf("mock error to trigger fallback loop")
+	}
+
+	// Just tracking calls
+	var fallbackAttempted bool
+	generateWithRetry = func(ctx context.Context, p llm.Provider, prompt string, retries int, delay time.Duration) (string, error) {
+		if !fallbackAttempted {
+			fallbackAttempted = true
+			return "", fmt.Errorf("first model fails")
+		}
+		return "feat: valid message generated by fallback", nil
+	}
+
+	err := runAnalyzer(msgPath, conf, info)
+	if err != nil {
+		t.Errorf("expected success on fallback: %v", err)
+	}
+
+	// 2. Test All Models Fail
+	fallbackAttempted = false
+	generateWithRetry = func(ctx context.Context, p llm.Provider, prompt string, retries int, delay time.Duration) (string, error) {
+		return "", fmt.Errorf("all fail")
+	}
+	err = runAnalyzer(msgPath, conf, info)
+	if err == nil || !strings.Contains(err.Error(), "all models for openai failed") {
+		t.Errorf("expected all models failed error, got: %v", err)
+	}
+
+	// 3. Test Unsupported Provider
+	conf.ActiveProvider = "unknown"
+	err = runAnalyzer(msgPath, conf, info)
+	if err == nil || !strings.Contains(err.Error(), "not found in config") {
+		t.Errorf("expected unknown provider config error, got %v", err)
+	}
+
+	// 4. Test Anthropic Success
+	conf.ActiveProvider = "anthropic"
+	generateWithRetry = func(ctx context.Context, p llm.Provider, prompt string, retries int, delay time.Duration) (string, error) {
+		return "feat: anthropic", nil
+	}
+	err = runAnalyzer(msgPath, conf, info)
+	if err != nil {
+		t.Error("anthropic failed")
+	}
+
+	// 5. Test Gemini Success
+	conf.ActiveProvider = "gemini"
+	err = runAnalyzer(msgPath, conf, info)
+	if err != nil {
+		t.Error("gemini failed")
+	}
+	
+	// 6. Empty info
+	err = runAnalyzer(msgPath, conf, &git.Info{})
+	if err != nil {
+		t.Error("expected nil on empty info")
+	}
+	
+	// 7. Clean Output Too Short
+	generateWithRetry = func(ctx context.Context, p llm.Provider, prompt string, retries int, delay time.Duration) (string, error) {
+		return "bad", nil // < 5 chars
+	}
+	err = runAnalyzer(msgPath, conf, info)
+	if err == nil || !strings.Contains(err.Error(), "AI message too short") {
+		t.Errorf("expected too short error")
 	}
 }

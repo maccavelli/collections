@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -181,5 +182,115 @@ func TestConfig_UserRepro(t *testing.T) {
 	}
 	if pc, ok := loaded.Providers["gemini"]; !ok || pc.APIKey != "REDACTED_API_KEY" {
 		t.Error("Gemini provider lost or incorrect after reload")
+	}
+}
+
+func TestFallbackModels(t *testing.T) {
+	c := Config{
+		Providers: map[string]ProviderConfig{
+			"openai": {Model: "gpt-4o", FallbackModels: []string{"gpt-4o-mini"}},
+		},
+	}
+	pc := c.Providers["openai"]
+	if len(pc.FallbackModels) != 1 || pc.FallbackModels[0] != "gpt-4o-mini" {
+		t.Errorf("expected 1 fallback model 'gpt-4o-mini', got %v", pc.FallbackModels)
+	}
+}
+
+func TestGetConfigPath_Error(t *testing.T) {
+	oldFn := userHomeDir
+	defer func() { userHomeDir = oldFn }()
+
+	userHomeDir = func() (string, error) {
+		return "", fmt.Errorf("mock homedir error")
+	}
+
+	_, err := GetConfigPath()
+	if err == nil {
+		t.Error("expected error, got nil")
+	}
+}
+
+func TestLoad_Errors(t *testing.T) {
+	// 1. File read error other than IsNotExist
+	tmpDir := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpDir)
+	defer os.Setenv("HOME", origHome)
+
+	configDir := filepath.Join(tmpDir, ".config", "prepare-commit-msg")
+	os.MkdirAll(configDir, 0755)
+
+	// Create a directory where the file should be, causing ReadFile to fail with IsDir
+	configPath := filepath.Join(configDir, "config.json")
+	os.Mkdir(configPath, 0755)
+
+	_, err := Load()
+	if err == nil {
+		t.Error("expected error reading a directory, got nil")
+	}
+	os.RemoveAll(configPath)
+
+	// 2. Unmarshal error
+	badJSON := `{ bad, json }`
+	os.WriteFile(configPath, []byte(badJSON), 0644)
+	_, err = Load()
+	if err == nil {
+		t.Error("expected unmarshal error, got nil")
+	}
+}
+
+func TestSave_Errors(t *testing.T) {
+	c := &Config{}
+
+	// mock home dir failure
+	oldFn := userHomeDir
+	defer func() { userHomeDir = oldFn }()
+
+	userHomeDir = func() (string, error) {
+		return "", fmt.Errorf("mock error")
+	}
+	if err := c.Save(); err == nil {
+		t.Error("expected save error due to home dir failure")
+	}
+
+	// Restore home dir
+	userHomeDir = oldFn
+
+	// Mock failing MkdirAll: we'll create a file with the same name as the intended config directory
+	tmpDir := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpDir)
+	defer os.Setenv("HOME", origHome)
+
+	configDir := filepath.Join(tmpDir, ".config", "prepare-commit-msg")
+	os.MkdirAll(filepath.Dir(configDir), 0755)
+	os.WriteFile(configDir, []byte("file-not-dir"), 0644)
+
+	if err := c.Save(); err == nil {
+		t.Error("expected save error due to mkdir failure")
+	}
+}
+
+func TestMigrateConfig_CorruptJSON(t *testing.T) {
+	tmpDir := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpDir)
+	defer os.Setenv("HOME", origHome)
+
+	legacyDir := filepath.Join(tmpDir, ".config", "prepare-commit-msg-embedded")
+	os.MkdirAll(legacyDir, 0755)
+	legacyConfPath := filepath.Join(legacyDir, "config.json")
+
+	badData := []byte(`{ bad }`)
+	os.WriteFile(legacyConfPath, badData, 0644)
+
+	// In Load, it will discover this and call migrateConfig.
+	c, err := Load()
+	if err != nil {
+		t.Errorf("migrateConfig should handle corrupt json silently: %v", err)
+	}
+	if c.Providers == nil {
+		t.Error("expected fresh initialized config providers")
 	}
 }

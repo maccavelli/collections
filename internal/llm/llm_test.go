@@ -96,5 +96,22 @@ func (m *mockFailProvider) Generate(ctx context.Context, prompt string) (string,
 	return "eventual success", nil
 }
 
-// Note: TestNewGemini and TestNewOpenAI are skipped as they require actual clients/API keys or heavy mocking of external SDKs.
 // The interface implementation is verified via the mock provider.
+
+func TestOpenAIDiscover(t *testing.T) {
+	p := NewOpenAI("test-key", "gpt-4o")
+	if _, ok := interface{}(p).(ModelDiscoverer); ok {
+		// Valid implementation
+	} else {
+		t.Error("OpenAI must implement ModelDiscoverer")
+	}
+}
+
+func TestAnthropicDiscover(t *testing.T) {
+	p, _ := NewAnthropic("test-key", "claude-test")
+	if _, ok := interface{}(p).(ModelDiscoverer); ok {
+		// Valid implementation
+	} else {
+		t.Error("Anthropic must implement ModelDiscoverer")
+	}
+}

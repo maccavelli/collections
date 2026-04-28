@@ -15,6 +15,8 @@ import (
 	"prepare-commit-msg/internal/ui"
 )
 
+var generateWithRetry = llm.GenerateWithRetry
+
 // Version is overwritten by build flags during the compilation process to represent
 // the current release version of the application.
 var Version = "3.1.4"
@@ -125,32 +127,48 @@ func runAnalyzer(file string, conf *config.Config, info *git.Info) error {
 		return err
 	}
 
-	var provider llm.Provider
-	switch conf.ActiveProvider {
-	case "openai":
-		provider = llm.NewOpenAI(pc.APIKey, pc.Model)
-	case "gemini":
-		p, err := llm.NewGemini(ctx, pc.APIKey, pc.Model)
-		if err != nil {
-			return err
+	prompt := buildPrompt(info)
+	modelsToTry := append([]string{pc.Model}, pc.FallbackModels...)
+
+	var msg string
+	var loopErr error
+
+	for _, m := range modelsToTry {
+		fmt.Fprintf(os.Stderr, "Generating commit message via %s (%s)...\n", conf.ActiveProvider, m)
+
+		var provider llm.Provider
+		switch conf.ActiveProvider {
+		case "openai":
+			provider = llm.NewOpenAI(pc.APIKey, m)
+		case "gemini":
+			p, err := llm.NewGemini(ctx, pc.APIKey, m)
+			if err != nil {
+				loopErr = fmt.Errorf("failed to init gemini: %w", err)
+				fmt.Fprintf(os.Stderr, "Warning: %v\n", loopErr)
+				continue
+			}
+			provider = p
+		case "anthropic":
+			p, err := llm.NewAnthropic(pc.APIKey, m)
+			if err != nil {
+				loopErr = fmt.Errorf("failed to init anthropic: %w", err)
+				fmt.Fprintf(os.Stderr, "Warning: %v\n", loopErr)
+				continue
+			}
+			provider = p
+		default:
+			return fmt.Errorf("unsupported provider: %s", conf.ActiveProvider)
 		}
-		provider = p
-	case "anthropic":
-		p, err := llm.NewAnthropic(pc.APIKey, pc.Model)
-		if err != nil {
-			return err
+
+		msg, loopErr = generateWithRetry(ctx, provider, prompt, conf.RetryCount, time.Duration(conf.RetryDelaySeconds)*time.Second)
+		if loopErr == nil {
+			break // success!
 		}
-		provider = p
-	default:
-		return fmt.Errorf("unsupported provider: %s", conf.ActiveProvider)
+		fmt.Fprintf(os.Stderr, "Warning: model %s failed: %v\n", m, loopErr)
 	}
 
-	prompt := buildPrompt(info)
-	fmt.Fprintf(os.Stderr, "Generating commit message via %s (%s)...\n", provider.Name(), pc.Model)
-
-	msg, err := llm.GenerateWithRetry(ctx, provider, prompt, conf.RetryCount, time.Duration(conf.RetryDelaySeconds)*time.Second)
-	if err != nil {
-		return err
+	if loopErr != nil {
+		return fmt.Errorf("all models for %s failed, last error: %w", conf.ActiveProvider, loopErr)
 	}
 
 	msg = cleanLLMOutput(msg)
