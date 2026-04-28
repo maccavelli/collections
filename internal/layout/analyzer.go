@@ -4,47 +4,135 @@ import (
 	"context"
 	"fmt"
 	"go/types"
-	"mcp-server-go-refactor/internal/loader"
-	"mcp-server-go-refactor/internal/registry"
+	"log/slog"
+	"os"
 	"sort"
+
+	"mcp-server-go-refactor/internal/engine"
+	"mcp-server-go-refactor/internal/loader"
+	"mcp-server-go-refactor/internal/models"
+	"mcp-server-go-refactor/internal/registry"
+	"mcp-server-go-refactor/internal/util"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // Tool implements the struct alignment analyzer tool.
-type Tool struct{}
+type Tool struct {
+	Engine *engine.Engine
+}
 
 func (t *Tool) Name() string {
 	return "go_struct_alignment_optimizer"
 }
 
-func (t *Tool) Register(s *mcp.Server) {
-	mcp.AddTool(s, &mcp.Tool{
+func (t *Tool) Register(s util.SessionProvider) {
+	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
-		Description: "PERFORMANCE MANDATE / MEMORY OPTIMIZER: Analyzes the memory layout of Go structs to identify wasted space. Provides an optimized field order that minimizes footprint. Highly valuable for high-throughput applications processing millions of objects in-memory.",
+		Description: "[ROLE: ANALYZER] STRUCT ALIGNMENT OPTIMIZER: Analyzes object sizes, padding spacing, and memory layout of Go structs to identify wasted space. Provides optimized field ordering that minimizes memory footprint. Produces struct size analysis with optimal field ordering. In orchestrator mode, publishes telemetry for cross-session tracking.",
 	}, t.Handle)
 }
 
 // Register adds the struct alignment tool to the registry.
-func Register() {
-	registry.Global.Register(&Tool{})
+func Register(eng *engine.Engine) {
+	registry.Global.Register(&Tool{Engine: eng})
 }
 
 type AlignmentInput struct {
-	Pkg        string `json:"pkg" jsonschema:"The package path"`
-	StructName string `json:"structName" jsonschema:"The name of the struct"`
+	models.UniversalPipelineInput
 }
 
 func (t *Tool) Handle(ctx context.Context, req *mcp.CallToolRequest, input AlignmentInput) (*mcp.CallToolResult, any, error) {
-	result, err := AnalyzeStructAlignment(ctx, input.StructName, input.Pkg)
+	var session *engine.Session
+
+	isOrchestrator := os.Getenv("MCP_ORCHESTRATOR_OWNED") == "true"
+	recallAvailable := isOrchestrator && t.Engine != nil && t.Engine.ExternalClient != nil && t.Engine.ExternalClient.RecallEnabled()
+	if isOrchestrator && !recallAvailable {
+		slog.Warn("[ORCHESTRATOR] recall unavailable — degrading to standalone", "tool", t.Name())
+	}
+
+	if t.Engine != nil {
+		session = t.Engine.LoadSession(ctx, input.Target)
+	}
+
+	if input.Context == "" {
+		summary := "Skipped struct alignment (no struct name provided)"
+		if session != nil {
+			if session.Metadata == nil {
+				session.Metadata = make(map[string]any)
+			}
+			var diags []string
+			if d, ok := session.Metadata["diagnostics"].([]string); ok {
+				diags = d
+			}
+			session.Metadata["diagnostics"] = append(diags, summary)
+			t.Engine.SaveSession(session)
+
+			if recallAvailable {
+				t.Engine.PublishSessionToRecall(ctx, input.SessionID, input.Target, "alignment_optimized", "native", "go_struct_alignment_optimizer", "", session.Metadata)
+			}
+		}
+		return &mcp.CallToolResult{}, struct {
+			Summary string           `json:"summary"`
+			Data    *AlignmentResult `json:"data"`
+		}{
+			Summary: summary,
+			Data:    nil,
+		}, nil
+	}
+
+	result, err := AnalyzeStructAlignment(ctx, input.Context, input.Target)
 	if err != nil {
 		res := &mcp.CallToolResult{}
 		res.SetError(err)
 		return res, nil, nil
 	}
-	return &mcp.CallToolResult{
-		Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("%+v", result)}},
-	}, nil, nil
+	summary := fmt.Sprintf("Struct alignment for %s: %d bytes (optimal %d bytes)", input.Context, result.CurrentSizeBytes, result.OptimalSizeBytes)
+
+	if session != nil {
+		if session.Metadata == nil {
+			session.Metadata = make(map[string]any)
+		}
+
+		if recallAvailable {
+			structStds := t.Engine.EnsureRecallCache(ctx, session, "struct_layout", "search", map[string]interface{}{"namespace": "ecosystem",
+				"query": "Go struct memory alignment optimization, field ordering standards, and cache-line padding conventions for " + input.Target,
+				"limit": 10,
+			})
+			session.Metadata["recall_cache_struct"] = structStds
+
+			if structStds != "" {
+				summary += fmt.Sprintf("\n\n[Struct Layout Standards]: %s", structStds)
+			}
+		}
+
+		// Pillar metrics for brainstorm learning.
+		session.Metadata["pillar_metrics"] = map[string]any{
+			"pillar":        "efficiency",
+			"current_bytes": result.CurrentSizeBytes,
+			"optimal_bytes": result.OptimalSizeBytes,
+			"wasted_bytes":  result.CurrentSizeBytes - result.OptimalSizeBytes,
+		}
+
+		var diags []string
+		if d, ok := session.Metadata["diagnostics"].([]string); ok {
+			diags = d
+		}
+		session.Metadata["diagnostics"] = append(diags, summary)
+		t.Engine.SaveSession(session)
+
+		if recallAvailable {
+			t.Engine.PublishSessionToRecall(ctx, input.SessionID, input.Target, "alignment_optimized", "native", "go_struct_alignment_optimizer", "", session.Metadata)
+		}
+	}
+
+	return &mcp.CallToolResult{}, struct {
+		Summary string           `json:"summary"`
+		Data    *AlignmentResult `json:"data"`
+	}{
+		Summary: summary,
+		Data:    result,
+	}, nil
 }
 
 // AlignmentResult contains memory analysis for a struct.

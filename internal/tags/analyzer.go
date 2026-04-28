@@ -5,9 +5,14 @@ import (
 	"fmt"
 	"go/ast"
 	"go/token"
+	"log/slog"
 	"mcp-server-go-refactor/internal/dstutil"
+	"mcp-server-go-refactor/internal/engine"
 	"mcp-server-go-refactor/internal/loader"
+	"mcp-server-go-refactor/internal/models"
 	"mcp-server-go-refactor/internal/registry"
+	"mcp-server-go-refactor/internal/util"
+	"os"
 	"strings"
 
 	"github.com/dave/dst"
@@ -15,54 +20,159 @@ import (
 )
 
 // Tool implements the tag manager tool.
-type Tool struct{}
+type Tool struct {
+	Engine *engine.Engine
+}
 
 func (t *Tool) Name() string {
 	return "go_tag_manager"
 }
 
-func (t *Tool) Register(s *mcp.Server) {
-	mcp.AddTool(s, &mcp.Tool{
+func (t *Tool) Register(s util.SessionProvider) {
+	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
-		Description: "TRANSFORMATION MANDATE / TAG ENGINE: Automated transformation of struct tags (json, yaml). Use this for bulk case conversion to standardize API models or migrates serialization formats. Cascades to go_modernizer.",
+		Description: "[ROLE: MUTATOR] STRUCT TAG MANAGER: Fixes structural tags (json, yaml) guaranteeing formatted properties to ensure standardized casing across all struct definitions. Validates syntax and enforces naming conventions. Requires struct name from prior discovery. Produces tag modification plan or applies rewritten tags. [Routing Tags: struct-tags, json-tags, yaml-tags, format-struct, fix-casing]",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"pkg": map[string]any{
+					"type":        "string",
+					"description": "The package path",
+				},
+				"structName": map[string]any{
+					"type":        "string",
+					"description": "The name of the struct",
+				},
+				"caseFormat": map[string]any{
+					"type":        "string",
+					"description": "Target case format (e.g., camel, snake). Defaults to snake.",
+				},
+				"targetTag": map[string]any{
+					"type":        "string",
+					"description": "The tag key to transform (e.g., json, yaml). Defaults to json.",
+				},
+				"rewrite": map[string]any{
+					"type":        "boolean",
+					"description": "If true, automatically updates the source code (comment-safe).",
+				},
+			},
+			"required": []string{"pkg", "structName"},
+		},
 	}, t.Handle)
 }
 
 // Register adds the tag manager tool to the registry.
-func Register() {
-	registry.Global.Register(&Tool{})
+func Register(eng *engine.Engine) {
+	registry.Global.Register(&Tool{Engine: eng})
 }
 
 type TagInput struct {
-	Pkg        string `json:"pkg" jsonschema:"The package path"`
-	StructName string `json:"structName" jsonschema:"The name of the struct"`
-	CaseFormat string `json:"caseFormat" jsonschema:"Target case format (e.g., camel, snake)"`
-	TargetTag  string `json:"targetTag" jsonschema:"The tag key to transform (e.g., json, yaml)"`
-	Rewrite    bool   `json:"rewrite" jsonschema:"If true, automatically updates the source code (comment-safe)."`
+	models.UniversalPipelineInput
 }
 
 func (t *Tool) Handle(ctx context.Context, req *mcp.CallToolRequest, input TagInput) (*mcp.CallToolResult, any, error) {
-	if input.Rewrite {
-		err := ApplyTags(ctx, input.Pkg, input.StructName, input.CaseFormat, input.TargetTag)
+	var session *engine.Session
+
+	isOrchestrator := os.Getenv("MCP_ORCHESTRATOR_OWNED") == "true"
+	recallAvailable := isOrchestrator && t.Engine != nil && t.Engine.ExternalClient != nil && t.Engine.ExternalClient.RecallEnabled()
+	if isOrchestrator && !recallAvailable {
+		slog.Warn("[ORCHESTRATOR] recall unavailable — degrading to standalone", "tool", t.Name())
+	}
+
+	if t.Engine != nil {
+		session = t.Engine.LoadSession(ctx, input.Target)
+	}
+
+	caseFormat := "snake"
+	if cf, ok := input.Flags["caseFormat"].(string); ok && cf != "" {
+		caseFormat = cf
+	}
+	targetTag := "json"
+	if tt, ok := input.Flags["targetTag"].(string); ok && tt != "" {
+		targetTag = tt
+	}
+	rewrite := false
+	if rw, ok := input.Flags["rewrite"].(bool); ok {
+		rewrite = rw
+	}
+
+	if rewrite {
+		err := ApplyTags(ctx, input.Target, input.Context, caseFormat, targetTag)
 		if err != nil {
 			res := &mcp.CallToolResult{}
 			res.SetError(err)
 			return res, nil, nil
 		}
-		return &mcp.CallToolResult{
-			Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Successfully updated struct %s tags in %s", input.StructName, input.Pkg)}},
-		}, nil, nil
+		summary := fmt.Sprintf("Successfully updated struct %s tags in %s", input.Context, input.Target)
+
+		if session != nil {
+			if session.Metadata == nil {
+				session.Metadata = make(map[string]any)
+			}
+			var diags []string
+			if d, ok := session.Metadata["diagnostics"].([]string); ok {
+				diags = d
+			}
+			session.Metadata["diagnostics"] = append(diags, summary)
+			t.Engine.SaveSession(session)
+
+			// Publish tag management trace to recall sessions matrix.
+			if recallAvailable {
+				t.Engine.PublishSessionToRecall(ctx, input.SessionID, input.Target, "tags_managed", "native", "go_tag_manager", "", session.Metadata)
+			}
+		}
+
+		return &mcp.CallToolResult{}, struct {
+			Summary string `json:"summary"`
+		}{
+			Summary: summary,
+		}, nil
 	}
 
-	result, err := AnalyzeTags(ctx, input.Pkg, input.StructName, input.CaseFormat, input.TargetTag)
+	result, err := AnalyzeTags(ctx, input.Target, input.Context, caseFormat, targetTag)
 	if err != nil {
 		res := &mcp.CallToolResult{}
 		res.SetError(err)
 		return res, nil, nil
 	}
-	return &mcp.CallToolResult{
-		Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("%+v", result)}},
-	}, nil, nil
+	summary := fmt.Sprintf("Tag analysis for struct %s in %s (%d fields)", input.Context, input.Target, len(result.Modifications))
+
+	if session != nil {
+		if session.Metadata == nil {
+			session.Metadata = make(map[string]any)
+		}
+
+		if recallAvailable {
+			tagStds := t.Engine.EnsureRecallCache(ctx, session, "tag_conventions", "search", map[string]interface{}{"namespace": "ecosystem",
+				"query": "Go struct tag conventions, JSON serialization standards, YAML tag patterns, and validation tag standards for " + input.Target,
+				"limit": 10,
+			})
+			session.Metadata["recall_cache_tags"] = tagStds
+
+			if tagStds != "" {
+				summary += fmt.Sprintf("\n\n[Struct Tag Convention Standards]: %s", tagStds)
+			}
+		}
+
+		var diags []string
+		if d, ok := session.Metadata["diagnostics"].([]string); ok {
+			diags = d
+		}
+		session.Metadata["diagnostics"] = append(diags, summary)
+		t.Engine.SaveSession(session)
+
+		if recallAvailable {
+			t.Engine.PublishSessionToRecall(ctx, input.SessionID, input.Target, "tags_managed", "native", "go_tag_manager", "", session.Metadata)
+		}
+	}
+
+	return &mcp.CallToolResult{}, struct {
+		Summary string     `json:"summary"`
+		Data    *TagResult `json:"data"`
+	}{
+		Summary: summary,
+		Data:    result,
+	}, nil
 }
 
 // TagModification describes a single field's tag transformation.

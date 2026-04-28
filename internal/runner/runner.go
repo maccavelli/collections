@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,7 +14,7 @@ import (
 
 // Runner provides a hardened interface for Go command execution.
 type Runner struct {
-	Dir      string // Execution working directory
+	Dir       string // Execution working directory
 	SlogLevel string // slog level if needed
 }
 
@@ -22,6 +23,20 @@ type Result struct {
 	Stdout []byte
 	Stderr []byte
 	Err    error
+}
+
+// StreamResult captures a streaming result of a Go command.
+type StreamResult struct {
+	Stdout io.ReadCloser
+	Stderr *bytes.Buffer
+	Cmd    *exec.Cmd
+	Cancel context.CancelFunc
+}
+
+// Wait waits for the command to finish and returns the error.
+func (s *StreamResult) Wait() error {
+	defer s.Cancel()
+	return s.Cmd.Wait()
 }
 
 // New creates a new Go runner from a directory.
@@ -34,14 +49,7 @@ func (r *Runner) RunGo(ctx context.Context, subCmd string, args ...string) (*Res
 	tctx, cancel := context.WithTimeout(ctx, 120*time.Second)
 	defer cancel()
 
-	// 1. Filter out empty arguments to avoid the 'go: module : not a known dependency' bug
-	cleanArgs := []string{subCmd}
-	for _, arg := range args {
-		if strings.TrimSpace(arg) != "" {
-			cleanArgs = append(cleanArgs, arg)
-		}
-	}
-
+	cleanArgs := r.cleanArgs(subCmd, args)
 	cmd := exec.CommandContext(tctx, "go", cleanArgs...)
 	cmd.Dir = r.Dir
 
@@ -65,6 +73,47 @@ func (r *Runner) RunGo(ctx context.Context, subCmd string, args ...string) (*Res
 	}, nil
 }
 
+// RunGoStream initiates a 'go' command and returns a streamable result.
+// The caller is responsible for calling Wait() to release resources.
+func (r *Runner) RunGoStream(ctx context.Context, subCmd string, args ...string) (*StreamResult, error) {
+	tctx, cancel := context.WithTimeout(ctx, 300*time.Second) // Longer timeout for streaming
+
+	cleanArgs := r.cleanArgs(subCmd, args)
+	cmd := exec.CommandContext(tctx, "go", cleanArgs...)
+	cmd.Dir = r.Dir
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	if err := cmd.Start(); err != nil {
+		cancel()
+		return nil, err
+	}
+
+	return &StreamResult{
+		Stdout: stdout,
+		Stderr: &stderr,
+		Cmd:    cmd,
+		Cancel: cancel,
+	}, nil
+}
+
+func (r *Runner) cleanArgs(subCmd string, args []string) []string {
+	clean := []string{subCmd}
+	for _, arg := range args {
+		if strings.TrimSpace(arg) != "" {
+			clean = append(clean, arg)
+		}
+	}
+	return clean
+}
+
 // Success returns true if the command succeeded.
 func (res *Result) Success() bool {
 	return res.Err == nil
@@ -74,6 +123,7 @@ func (res *Result) Success() bool {
 func (res *Result) String() string {
 	return string(res.Stdout) + string(res.Stderr)
 }
+
 // WriteFileAtomic writes data to a temporary file then renames it for atomicity.
 func (r *Runner) WriteFileAtomic(path string, data []byte) error {
 	abs := path

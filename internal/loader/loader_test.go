@@ -112,7 +112,7 @@ func TestLocalPathValidation(t *testing.T) {
 	os.WriteFile(filepath.Join(tmp, "main.go"), []byte("package main\n\nfunc main() {}\n"), 0644)
 
 	ctx := context.Background()
-	
+
 	// Valid load (from root)
 	pkgs, err := LoadPackages(ctx, tmp, DefaultMode)
 	if err != nil {

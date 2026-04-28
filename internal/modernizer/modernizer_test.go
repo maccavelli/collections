@@ -7,6 +7,9 @@ import (
 	"strings"
 	"testing"
 
+	"mcp-server-go-refactor/internal/engine"
+	"mcp-server-go-refactor/internal/models"
+
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -37,7 +40,9 @@ func Filter(s []int) []int {
 
 	// Test Handle Analyze
 	input := ModernizeInput{
-		Pkg: tmp,
+		UniversalPipelineInput: models.UniversalPipelineInput{
+			Target: tmp,
+		},
 	}
 	req := &mcp.CallToolRequest{}
 
@@ -45,7 +50,7 @@ func Filter(s []int) []int {
 	if err != nil {
 		t.Fatalf("Handle failed: %v", err)
 	}
-	
+
 	found := false
 	for _, content := range res.Content {
 		if tc, ok := content.(*mcp.TextContent); ok && strings.Contains(tc.Text, "Successfully") {
@@ -62,7 +67,7 @@ func Filter(s []int) []int {
 	}
 
 	// Test Handle Rewrite
-	input.Rewrite = true
+	input.Flags = map[string]any{"rewrite": true}
 	_, _, err = tool.Handle(context.Background(), req, input)
 	if err != nil {
 		t.Fatalf("Handle rewrite failed: %v", err)
@@ -75,6 +80,7 @@ func Filter(s []int) []int {
 }
 
 func TestRegister(t *testing.T) {
-	Register()
+	e := &engine.Engine{}
+	Register(e)
 	// Should not panic
 }

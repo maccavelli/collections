@@ -1,13 +1,11 @@
 package registry
 
-import (
-	"github.com/modelcontextprotocol/go-sdk/mcp"
-)
+import "mcp-server-go-refactor/internal/util"
 
 // Tool defines the interface for an MCP tool compatible with the official SDK.
 type Tool interface {
 	Name() string
-	Register(s *mcp.Server)
+	Register(s util.SessionProvider)
 }
 
 // Registry manages tool registration.

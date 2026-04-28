@@ -4,74 +4,194 @@ import (
 	"context"
 	"fmt"
 	"go/ast"
-	"mcp-server-go-refactor/internal/dstutil"
-	"mcp-server-go-refactor/internal/loader"
-	"mcp-server-go-refactor/internal/registry"
+	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 
+	"golang.org/x/tools/go/ast/inspector"
+
+	"mcp-server-go-refactor/internal/dstutil"
+	"mcp-server-go-refactor/internal/engine"
+	"mcp-server-go-refactor/internal/loader"
+	"mcp-server-go-refactor/internal/models"
+	"mcp-server-go-refactor/internal/registry"
+	"mcp-server-go-refactor/internal/util"
+
 	"github.com/dave/dst"
+
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"golang.org/x/tools/go/packages"
 )
 
 // Tool implements the go_modernizer tool.
-type Tool struct{}
+type Tool struct {
+	Engine *engine.Engine
+}
 
 func (t *Tool) Name() string {
 	return "go_modernizer"
 }
 
-func (t *Tool) Register(s *mcp.Server) {
-	mcp.AddTool(s, &mcp.Tool{
+func (t *Tool) Register(s util.SessionProvider) {
+	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
-		Description: "COMPLETION MANDATE / CODE REPAIR: Scans code for legacy patterns and replaces them with optimized standard library functions (e.g., slices/maps Go 1.21+). Call this to finalize any refactor and ensure high performance. Cascades to go_test_coverage_tracer.",
+		Description: "[ROLE: ANALYZER] CODE MODERNIZER: Fixes code arrays, updates legacy patterns, and improves loops using optimized standard library packages (slices/maps). Identifies deprecated API usage and recommends idiomatic Go 1.26+ replacements. Produces modernization opportunity list by category.",
 	}, t.Handle)
 }
 
 // Register adds the modernizer tool to the registry.
-func Register() {
-	registry.Global.Register(&Tool{})
+func Register(eng *engine.Engine) {
+	registry.Global.Register(&Tool{Engine: eng})
 }
 
 type ModernizeInput struct {
-	Pkg     string `json:"pkg" jsonschema:"The package path to analyze"`
-	Rewrite bool   `json:"rewrite" jsonschema:"If true, automatically applies modernization changes (comment-safe)."`
+	models.UniversalPipelineInput
 }
 
 func (t *Tool) Handle(ctx context.Context, req *mcp.CallToolRequest, input ModernizeInput) (*mcp.CallToolResult, any, error) {
-	if input.Rewrite {
-		err := ApplyModernize(ctx, input.Pkg)
+	var session *engine.Session
+
+	isOrchestrator := os.Getenv("MCP_ORCHESTRATOR_OWNED") == "true"
+	recallAvailable := isOrchestrator && t.Engine != nil && t.Engine.ExternalClient != nil && t.Engine.ExternalClient.RecallEnabled()
+	if isOrchestrator && !recallAvailable {
+		slog.Warn("[ORCHESTRATOR] recall unavailable — degrading to standalone", "tool", t.Name())
+	}
+
+	rewrite := false
+	if rw, ok := input.Flags["rewrite"].(bool); ok {
+		rewrite = rw
+	}
+
+	if t.Engine != nil {
+		session = t.Engine.LoadSession(ctx, input.Target)
+
+		if recallAvailable {
+			if history := t.Engine.LoadCrossSessionFromRecall(ctx, "gorefactor", input.Target); history != "" {
+				if session.Metadata == nil {
+					session.Metadata = make(map[string]any)
+				}
+				session.Metadata["historical_modernization"] = history
+			}
+		}
+	}
+
+	// Sniff for native repository linter guidelines to strictly align AST rewriting logic
+	var nativeLinters []string
+	if stat, err := os.Stat(input.Target); err == nil && stat.IsDir() {
+		for _, cfg := range []string{".golangci.yaml", ".golangci.yml", ".revive.toml", "staticcheck.conf"} {
+			if _, err := os.Stat(filepath.Join(input.Target, cfg)); err == nil {
+				nativeLinters = append(nativeLinters, cfg)
+			}
+		}
+	}
+	if len(nativeLinters) > 0 && session != nil {
+		if session.Metadata == nil {
+			session.Metadata = make(map[string]any)
+		}
+		session.Metadata["active_native_linters"] = nativeLinters
+	}
+
+	if rewrite {
+		err := ApplyModernize(ctx, input.Target)
 		if err != nil {
 			res := &mcp.CallToolResult{}
 			res.SetError(err)
 			return res, nil, nil
 		}
-		return &mcp.CallToolResult{
-			Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Successfully applied modernization for %s", input.Pkg)}},
-		}, nil, nil
+		summary := fmt.Sprintf("Successfully applied modernization for %s", input.Target)
+
+		if session != nil {
+			if session.Metadata == nil {
+				session.Metadata = make(map[string]any)
+			}
+			var diags []string
+			if d, ok := session.Metadata["diagnostics"].([]string); ok {
+				diags = d
+			}
+			session.Metadata["diagnostics"] = append(diags, summary)
+			t.Engine.SaveSession(session)
+
+			if recallAvailable {
+				t.Engine.PublishSessionToRecall(ctx, input.SessionID, input.Target, "modernization_scanned", "native", "go_modernizer", "", session.Metadata)
+			}
+		}
+
+		return &mcp.CallToolResult{}, struct {
+			Summary string `json:"summary"`
+			Data    any    `json:"data"`
+		}{
+			Summary: summary,
+			Data:    map[string]string{"message": summary},
+		}, nil
 	}
 
-	findings, err := Analyze(ctx, input.Pkg)
+	findings, err := Analyze(ctx, input.Target)
 	if err != nil {
 		res := &mcp.CallToolResult{}
 		res.SetError(err)
 		return res, nil, nil
 	}
-	if len(findings) == 0 {
-		return &mcp.CallToolResult{
-			Content: []mcp.Content{&mcp.TextContent{Text: "No modernization opportunities found."}},
-		}, nil, nil
+
+	summary := "No modernization opportunities found."
+	if len(findings) > 0 {
+		summary = fmt.Sprintf("Found %d modernization opportunities in %s", len(findings), input.Target)
 	}
-	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("Modernization findings for %s:\n\n", input.Pkg))
-	for _, f := range findings {
-		sb.WriteString(fmt.Sprintf("[%s] %s:%d\n", f.Category, f.File, f.Line))
-		sb.WriteString(fmt.Sprintf("  Rationale: %s\n", f.Rationale))
-		sb.WriteString(fmt.Sprintf("  Replacement: %s\n\n", f.Replacement))
+
+	if session != nil {
+		if session.Metadata == nil {
+			session.Metadata = make(map[string]any)
+		}
+
+		if recallAvailable {
+			// Dynamically query recall for specific structural AST definitions tailored to this package
+			astStds := t.Engine.EnsureRecallCache(ctx, session, "modernizer_ast", "search", map[string]interface{}{"namespace": "ecosystem",
+				"query":       "AST structural rules definitions modern standards",
+				"package":     input.Target,
+				"symbol_type": "struct",
+				"limit":       10,
+			})
+			session.Metadata["recall_cache_modernizer"] = astStds
+
+			if astStds != "" {
+				summary += fmt.Sprintf("\n\n[Entity Structure and AST Standards Enforced]: %s", astStds)
+			}
+		}
+
+		// Pillar metrics for brainstorm learning.
+		session.Metadata["pillar_metrics"] = map[string]any{
+			"pillar":        "modernization",
+			"finding_count": len(findings),
+		}
+
+		// AST faults.
+		if len(findings) > 0 {
+			var astFaults []string
+			if f, ok := session.Metadata["ast_faults"].([]string); ok {
+				astFaults = f
+			}
+			session.Metadata["ast_faults"] = append(astFaults, "modernization_gap")
+		}
+
+		var diags []string
+		if d, ok := session.Metadata["diagnostics"].([]string); ok {
+			diags = d
+		}
+		session.Metadata["diagnostics"] = append(diags, summary)
+		t.Engine.SaveSession(session)
+
+		if recallAvailable {
+			t.Engine.PublishSessionToRecall(ctx, input.SessionID, input.Target, "modernization_scanned", "native", "go_modernizer", "", session.Metadata)
+		}
 	}
-	return &mcp.CallToolResult{
-		Content: []mcp.Content{&mcp.TextContent{Text: sb.String()}},
-	}, nil, nil
+
+	return &mcp.CallToolResult{}, struct {
+		Summary string    `json:"summary"`
+		Data    []Finding `json:"data"`
+	}{
+		Summary: summary,
+		Data:    findings,
+	}, nil
 }
 
 // ApplyModernize performs automated code modernization using DST.
@@ -141,7 +261,12 @@ func Analyze(ctx context.Context, pkgPath string) ([]Finding, error) {
 	var findings []Finding
 	for _, pkg := range pkgs {
 		for _, file := range pkg.Syntax {
-			ast.Inspect(file, func(n ast.Node) bool {
+			insp := inspector.New([]*ast.File{file})
+			insp.Preorder([]ast.Node{
+				(*ast.RangeStmt)(nil), (*ast.FuncDecl)(nil),
+				(*ast.BlockStmt)(nil), (*ast.TypeSpec)(nil),
+				(*ast.StructType)(nil), (*ast.MapType)(nil),
+			}, func(n ast.Node) {
 				// 1. Slice Filtering Matcher
 				if f, ok := matchSliceFilter(pkg, n); ok {
 					findings = append(findings, f)
@@ -150,7 +275,26 @@ func Analyze(ctx context.Context, pkgPath string) ([]Finding, error) {
 				if f, ok := matchInterfaceAlignment(pkg, n); ok {
 					findings = append(findings, f)
 				}
-				return true
+				// 3. Pointer Ergonomics Matcher
+				if fs := matchPointerErgonomics(pkg, n); len(fs) > 0 {
+					findings = append(findings, fs...)
+				}
+				// 4. Errors AsType Matcher
+				if fs := matchErrorsAsType(pkg, n); len(fs) > 0 {
+					findings = append(findings, fs...)
+				}
+				// 5. Recursive Generics Matcher
+				if f, ok := matchRecursiveGenerics(pkg, n); ok {
+					findings = append(findings, f)
+				}
+				// 6. OmitZero Matcher
+				if fs := matchOmitZero(pkg, n); len(fs) > 0 {
+					findings = append(findings, fs...)
+				}
+				// 7. Green Tea GC Matcher
+				if f, ok := matchGreenTeaGCLocality(pkg, n); ok {
+					findings = append(findings, f)
+				}
 			})
 		}
 	}
@@ -261,4 +405,187 @@ func matchInterfaceAlignment(pkg *packages.Package, n ast.Node) (Finding, bool) 
 		Rationale:   rationale,
 		Replacement: replacement,
 	}, true
+}
+
+func matchPointerErgonomics(pkg *packages.Package, n ast.Node) []Finding {
+	bs, ok := n.(*ast.BlockStmt)
+	if !ok || len(bs.List) < 2 {
+		return nil
+	}
+
+	var findings []Finding
+	for i := 0; i < len(bs.List)-1; i++ {
+		stmt1, ok1 := bs.List[i].(*ast.AssignStmt)
+		stmt2, ok2 := bs.List[i+1].(*ast.AssignStmt)
+		if !ok1 || !ok2 {
+			continue
+		}
+
+		if len(stmt1.Lhs) == 1 && len(stmt2.Rhs) == 1 {
+			id1, okId1 := stmt1.Lhs[0].(*ast.Ident)
+			unOp, okUnOp := stmt2.Rhs[0].(*ast.UnaryExpr)
+
+			if okId1 && okUnOp && unOp.Op.String() == "&" {
+				if id2, okId2 := unOp.X.(*ast.Ident); okId2 && id1.Name == id2.Name {
+					pos := pkg.Fset.Position(stmt2.Pos())
+					findings = append(findings, Finding{
+						Category:    "Pointer Ergonomics",
+						File:        pos.Filename,
+						Line:        pos.Line,
+						Rationale:   "Intermediate variable created only to take its address. Go 1.26+ idioms prefer new(expr).",
+						Replacement: fmt.Sprintf("new(%s)", id1.Name),
+					})
+				}
+			}
+		}
+	}
+	return findings
+}
+
+func matchErrorsAsType(pkg *packages.Package, n ast.Node) []Finding {
+	bs, ok := n.(*ast.BlockStmt)
+	if !ok || len(bs.List) < 2 {
+		return nil
+	}
+
+	var findings []Finding
+	for i := 0; i < len(bs.List)-1; i++ {
+		declStmt, ok1 := bs.List[i].(*ast.DeclStmt)
+		ifStmt, ok2 := bs.List[i+1].(*ast.IfStmt)
+		if !ok1 || !ok2 {
+			continue
+		}
+
+		genDecl, okGd := declStmt.Decl.(*ast.GenDecl)
+		if !okGd || len(genDecl.Specs) != 1 {
+			continue
+		}
+
+		valSpec, okVs := genDecl.Specs[0].(*ast.ValueSpec)
+		if !okVs || len(valSpec.Names) != 1 {
+			continue
+		}
+		targetName := valSpec.Names[0].Name
+
+		// Check if ifStmt contains errors.As(err, &targetName)
+		var hasErrorsAs bool
+		ast.Inspect(ifStmt.Cond, func(nn ast.Node) bool {
+			if ce, ok := nn.(*ast.CallExpr); ok {
+				if se, ok := ce.Fun.(*ast.SelectorExpr); ok {
+					if id, ok := se.X.(*ast.Ident); ok && id.Name == "errors" && se.Sel.Name == "As" {
+						if len(ce.Args) == 2 {
+							if ue, ok := ce.Args[1].(*ast.UnaryExpr); ok && ue.Op.String() == "&" {
+								if tid, ok := ue.X.(*ast.Ident); ok && tid.Name == targetName {
+									hasErrorsAs = true
+								}
+							}
+						}
+					}
+				}
+			}
+			return true
+		})
+
+		if hasErrorsAs {
+			pos := pkg.Fset.Position(ifStmt.Pos())
+			findings = append(findings, Finding{
+				Category:    "Type-Safe Error Handling",
+				File:        pos.Filename,
+				Line:        pos.Line,
+				Rationale:   "Old errors.As pattern detected. Refactor to target, ok := errors.AsType[*T](err) for compile-time safety (Go 1.26).",
+				Replacement: "errors.AsType[*T](err)",
+			})
+		}
+	}
+	return findings
+}
+
+func matchRecursiveGenerics(pkg *packages.Package, n ast.Node) (Finding, bool) {
+	ts, ok := n.(*ast.TypeSpec)
+	if !ok || ts.TypeParams == nil {
+		return Finding{}, false
+	}
+
+	for _, field := range ts.TypeParams.List {
+		if ident, ok := field.Type.(*ast.Ident); ok {
+			if ident.Name == ts.Name.Name {
+				pos := pkg.Fset.Position(ts.Pos())
+				return Finding{
+					Category:    "Recursive Generic Architecture",
+					File:        pos.Filename,
+					Line:        pos.Line,
+					Rationale:   "Self-referential carrier parameters detected. Refactor to Go 1.26 recursive constraints (e.g., T Node[T]).",
+					Replacement: fmt.Sprintf("type %s[T %s[T]]", ts.Name.Name, ts.Name.Name),
+				}, true
+			}
+		}
+	}
+	return Finding{}, false
+}
+
+func matchOmitZero(pkg *packages.Package, n ast.Node) []Finding {
+	st, ok := n.(*ast.StructType)
+	if !ok || st.Fields == nil {
+		return nil
+	}
+
+	var findings []Finding
+	for _, field := range st.Fields.List {
+		if field.Tag != nil && strings.Contains(field.Tag.Value, "omitempty") {
+			// Fast proxy check for complex types that implement IsZero natively
+			// like time.Time or other structs via type checking approximation
+			isComplexType := false
+			if selExpr, ok := field.Type.(*ast.SelectorExpr); ok {
+				if id, ok := selExpr.X.(*ast.Ident); ok && id.Name == "time" && selExpr.Sel.Name == "Time" {
+					isComplexType = true
+				}
+			} else if _, ok := field.Type.(*ast.Ident); ok {
+				// We conservatively flag any omitempty ident as a potential omitzero candidate
+				isComplexType = true
+			}
+
+			if isComplexType {
+				pos := pkg.Fset.Position(field.Pos())
+				name := "<embedded>"
+				if len(field.Names) > 0 {
+					name = field.Names[0].Name
+				}
+				findings = append(findings, Finding{
+					Category:    "Serialization Efficiency",
+					File:        pos.Filename,
+					Line:        pos.Line,
+					Rationale:   fmt.Sprintf("Field '%s' relies on omitempty which evaluates zero structs improperly. Upgrade to Go 1.24+ 'omitzero'.", name),
+					Replacement: "omitzero",
+				})
+			}
+		}
+	}
+	return findings
+}
+
+func matchGreenTeaGCLocality(pkg *packages.Package, n ast.Node) (Finding, bool) {
+	mt, ok := n.(*ast.MapType)
+	if !ok {
+		return Finding{}, false
+	}
+
+	isAny := false
+	if id, ok := mt.Value.(*ast.Ident); ok && id.Name == "any" {
+		isAny = true
+	} else if iface, ok := mt.Value.(*ast.InterfaceType); ok && iface.Methods != nil && len(iface.Methods.List) == 0 {
+		isAny = true
+	}
+
+	if isAny {
+		pos := pkg.Fset.Position(mt.Pos())
+		return Finding{
+			Category:    "GC Locality (Green Tea Protocol)",
+			File:        pos.Filename,
+			Line:        pos.Line,
+			Rationale:   "Map using empty interface value detected. The Go 1.26 GC prefers tightly packed memory constraints. Refactor 'map[K]any' to typed slices or strict structures to aid Small Object marking.",
+			Replacement: "struct/slice wrapper",
+		}, true
+	}
+
+	return Finding{}, false
 }
