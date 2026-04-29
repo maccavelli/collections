@@ -12,7 +12,7 @@ import (
 
 // MCPClient wraps the official go-sdk Streamable HTTP transport for connecting
 // to the running mcp-server-recall instance. Used by the CLI harvest command
-// to call harvest_standards on the live server, ensuring proper write-lock
+// to call harvest on the live server, ensuring proper write-lock
 // coordination at runtime without stopping the server.
 type MCPClient struct {
 	URL           string
@@ -82,7 +82,7 @@ func (c *MCPClient) Start(ctx context.Context) {
 // CallDatabaseTool executes a remote tool on the recall server and returns
 // the structured or text result. Returns a descriptive error for every failure
 // path so callers can distinguish server crashes from parsing issues.
-// No timeout — harvest_standards can run indefinitely until context cancelled.
+// No timeout — harvest can run indefinitely until context cancelled.
 func (c *MCPClient) CallDatabaseTool(ctx context.Context, toolName string, arguments map[string]interface{}) (string, error) {
 	if !c.RecallEnabled() {
 		return "", fmt.Errorf("recall unavailable: circuit breaker active")
@@ -113,7 +113,7 @@ func (c *MCPClient) CallDatabaseTool(ctx context.Context, toolName string, argum
 		return "", fmt.Errorf("recall tool error: %s", extractErrorText(result))
 	}
 
-	// Priority: StructuredContent first (harvest_standards, metrics, etc.)
+	// Priority: StructuredContent first (harvest, metrics, etc.)
 	if result.StructuredContent != nil {
 		if sc, ok := result.StructuredContent.(map[string]interface{}); ok {
 			if data, exists := sc["data"]; exists {

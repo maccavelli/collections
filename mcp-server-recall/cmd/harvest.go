@@ -73,7 +73,7 @@ func runHarvestViaMCP(namespace, pkgPath string) error {
 		"target_path": pkgPath,
 	}
 
-	toolName := "harvest_" + namespace
+	toolName := "harvest"
 	res, err := mcpClient.CallDatabaseTool(ctx, toolName, toolArgs)
 	if err != nil {
 		return fmt.Errorf("%s: %w", namespace, err)

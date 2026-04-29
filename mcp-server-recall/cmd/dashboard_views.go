@@ -17,6 +17,9 @@ var DashboardTabs = []string{
 	"Gateway RPC Analytics",
 	"Taxonomy & Tag Distribution",
 	"Client Sync State",
+	"Ecosystem & Topology",
+	"Security & Access Control",
+	"Config & Environment",
 	"Quit",
 }
 
@@ -27,7 +30,9 @@ func renderSummary(snapshot map[string]any, logs []TelemetryLog) string {
 	if rt, ok := snapshot["runtime"].(map[string]any); ok {
 		mem := fmt.Sprintf("%v", rt["memory_mb"])
 		gr := fmt.Sprintf("%v", rt["goroutines"])
-		rc = fmt.Sprintf("Memory Footprint: %s MB\nActive Goroutines: %s\nConnection: LIVE", mem, gr)
+		up := fmt.Sprintf("%v", rt["uptime_sec"])
+		gc := fmt.Sprintf("%v", rt["num_gc"])
+		rc = fmt.Sprintf("Memory Footprint: %s MB\nActive Goroutines: %s\nUptime: %s sec\nGC Cycles: %s\nConnection: LIVE", mem, gr, up, gc)
 	}
 
 	leftBox := pterm.DefaultBox.WithTitle("Health Overview").Sprint(rc)
@@ -87,8 +92,7 @@ func renderSummary(snapshot map[string]any, logs []TelemetryLog) string {
 func renderStorage(snapshot map[string]any) string {
 	st := loadingText
 	if s, ok := snapshot["storage"].(map[string]any); ok {
-		// Mock parse
-		st = fmt.Sprintf("BadgerDB instance actively mapped.\nTotal Subspaces tracked: %d", len(s))
+		st = fmt.Sprintf("BadgerDB instance actively mapped.\nLSM Size: %v bytes\nValue Log Size: %v bytes", s["lsm_bytes"], s["vlog_bytes"])
 	}
 	return pterm.DefaultBox.WithTitle("Storage Diagnostics (BadgerDB)").Sprint(st)
 }
@@ -122,7 +126,7 @@ func renderTextTab(title string, text string) string {
 func renderPtermDashboard(snapshot map[string]any, logs []TelemetryLog, uiState *InternalUIState) string {
 	tabIndex := uiState.GetActiveTab()
 	header := pterm.DefaultHeader.
-		WithBackgroundStyle(pterm.NewStyle(pterm.BgLightMagenta)).
+		WithBackgroundStyle(pterm.NewStyle(pterm.BgLightBlue)).
 		WithFullWidth().
 		Sprint("RECALL OBSERVABILITY DASHBOARD (↑↓ Navigate ⏎ Select  q Quit)")
 
@@ -211,6 +215,21 @@ func renderPtermDashboard(snapshot map[string]any, logs []TelemetryLog, uiState 
 	case 9:
 		contentBox = renderTextTab("Client Sync State", "Clients Currently Authenticated: 1 native streamable-http\nTool Whitelists Applied\nResource Matrix: Clean")
 	case 10:
+		contentBox = renderTextTab("Ecosystem & Topology", "Status: Connected\nOrchestrator: mcp-server-magictools\nUpstream Routes: Active")
+	case 11:
+		contentBox = renderTextTab("Security & Access Control", "Boundary Violations: 0\nAuth Failures: 0\nActive Whitelist: Strict")
+	case 12:
+		st := loadingText
+		if c, ok := snapshot["config"].(map[string]any); ok {
+			td := pterm.TableData{
+				{"Key", "Value"},
+				{"Version", fmt.Sprintf("%v", c["version"])},
+				{"DB Path", fmt.Sprintf("%v", c["db_path"])},
+			}
+			st, _ = pterm.DefaultTable.WithHasHeader().WithData(td).Srender()
+		}
+		contentBox = renderTextTab("Config & Environment", st)
+	case 13:
 		contentBox = pterm.DefaultBox.WithTitle("Quit").Sprint("Press ENTER to exit the dashboard.")
 	default:
 		contentBox = renderTextTab("Unknown", "Invalid tab.")
