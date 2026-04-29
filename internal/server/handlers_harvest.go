@@ -14,35 +14,6 @@ import (
 	"mcp-server-recall/internal/memory"
 )
 
-// harvestTools returns the tool catalog additions for harvest plugins.
-func (rs *MCPRecallServer) harvestTools() []toolDef {
-	return []toolDef{
-		{
-			Name:        "harvest_standards",
-			Description: "Harvests a Go package for canonical representations, detects interfaces, and tracks API drift using go doc hashes. Scoped exclusively to the standards namespace. Saves output natively into BadgerDB and Bleve. THIS SHOULD ONLY BE RUN FROM THE CLI INTERFACE, NOT FROM THE IDE/AGENT!!! CLI Command: `mcp-server-recall harvest standards [package_path]`",
-			InputSchema: json.RawMessage(`{
-				"type": "object",
-				"properties": {
-					"package": { "type": "string", "description": "Go package path (e.g., github.com/blevesearch/bleve/v2) or a local directory." }
-				},
-				"required": ["package"]
-			}`),
-			Handler: rs.handleHarvestStandards,
-		},
-		{
-			Name:        "harvest_projects",
-			Description: "Harvests a local Go project for canonical representations, detects interfaces, and tracks API drift. Scoped exclusively to the projects namespace. Saves output natively into BadgerDB and Bleve. THIS SHOULD ONLY BE RUN FROM THE CLI INTERFACE, NOT FROM THE IDE/AGENT!!! CLI Command: `mcp-server-recall harvest projects [project_path]`",
-			InputSchema: json.RawMessage(`{
-				"type": "object",
-				"properties": {
-					"package": { "type": "string", "description": "Local project directory path to harvest." }
-				},
-				"required": ["package"]
-			}`),
-			Handler: rs.handleHarvestProjects,
-		},
-	}
-}
 
 func (rs *MCPRecallServer) handleHarvestStandards(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	return rs.handleHarvest(ctx, req, memory.DomainStandards)

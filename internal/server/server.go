@@ -139,7 +139,6 @@ func (rs *MCPRecallServer) RegisterSafeTools(srv *mcp.Server) {
 	}
 
 	catalog := rs.toolCatalog()
-	catalog = append(catalog, rs.harvestTools()...)
 
 	for _, td := range catalog {
 		if !safeMap[td.Name] {

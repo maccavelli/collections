@@ -35,7 +35,7 @@ Direct retrieval by key or semantic search across all saved memories.
 Structural ingestion of code files (.go) and documentation (.md) directly into the knowledge index using AST
 parsing.
 
-### `harvest_standards`
+### `harvest`
 
 High-fidelity Go documentation harvesting and interface implementation mapping.
 

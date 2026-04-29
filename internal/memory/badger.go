@@ -71,6 +71,15 @@ func (s *MemoryStore) GetTelemetry() (uint64, uint64, uint64, uint64) {
 	return s.cacheHits.Load(), s.cacheMisses.Load(), s.dbHits.Load(), s.dbMisses.Load()
 }
 
+// GetDBSize returns the BadgerDB LSM and Value log sizes.
+func (s *MemoryStore) GetDBSize() (lsm int64, vlog int64) {
+	if s.db == nil {
+		return 0, 0
+	}
+	return s.db.Size()
+}
+
+
 // GetNamespaceCounts securely exports continuous atomic capacities across mapped domains.
 func (s *MemoryStore) GetNamespaceCounts() (int64, int64, int64, int64) {
 	return s.memoriesCount.Load(), s.sessionsCount.Load(), s.standardsCount.Load(), s.projectsCount.Load()

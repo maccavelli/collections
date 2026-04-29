@@ -16,15 +16,27 @@ import (
 var (
 	ringMu    sync.Mutex
 	ringBytes []byte
+	StartTime = time.Now()
 )
 
 func StartTelemetryLoop(cfg *config.Config, store *memory.MemoryStore, logStream func() string) {
-	ticker := time.NewTicker(2 * time.Second)
+	ticker := time.NewTicker(10 * time.Second)
 	go func() {
 		for range ticker.C {
 			WriteSnapshot(cfg, store, logStream)
 		}
 	}()
+}
+
+func dirSize(path string) int64 {
+	var size int64
+	_ = filepath.Walk(path, func(_ string, info os.FileInfo, err error) error {
+		if err == nil && !info.IsDir() {
+			size += info.Size()
+		}
+		return err
+	})
+	return size
 }
 
 func WriteSnapshot(cfg *config.Config, store *memory.MemoryStore, logStream func() string) {
@@ -36,7 +48,13 @@ func WriteSnapshot(cfg *config.Config, store *memory.MemoryStore, logStream func
 	mmCount, sCount, stCount, pCount := store.GetNamespaceCounts()
 	docs, _ := store.DocCount()
 
-	stats := make(map[string]any)
+	lsm, vlog := store.GetDBSize()
+	bleveSize := dirSize(filepath.Join(cfg.GetDBPath(), "search.bleve"))
+
+	stats := map[string]any{
+		"lsm_bytes":  lsm,
+		"vlog_bytes": vlog,
+	}
 
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
@@ -44,9 +62,10 @@ func WriteSnapshot(cfg *config.Config, store *memory.MemoryStore, logStream func
 	snapshot := map[string]any{
 		"storage": stats,
 		"bleve": map[string]any{
-			"documents": docs,
-			"queues":    0,
-			"drift":     store.DriftAlerts(),
+			"documents":  docs,
+			"queues":     0,
+			"drift":      store.DriftAlerts(),
+			"index_size": bleveSize,
 		},
 		"taxonomy": map[string]any{
 			"memories":  mmCount,
@@ -62,7 +81,7 @@ func WriteSnapshot(cfg *config.Config, store *memory.MemoryStore, logStream func
 		},
 		"ast": map[string]any{
 			"disable_drift": cfg.HarvestDisableDrift(),
-			"exclude_dirs": len(cfg.ExcludeDirs()),
+			"exclude_dirs":  len(cfg.ExcludeDirs()),
 		},
 		"config": map[string]any{
 			"db_path": cfg.GetDBPath(),
@@ -71,6 +90,8 @@ func WriteSnapshot(cfg *config.Config, store *memory.MemoryStore, logStream func
 		"runtime": map[string]any{
 			"memory_mb":  m.Alloc / 1024 / 1024,
 			"goroutines": runtime.NumGoroutine(),
+			"uptime_sec": int64(time.Since(StartTime).Seconds()),
+			"num_gc":     m.NumGC,
 		},
 	}
 
@@ -87,3 +108,4 @@ func WriteSnapshot(cfg *config.Config, store *memory.MemoryStore, logStream func
 	_ = os.WriteFile(tmpPath, payload, 0644)
 	_ = os.Rename(tmpPath, path)
 }
+

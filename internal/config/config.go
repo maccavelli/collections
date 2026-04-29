@@ -122,8 +122,7 @@ func New(version string) *Config {
 		"search",
 		"get",
 		"list",
-		"harvest_standards",
-		"harvest_projects",
+		"harvest",
 		"delete",
 	})
 
