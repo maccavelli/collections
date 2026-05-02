@@ -61,7 +61,7 @@ func (i *Inspector) AnalyzeGenericsDirectory(
 	defer cancel()
 
 	// Start worker pool.
-	for w := 0; w < numWorkers; w++ {
+	for range numWorkers {
 		wg.Add(1)
 		go func(c context.Context) {
 			defer wg.Done()

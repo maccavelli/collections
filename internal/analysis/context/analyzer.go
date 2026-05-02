@@ -29,7 +29,7 @@ func (t *Tool) Name() string {
 func (t *Tool) Register(s util.SessionProvider) {
 	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
-		Description: "[ROLE: ANALYZER] CONTEXT PROPAGATION AUDITOR: Audits call chains to ensure robust propagation, identifying missing ctxs where parent contexts are dropped. Detects broken async patterns and context forwarding in goroutine launches. Produces context propagation violation list. [Routing Tags: context, context.Context, propagate, async-patterns, timeouts, cancel-propagation]",
+		Description: "[ROLE: ANALYZER] CONTEXT PROPAGATION AUDITOR: Audits call chains to ensure robust propagation, identifying missing ctxs where parent contexts are dropped. Detects broken async patterns and context forwarding in goroutine launches. Produces context propagation violation list. [TRIGGERS: brainstorm:critique_design] [Routing Tags: context, context.Context, propagate, async-patterns, timeouts, cancel-propagation]",
 	}, t.Handle)
 }
 
@@ -82,7 +82,7 @@ func (t *Tool) Handle(ctx context.Context, req *mcp.CallToolRequest, input Conte
 		}
 
 		if recallAvailable {
-			ctxStds := t.Engine.EnsureRecallCache(ctx, session, "context_propagation", "search", map[string]interface{}{"namespace": "ecosystem",
+			ctxStds := t.Engine.EnsureRecallCache(ctx, session, "context_propagation", "search", map[string]any{"namespace": "ecosystem",
 				"query": "Go context propagation standards, cancellation patterns, timeout policy conventions, and distributed tracing standards for " + input.Target,
 				"limit": 15,
 			})

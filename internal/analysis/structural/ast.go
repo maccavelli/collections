@@ -194,7 +194,7 @@ func (i *Inspector) AnalyzeDirectory(
 	defer cancel()
 
 	// Start worker pool.
-	for w := 0; w < numWorkers; w++ {
+	for range numWorkers {
 		wg.Add(1)
 		go func(c context.Context) {
 			defer wg.Done()
@@ -630,10 +630,10 @@ func (i *Inspector) isPotentialSecret(s string) bool {
 	if strings.HasPrefix(s, "sk_") {
 		return true
 	}
-	if idx := strings.Index(s, "_sk_"); idx >= 0 {
+	if found := strings.Contains(s, "_sk_"); found {
 		return true
 	}
-	if idx := strings.Index(s, "-sk_"); idx >= 0 {
+	if found := strings.Contains(s, "-sk_"); found {
 		return true
 	}
 

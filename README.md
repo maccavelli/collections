@@ -1,116 +1,102 @@
-# 🛠️ Go Refactor MCP Server
+# 🐹 MagicGo-Refactor Sub-Server
 
-A comprehensive, production-grade Model Context Protocol (MCP) server for advanced Go source code refactoring,
-static analysis, and structural optimization.
+A high-performance Model Context Protocol (MCP) sub-server for automated Go codebase analysis, refactoring, and standards enforcement.
 
 ## 🚀 Overview
 
-The Go Refactor server provides deep structural analysis and automated transformation tools designed to bring legacy
-Go codebases into alignment with modern standards. It moves beyond simple syntax checking to provide architectural
-insights, safety audits, and performance tuning.
+`mcp-server-go-refactor` is the primary intelligence engine for Go development in the MagicTools suite. It understands Go AST (Abstract Syntax Tree), complexity metrics, and idiomatic patterns to provide automated code transformations.
 
 ### 📋 Core Pillars
 
-1. **Structural Analysis**: Deep inspection of interfaces, call graphs, context propagation, and cyclic
-   dependencies.
-2. **Resource Optimization**: Automated struct alignment analysis to reduce heap usage and improve performance.
-3. **Modernization**: Intelligent conversion of legacy patterns to modern Go idiomatics (Go 1.21+).
-4. **Safety & Security**: Active detection of dynamic SQL string construction and other vulnerable patterns.
+1.  **AST-Safe Mutations**: Applies code changes using structured AST transformations instead of brittle regex.
+2.  **Complexity Analysis**: Identifies deeply nested logic, long functions, and cognitive debt.
+3.  **Modernization**: Automatically upgrades code to use Go 1.26.2+ idioms.
+4.  **Integrated Toolchain**: Provisions its own isolated Go environment to ensure consistent results across platforms.
 
 ---
 
-## 🛠️ Tools (The 14-Stage Master Pipeline)
+## 🛠️ Usage & Functionality
 
-The server follows a mandatory sequence for comprehensive project refactoring:
+### Specialized Tools
 
-### Phase 1: Preparation
+*   **`analyze_complexity`**: Scans a package and identifies functions exceeding complexity thresholds.
+*   **`suggest_fixes`**: Generates idiomatic Go 1.26.2+ refactoring suggestions for a specific file.
+*   **`apply_vetted_edit`**: Safely applies a structural code change using AST-aware logic.
+*   **`generate_implementation_plan`**: (Internal) Used by the orchestrator to plan refactoring DAGs.
 
-- `go_complexity_analyzer`: Analyze project size and "God functions".
-- `go_dead_code_pruner`: Clean up dead code and unreferenced variables.
-- `go_package_cycler`: Check for cyclic dependencies blocking compilation.
-
-### Phase 2: Structural Refactoring
-
-- `go_interface_discovery`: Identify shared architectural patterns.
-- `find_interface_implementations`: Map abstractions and refactoring blast radius.
-- `go_interface_tool`: Extract interfaces and finalize architecture.
-
-### Phase 3: Reliability & Performance
-
-- `go_context_analyzer`: Ensure correct context propagation.
-- `go_struct_layout`: Reorder struct fields for optimal memory alignment.
-- `go_tag_manager`: Standardize JSON/YAML struct tags.
-- `go_modernizer`: Upgrade to optimized standard library features.
-
-### Phase 4: Final Audits
-
-- `go_sql_injection_guard`: Perform dynamic SQL vulnerability scanning.
-- `go_doc_generator`: Add or fix required godocs.
-- `go_dependency_impact`: Map transitive impact of new dependencies.
-- `go_test_coverage_tracer`: Run tests and verify the entire refactor.
+### Orchestration with MagicTools (Recommended)
+This server is designed to be the primary worker for `magictools:execute_pipeline`.
+```json
+{
+  "name": "magictools:execute_pipeline",
+  "arguments": {
+    "intent": "refactor the cmd package for better testability",
+    "target": "/home/user/project"
+  }
+}
+```
 
 ---
 
-## ⚙️ Installation
+## ⚙️ Configuration
 
 ### 1. Build the Binary
-
 ```bash
-go build -o dist/mcp-server-go-refactor main.go
+make build
 ```
 
-### 2. Configure for IDEs
+### 2. Standalone Environment Variables
+| Variable | Description |
+| :--- | :--- |
+| `MCP_API_URL` | Upstream context servers (e.g., `recall`). |
+| `GOMEMLIMIT` | Resource boundary (default: 1024MiB). |
 
-#### **Antigravity**
+---
 
-```yaml
-mcpServers:
-  go-refactor:
-    command: "/absolute/path/to/dist/mcp-server-go-refactor"
-```
+## 🖥️ IDE Configuration Examples (Standalone)
 
-#### **VS Code (MCP Extension / Cline)**
-
+### 🌌 Antigravity
+**Path:** `~/.gemini/mcp_config.json`
 ```json
 {
   "mcpServers": {
     "go-refactor": {
-      "command": "/absolute/path/to/dist/mcp-server-go-refactor",
-      "args": [],
-      "env": {
-        "PATH": "/usr/local/go/bin:/usr/local/bin:/usr/bin"
-      }
+      "command": "/absolute/path/to/mcp-server-go-refactor"
     }
   }
 }
 ```
 
-#### **Cursor IDE**
+### 💻 VSCode (Roo Code / Cline)
+**Paths:**
+*   **Linux/macOS**: `~/Library/Application Support/Code/User/globalStorage/rooveterinaryinc.roo-cline/settings/cline_mcp_settings.json`
+*   **Windows**: `%APPDATA%\Code\User\globalStorage\rooveterinaryinc.roo-cline\settings\cline_mcp_settings.json`
 
-1. **Settings** -> **Features** -> **MCP**.
-2. **+ Add New MCP Server**.
-3. Name: `Go Refactor`
-4. Type: `stdio`
-5. Command: `/absolute/path/to/dist/mcp-server-go-refactor`
+```json
+{
+  "mcpServers": {
+    "go-refactor": {
+      "command": "C:/path/to/mcp-server-go-refactor.exe"
+    }
+  }
+}
+```
 
----
+### 🤖 Claude Desktop
+**Paths:**
+*   **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+*   **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
 
-## 📖 Use Cases
-
-- **Legacy Modernization**: Use `go_modernizer` to revitalize older internal libraries.
-- **CI/CD Guardrails**: Integrate `go_sql_injection_guard` into automated quality gates.
-- **Performance Tuning**: Minimize memory overhead using `go_struct_layout`.
-
----
-
-## 💻 CLI Functionality
-
-Check version:
-
-```bash
-./mcp-server-go-refactor -version
+```json
+{
+  "mcpServers": {
+    "go-refactor": {
+      "command": "/usr/local/bin/mcp-server-go-refactor"
+    }
+  }
+}
 ```
 
 ---
 
-*Built with Go for professional refactoring at scale.*
+*Part of the MagicTools Intelligence Suite. Built with Go.*

@@ -32,32 +32,6 @@ func (t *Tool) Register(s util.SessionProvider) {
 	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
 		Description: "[ROLE: MUTATOR] STRUCT TAG MANAGER: Fixes structural tags (json, yaml) guaranteeing formatted properties to ensure standardized casing across all struct definitions. Validates syntax and enforces naming conventions. Requires struct name from prior discovery. Produces tag modification plan or applies rewritten tags. [Routing Tags: struct-tags, json-tags, yaml-tags, format-struct, fix-casing]",
-		InputSchema: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"pkg": map[string]any{
-					"type":        "string",
-					"description": "The package path",
-				},
-				"structName": map[string]any{
-					"type":        "string",
-					"description": "The name of the struct",
-				},
-				"caseFormat": map[string]any{
-					"type":        "string",
-					"description": "Target case format (e.g., camel, snake). Defaults to snake.",
-				},
-				"targetTag": map[string]any{
-					"type":        "string",
-					"description": "The tag key to transform (e.g., json, yaml). Defaults to json.",
-				},
-				"rewrite": map[string]any{
-					"type":        "boolean",
-					"description": "If true, automatically updates the source code (comment-safe).",
-				},
-			},
-			"required": []string{"pkg", "structName"},
-		},
 	}, t.Handle)
 }
 
@@ -143,7 +117,7 @@ func (t *Tool) Handle(ctx context.Context, req *mcp.CallToolRequest, input TagIn
 		}
 
 		if recallAvailable {
-			tagStds := t.Engine.EnsureRecallCache(ctx, session, "tag_conventions", "search", map[string]interface{}{"namespace": "ecosystem",
+			tagStds := t.Engine.EnsureRecallCache(ctx, session, "tag_conventions", "search", map[string]any{"namespace": "ecosystem",
 				"query": "Go struct tag conventions, JSON serialization standards, YAML tag patterns, and validation tag standards for " + input.Target,
 				"limit": 10,
 			})
@@ -328,17 +302,18 @@ func formatCase(s string, format string) string {
 		if len(words) == 0 {
 			return ""
 		}
-		res := strings.ToLower(words[0])
+		var res strings.Builder
+		res.WriteString(strings.ToLower(words[0]))
 		for i := 1; i < len(words); i++ {
-			res += strings.Title(words[i])
+			res.WriteString(strings.Title(words[i]))
 		}
-		return res
+		return res.String()
 	case "pascal":
-		res := ""
+		var res strings.Builder
 		for _, w := range words {
-			res += strings.Title(w)
+			res.WriteString(strings.Title(w))
 		}
-		return res
+		return res.String()
 	case "kebab":
 		return strings.Join(words, "-")
 	default:

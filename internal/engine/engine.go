@@ -140,7 +140,7 @@ func (e *Engine) SaveSession(session *Session) {
 
 // EnsureRecallCache coordinates lazy-fetching of role-specific data from Recall,
 // ensuring only one inflight request per session/role.
-func (e *Engine) EnsureRecallCache(ctx context.Context, session *Session, role string, toolName string, arguments map[string]interface{}) string {
+func (e *Engine) EnsureRecallCache(ctx context.Context, session *Session, role string, toolName string, arguments map[string]any) string {
 	cacheKey := "recall_cache_" + role
 	syncKey := "recall_sync_" + role
 
@@ -324,7 +324,7 @@ func (e *Engine) PublishSessionToRecall(ctx context.Context, sessionID, projectI
 	if nonce == "" {
 		nonce = fmt.Sprintf("%d", time.Now().UnixNano())
 	}
-	args := map[string]interface{}{
+	args := map[string]any{
 		"server_id":     "gorefactor",
 		"project_id":    projectID,
 		"outcome":       outcome,
@@ -353,7 +353,7 @@ func (e *Engine) LoadCrossSessionFromRecall(ctx context.Context, peerServer, pro
 		return ""
 	}
 
-	result := client.CallDatabaseTool(ctx, "list", map[string]interface{}{"namespace": "sessions",
+	result := client.CallDatabaseTool(ctx, "list", map[string]any{"namespace": "sessions",
 		"server_id":        peerServer,
 		"project_id":       projectID,
 		"limit":            1,

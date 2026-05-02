@@ -1,3 +1,4 @@
+MOD_VERSION := 1.26.2
 BINARY_NAME=mcp-server-go-refactor
 DIST_DIR=dist
 GIT_VERSION=$(shell git describe --tags --always --dirty 2>/dev/null | sed 's/^v//')

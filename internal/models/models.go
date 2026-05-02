@@ -45,10 +45,11 @@ func (s *Session) GetInt(key string) (int, bool) {
 // It ensures strict correlation via SessionID, eliminates fragmentation in targeting,
 // and safely routes edge-case parameters via the Flags map.
 type UniversalPipelineInput struct {
-	SessionID string         `json:"session_id" jsonschema:"REQUIRED: CSSA backend correlation ID and HFSC tracking ID."`
-	Target    string         `json:"target" jsonschema:"REQUIRED: Absolute path, package, or workspace URI to analyze."`
-	Context   string         `json:"context,omitempty" jsonschema:"Optional: Contextual text required for this specific stage."`
-	Flags     map[string]any `json:"flags,omitempty" jsonschema:"Optional: Key-value map for stage-specific execution flags."`
+	SessionID    string         `json:"session_id" jsonschema:"REQUIRED: CSSA backend correlation ID and HFSC tracking ID."`
+	Target       string         `json:"target" jsonschema:"REQUIRED: Absolute path, package, or workspace URI to analyze."`
+	ArtifactPath string         `json:"artifact_path,omitempty" jsonschema:"Optional OS absolute path to route the generated output payload, bypassing JSON-RPC overhead."`
+	Context      string         `json:"context,omitempty" jsonschema:"Optional: Contextual text required for this specific stage."`
+	Flags        map[string]any `json:"flags,omitempty" jsonschema:"Optional: Key-value map for stage-specific execution flags."`
 }
 
 // UniversalPipelineOutput defines the standard response schema for all CSSA-aware analytical tools.

@@ -11,6 +11,7 @@ import (
 	"mcp-server-go-refactor/internal/engine"
 	"mcp-server-go-refactor/internal/models"
 	"mcp-server-go-refactor/internal/registry"
+	"mcp-server-go-refactor/internal/staging"
 	"mcp-server-go-refactor/internal/util"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -29,7 +30,7 @@ func (t *Tool) Name() string {
 func (t *Tool) Register(s util.SessionProvider) {
 	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
-		Description: "[ROLE: PLANNER] [PHASE: PROPOSAL] CODE CHANGE PROPOSER: Aggregates ALL prior analysis diagnostics (complexity, dead code, coverage, context, security, modernization) and recall standards into prioritized refactoring fix recommendations. Run AFTER all EARLY analysis tools. [REQUIRES: brainstorm:aporia_engine] [TRIGGERS: go-refactor:go_test_validation] [Routing Tags: suggest, fixes, propose, refactor-plan, synthesize, resolve]",
+		Description: "[ROLE: PLANNER] [PHASE: PROPOSAL] CODE CHANGE PROPOSER: Aggregates ALL prior analysis diagnostics (complexity, dead code, coverage, context, security, modernization) and recall standards into prioritized refactoring fix recommendations. Essential for evaluating and refactoring Go idioms, resolving technical debt, and modernizing compliance. [REQUIRES: brainstorm:aporia_engine, brainstorm:brainstorm_ast_probe] [TRIGGERS: go-refactor:go_test_validation] Keywords: suggest, fixes, propose, refactor, evaluate, go, idioms, compliance, synthesize, resolve",
 	}, t.Handle)
 }
 
@@ -93,7 +94,7 @@ func (t *Tool) Handle(ctx context.Context, _ *mcp.CallToolRequest, input Suggest
 		// Recall-based best-practice query (gated).
 		var bestPractices string
 		if recallAvailable {
-			bestPractices = t.Engine.EnsureRecallCache(ctx, session, "fix_standards", "search", map[string]interface{}{"namespace": "ecosystem",
+			bestPractices = t.Engine.EnsureRecallCache(ctx, session, "fix_standards", "search", map[string]any{"namespace": "ecosystem",
 				"query": "Go refactoring best practices, fix prioritization, and risk mitigation standards for " + input.Target,
 				"limit": 15,
 			})
@@ -144,17 +145,28 @@ func (t *Tool) Handle(ctx context.Context, _ *mcp.CallToolRequest, input Suggest
 		}
 	}
 
+	var stagingURI string
+	if t.Engine != nil && t.Engine.DB != nil {
+		payload := map[string]string{
+			"proposal":     proposalText,
+			"golden_truth": goldenTruth,
+		}
+		if uri, err := staging.SavePayload(t.Engine.DB, payload); err == nil {
+			stagingURI = uri
+		} else {
+			slog.Error("[suggest_fixes] failed to stage payload", "error", err)
+		}
+	}
+
 	return &mcp.CallToolResult{}, struct {
 		Summary     string   `json:"summary"`
-		Proposal    string   `json:"proposal"`
+		StagingURI  string   `json:"staging_uri,omitempty"`
 		Pkg         string   `json:"pkg"`
 		Diagnostics []string `json:"diagnostics"`
-		GoldenTruth string   `json:"golden_truth"`
 	}{
 		Summary:     fmt.Sprintf("Synthesized proposal for %s relying on %d diagnostics.", input.Target, len(diagnostics)),
-		Proposal:    proposalText,
+		StagingURI:  stagingURI,
 		Pkg:         input.Target,
 		Diagnostics: diagnostics,
-		GoldenTruth: goldenTruth,
 	}, nil
 }

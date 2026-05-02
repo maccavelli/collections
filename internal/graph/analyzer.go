@@ -70,7 +70,7 @@ func (t *Tool) Handle(ctx context.Context, req *mcp.CallToolRequest, input Cycle
 		}
 
 		if recallAvailable {
-			cycleStds := t.Engine.EnsureRecallCache(ctx, session, "import_cycles", "search", map[string]interface{}{"namespace": "ecosystem",
+			cycleStds := t.Engine.EnsureRecallCache(ctx, session, "import_cycles", "search", map[string]any{"namespace": "ecosystem",
 				"query": "Go import cycle resolution standards, dependency inversion patterns, and package structure conventions for " + input.Target,
 				"limit": 10,
 			})

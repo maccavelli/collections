@@ -41,7 +41,7 @@ func TestInspector_CheckFuncSize(t *testing.T) {
 
 	var sb strings.Builder
 	sb.WriteString("package test\nfunc BigFunc() {\n")
-	for j := 0; j < 110; j++ {
+	for range 110 {
 		sb.WriteString("\t// dummy\n")
 	}
 	sb.WriteString("}\n")

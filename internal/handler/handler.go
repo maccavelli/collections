@@ -3,6 +3,7 @@ package handler
 import (
 	contextanalysis "mcp-server-go-refactor/internal/analysis/context"
 	interfaceanalysis "mcp-server-go-refactor/internal/analysis/interface"
+	memoryanalysis "mcp-server-go-refactor/internal/analysis/memory"
 	"mcp-server-go-refactor/internal/astsuite"
 	"mcp-server-go-refactor/internal/astutil"
 	"mcp-server-go-refactor/internal/coverage"
@@ -29,6 +30,7 @@ func RegisterAllTools(eng *engine.Engine, buffer *system.LogBuffer) {
 	tags.Register(eng)
 	contextanalysis.Register(eng)
 	interfaceanalysis.Register(eng)
+	memoryanalysis.Register(eng)
 	suggestfixes.Register(eng)
 	pipeline.Register(eng)
 	system.Register(buffer)

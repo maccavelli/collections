@@ -18,6 +18,7 @@ import (
 	"mcp-server-go-refactor/internal/engine"
 	"mcp-server-go-refactor/internal/models"
 	"mcp-server-go-refactor/internal/registry"
+	"mcp-server-go-refactor/internal/staging"
 	"mcp-server-go-refactor/internal/state"
 	"mcp-server-go-refactor/internal/util"
 
@@ -42,29 +43,7 @@ func (t *GeneratePlanTool) Name() string {
 func (t *GeneratePlanTool) Register(s util.SessionProvider) {
 	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
-		Description: "[ROLE: PLANNER] IMPLEMENTATION PLAN GENERATOR: Creates, writes, and synthesizes a structured sequence of implementation tasks from cumulative analysis diagnostics (complexity, dead code, interface discovery) and recall code standards. Aggregates ALL prior tool diagnostics. [REQUIRES: brainstorm:aporia_engine] [TRIGGERS: Subsequent codebase mutation vectors] [Routing Tags: plan-tasks, sequences, generate-steps, aggregator]",
-		InputSchema: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"session_id": map[string]any{
-					"type":        "string",
-					"description": "CSSA backend storage pipeline correlation ID.",
-				},
-				"target": map[string]any{
-					"type":        "string",
-					"description": "Absolute path to the project root or package.",
-				},
-				"context": map[string]any{
-					"type":        "string",
-					"description": "Optional: requirements, feature description, or constraints.",
-				},
-				"artifact_path": map[string]any{
-					"type":        "string",
-					"description": "Optional OS absolute path to route the generated output payload, bypassing JSON-RPC overhead.",
-				},
-			},
-			"required": []string{"session_id", "target"},
-		},
+		Description: "[ROLE: PLANNER] IMPLEMENTATION PLAN GENERATOR: Creates, writes, and synthesizes a structured sequence of implementation tasks from cumulative analysis diagnostics (complexity, dead code, interface discovery) and recall code standards. Evaluates requirements to refactor Go code, ensuring modern idioms and compliance. Supports Socratic Human-In-The-Loop pausing. [REQUIRES: brainstorm:aporia_engine, brainstorm:brainstorm_ast_probe] [TRIGGERS: Subsequent codebase mutation vectors] Keywords: plan, tasks, sequences, generate, aggregator, evaluate, refactor, go, idioms, compliance, pause",
 	}, t.Handle)
 }
 
@@ -100,7 +79,7 @@ func (t *GeneratePlanTool) Handle(ctx context.Context, _ *mcp.CallToolRequest, i
 	// Fetch comprehensive standards from recall.
 	var standards, history string
 	if recallAvailable {
-		standards = t.Engine.EnsureRecallCache(ctx, session, "generate_plan", "search", map[string]interface{}{"namespace": "ecosystem",
+		standards = t.Engine.EnsureRecallCache(ctx, session, "generate_plan", "search", map[string]any{"namespace": "ecosystem",
 			"query": "implementation patterns Go best practices code quality guidelines",
 			"limit": 15,
 		})
@@ -174,10 +153,19 @@ func (t *GeneratePlanTool) Handle(ctx context.Context, _ *mcp.CallToolRequest, i
 		})
 	}
 
+	var stagingURI string
+	if t.Engine != nil && t.Engine.DB != nil {
+		if uri, err := staging.SavePayload(t.Engine.DB, planText); err == nil {
+			stagingURI = uri
+		} else {
+			slog.Error("[generate_plan] failed to stage payload", "error", err)
+		}
+	}
+
 	resp := struct {
-		Status          string `json:"status"`
-		MarkdownPayload string `json:"markdown_payload"`
-		Metadata        struct {
+		Status     string `json:"status"`
+		StagingURI string `json:"staging_uri,omitempty"`
+		Metadata   struct {
 			SessionID   string `json:"session_id"`
 			Mode        string `json:"mode"`
 			Verdict     string `json:"verdict"`
@@ -188,8 +176,8 @@ func (t *GeneratePlanTool) Handle(ctx context.Context, _ *mcp.CallToolRequest, i
 			Diagnostics int    `json:"diagnostics_count"`
 		} `json:"metadata"`
 	}{
-		Status:          "success",
-		MarkdownPayload: planText,
+		Status:     "success",
+		StagingURI: stagingURI,
 		Metadata: struct {
 			SessionID   string `json:"session_id"`
 			Mode        string `json:"mode"`
@@ -205,7 +193,7 @@ func (t *GeneratePlanTool) Handle(ctx context.Context, _ *mcp.CallToolRequest, i
 			Verdict:     "SUCCESS",
 			ServerID:    "go-refactor",
 			GeneratedAt: time.Now().UTC().Format(time.RFC3339),
-			Summary:     fmt.Sprintf("Implementation plan generated for %s", input.Target),
+			Summary:     fmt.Sprintf("Implementation plan generated for %s (Diagnostics: %d)", input.Target, len(diagnostics)),
 			PlanHash:    planHash,
 			Diagnostics: len(diagnostics),
 		},
@@ -239,40 +227,17 @@ func (t *ApplyVettedEditTool) Register(s util.SessionProvider) {
 	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
 		Description: "[ROLE: MUTATOR] FILESYSTEM EDIT GATEKEEPER: Applies and saves vetted code changes to disk files with atomic storage guarantees. Requires a plan_hash for integrity verification, writes through an atomic .tmp rename pattern. [REQUIRES: Full dialectical thesis logic synthesis] [TRIGGERS: Post-mutation structural stability validation] [Routing Tags: write-file, mutator, disk-save, atomic-commit, vetted-edit]",
-		InputSchema: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"session_id": map[string]any{
-					"type":        "string",
-					"description": "CSSA backend storage pipeline correlation ID.",
-				},
-				"target": map[string]any{
-					"type":        "string",
-					"description": "Absolute path to the file to write.",
-				},
-				"context": map[string]any{
-					"type":        "string",
-					"description": "The vetted Go source code to write.",
-				},
-				"flags": map[string]any{
-					"type":        "object",
-					"description": "Must include plan_hash (string) for integrity verification.",
-					"properties": map[string]any{
-						"plan_hash": map[string]any{
-							"type":        "string",
-							"description": "SHA-256 hash of the approved implementation plan.",
-						},
-					},
-				},
-			},
-			"required": []string{"session_id", "target", "context"},
-		},
 	}, t.Handle)
 }
 
 type ApplyEditInput struct {
 	models.UniversalPipelineInput
 }
+
+// maxPayloadBytes is the maximum source code payload size accepted by apply_vetted_edit.
+// Payloads exceeding this limit are rejected to prevent memory exhaustion during
+// SHA-256 hashing, gofmt formatting, and AST parsing operations.
+const maxPayloadBytes = 2 << 20 // 2MB
 
 func (t *ApplyVettedEditTool) Handle(ctx context.Context, _ *mcp.CallToolRequest, input ApplyEditInput) (*mcp.CallToolResult, any, error) {
 	if input.Context == "" {
@@ -281,15 +246,40 @@ func (t *ApplyVettedEditTool) Handle(ctx context.Context, _ *mcp.CallToolRequest
 		return res, nil, nil
 	}
 
+	if staging.IsStagingURI(input.Context) {
+		if t.Engine == nil || t.Engine.DB == nil {
+			res := &mcp.CallToolResult{}
+			res.SetError(fmt.Errorf("staging uri provided but local DB is uninitialized"))
+			return res, nil, nil
+		}
+		var payload string
+		if err := staging.LoadPayload(t.Engine.DB, input.Context, &payload); err != nil {
+			slog.Error("[apply_vetted_edit] failed to load staging payload", "uri", input.Context, "error", err)
+			res := &mcp.CallToolResult{}
+			res.SetError(fmt.Errorf("failed to load staged payload: %w", err))
+			return res, nil, nil
+		}
+		input.Context = payload
+	}
+
 	if input.Target == "" {
 		res := &mcp.CallToolResult{}
 		res.SetError(fmt.Errorf("target (file path) is required"))
 		return res, nil, nil
 	}
 
-	// Extract plan_hash from flags.
-	planHash, _ := input.Flags["plan_hash"].(string)
-	if planHash == "" {
+	// Payload size guard: reject oversized payloads before any processing.
+	if len(input.Context) > maxPayloadBytes {
+		slog.Error("[apply_vetted_edit] REJECTED: payload exceeds maximum size",
+			"size", len(input.Context), "max", maxPayloadBytes, "target", input.Target)
+		res := &mcp.CallToolResult{}
+		res.SetError(fmt.Errorf("REJECTED: payload size %d exceeds maximum %d bytes", len(input.Context), maxPayloadBytes))
+		return res, nil, nil
+	}
+
+	// Extract plan_hash from flags with safe type assertion.
+	planHash, ok := input.Flags["plan_hash"].(string)
+	if !ok || planHash == "" {
 		res := &mcp.CallToolResult{}
 		res.SetError(fmt.Errorf("flags.plan_hash is required for integrity verification"))
 		return res, nil, nil
@@ -303,7 +293,7 @@ func (t *ApplyVettedEditTool) Handle(ctx context.Context, _ *mcp.CallToolRequest
 	}
 
 	if recallAvailable {
-		approvalCheck := t.Engine.ExternalClient.CallDatabaseTool(ctx, "list", map[string]interface{}{"namespace": "sessions",
+		approvalCheck := t.Engine.ExternalClient.CallDatabaseTool(ctx, "list", map[string]any{"namespace": "sessions",
 			"server_id":        "brainstorm",
 			"outcome":          "approved",
 			"truncate_content": true,
@@ -312,8 +302,11 @@ func (t *ApplyVettedEditTool) Handle(ctx context.Context, _ *mcp.CallToolRequest
 		if approvalCheck == "" {
 			slog.Warn("[apply_vetted_edit] recall unreachable for approval check, proceeding with caution")
 		} else if !strings.Contains(approvalCheck, planHash) {
-			slog.Warn("[apply_vetted_edit] plan_hash not found in approved sessions, proceeding with warning",
+			slog.Error("[apply_vetted_edit] REJECTED: plan_hash not found in approved sessions",
 				"plan_hash", planHash[:16]+"...")
+			res := &mcp.CallToolResult{}
+			res.SetError(fmt.Errorf("REJECTED: plan_hash %s... not found in approved recall sessions", planHash[:16]))
+			return res, nil, nil
 		}
 	}
 
@@ -322,7 +315,7 @@ func (t *ApplyVettedEditTool) Handle(ctx context.Context, _ *mcp.CallToolRequest
 	if _, err := parser.ParseFile(fset, "", input.Context, parser.ParseComments); err != nil {
 		slog.Error("[apply_vetted_edit] PRE-FLIGHT REJECTED: Malformed AST payload (possible proxy unescaping corruption)", "error", err)
 		res := &mcp.CallToolResult{}
-		res.SetError(fmt.Errorf("PRE-FLIGHT REJECTED: payload contains malformed AST structure: %v", err))
+		res.SetError(fmt.Errorf("PRE-FLIGHT REJECTED: payload contains malformed AST structure: %w", err))
 		return res, nil, nil
 	}
 
@@ -364,25 +357,29 @@ func (t *ApplyVettedEditTool) Handle(ctx context.Context, _ *mcp.CallToolRequest
 		}
 	}
 
-	// Validate: try to gofmt the source before writing.
+	// Validate: gofmt the source before writing. Failure is a HARD ABORT —
+	// malformed Go source is never written to disk.
 	formatted, fmtErr := format.Source([]byte(input.Context))
 	if fmtErr != nil {
-		slog.Warn("[apply_vetted_edit] gofmt validation failed, writing raw source", "error", fmtErr)
-		formatted = []byte(input.Context)
+		slog.Error("[apply_vetted_edit] REJECTED: gofmt validation failed — refusing to write malformed Go",
+			"error", fmtErr, "target", input.Target)
+		res := &mcp.CallToolResult{}
+		res.SetError(fmt.Errorf("REJECTED: source code fails gofmt validation: %w", fmtErr))
+		return res, nil, nil
 	}
 
 	// Atomic write: write to .tmp, then rename.
 	dir := filepath.Dir(input.Target)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o750); err != nil {
 		res := &mcp.CallToolResult{}
-		res.SetError(fmt.Errorf("failed to create directory %s: %v", dir, err))
+		res.SetError(fmt.Errorf("failed to create directory %s: %w", dir, err))
 		return res, nil, nil
 	}
 
 	tmpPath := input.Target + ".tmp"
-	if err := os.WriteFile(tmpPath, formatted, 0o644); err != nil {
+	if err := os.WriteFile(tmpPath, formatted, 0o600); err != nil {
 		res := &mcp.CallToolResult{}
-		res.SetError(fmt.Errorf("failed to write temp file: %v", err))
+		res.SetError(fmt.Errorf("failed to write temp file: %w", err))
 		return res, nil, nil
 	}
 	defer os.Remove(tmpPath) // Cleanup on any failure path.
@@ -397,7 +394,7 @@ func (t *ApplyVettedEditTool) Handle(ctx context.Context, _ *mcp.CallToolRequest
 
 	if err := os.Rename(tmpPath, input.Target); err != nil {
 		res := &mcp.CallToolResult{}
-		res.SetError(fmt.Errorf("atomic rename failed: %v", err))
+		res.SetError(fmt.Errorf("atomic rename failed: %w", err))
 		return res, nil, nil
 	}
 
@@ -415,7 +412,7 @@ func (t *ApplyVettedEditTool) Handle(ctx context.Context, _ *mcp.CallToolRequest
 	session.Metadata["last_write"] = input.Target
 	session.Metadata["plan_hash"] = planHash
 	session.Metadata["write_size"] = len(formatted)
-	session.Metadata["gofmt_applied"] = fmtErr == nil
+	session.Metadata["gofmt_applied"] = true
 	t.Engine.SaveSession(session)
 
 	// Publish write trace to recall.
@@ -424,7 +421,7 @@ func (t *ApplyVettedEditTool) Handle(ctx context.Context, _ *mcp.CallToolRequest
 			"plan_hash":   planHash,
 			"target":      input.Target,
 			"write_size":  len(formatted),
-			"gofmt_clean": fmtErr == nil,
+			"gofmt_clean": true,
 			"phase":       "execution",
 			"stage":       "apply_vetted_edit",
 			"last_tool":   "apply_vetted_edit",
@@ -438,11 +435,11 @@ func (t *ApplyVettedEditTool) Handle(ctx context.Context, _ *mcp.CallToolRequest
 		WriteSize  int    `json:"write_size_bytes"`
 		GofmtClean bool   `json:"gofmt_clean"`
 	}{
-		Summary:    fmt.Sprintf("Edit applied to %s (%d bytes, gofmt: %v)", input.Target, len(formatted), fmtErr == nil),
+		Summary:    fmt.Sprintf("Edit applied to %s (%d bytes, gofmt: true)", input.Target, len(formatted)),
 		Target:     input.Target,
 		PlanHash:   planHash,
 		WriteSize:  len(formatted),
-		GofmtClean: fmtErr == nil,
+		GofmtClean: true,
 	}
 
 	// Publish to CSSA.
