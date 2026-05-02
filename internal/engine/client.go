@@ -89,7 +89,7 @@ func (e *SearchEngine) getVQD(ctx context.Context, query string) (string, error)
 	}
 
 	// 2. Use singleflight to prevent redundant VQD fetches for the same query
-	v, err, shared := e.vqdSF.Do(query, func() (interface{}, error) {
+	v, err, shared := e.vqdSF.Do(query, func() (any, error) {
 		// Re-check cache inside singleflight to avoid racing
 		e.mu.RLock()
 		entry, ok := e.vqdCache[query]
@@ -103,7 +103,7 @@ func (e *SearchEngine) getVQD(ctx context.Context, query string) (string, error)
 		var doErr error
 		backoff := 1 * time.Second
 
-		for i := 0; i < 3; i++ {
+		for i := range 3 {
 			reqCtx, reqCancel := context.WithTimeout(ctx, 15*time.Second)
 			req, err := e.newRequest(reqCtx, http.MethodGet, "https://duckduckgo.com", http.NoBody)
 			if err != nil {

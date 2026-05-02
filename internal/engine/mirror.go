@@ -42,7 +42,7 @@ func (e *SearchEngine) BookSearch(ctx context.Context, query string, maxResults 
 	}
 
 	var lastErr error
-	for i := 0; i < len(mirrors); i++ {
+	for range mirrors {
 		select {
 		case res := <-resChan:
 			if res.err == nil && len(res.data) > 0 {

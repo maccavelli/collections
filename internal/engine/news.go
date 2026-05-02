@@ -59,12 +59,12 @@ func (e *SearchEngine) ddgNewsSearch(ctx context.Context, query string, maxResul
 
 	var data struct {
 		Results []struct {
-			Title   string      `json:"title"`
-			URL     string      `json:"url"`
-			Excerpt string      `json:"excerpt"`
-			Source  string      `json:"source"`
-			Date    interface{} `json:"date"`
-			Image   string      `json:"image"`
+			Title   string `json:"title"`
+			URL     string `json:"url"`
+			Excerpt string `json:"excerpt"`
+			Source  string `json:"source"`
+			Date    any    `json:"date"`
+			Image   string `json:"image"`
 		} `json:"results"`
 	}
 

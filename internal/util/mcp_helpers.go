@@ -71,7 +71,7 @@ func HardenedAddTool[In any, Out any](
 				Category:      tool.Name,
 			}
 
-			sigBytes, _ := json.Marshal(map[string]interface{}{"__orchestrator_signal": signal})
+			sigBytes, _ := json.Marshal(map[string]any{"__orchestrator_signal": signal})
 			res.Content = append(res.Content, &mcp.TextContent{
 				Text: string(sigBytes),
 			})
