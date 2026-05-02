@@ -52,7 +52,7 @@ var serveCmd = &cobra.Command{
 		reader := bufio.NewReaderSize(os.Stdin, 128*1024)
 		writer := bufio.NewWriterSize(RealStdout, 128*1024)
 
-		if err := execute(ctx, stop, logBuffer, reader, writer, args); err != nil {
+		if err := runServe(ctx, stop, logBuffer, reader, writer, args); err != nil {
 			if isExpectedShutdownErr(err) {
 				slog.Info("server shut down gracefully", "error", err)
 				if flushErr := writer.Flush(); flushErr != nil {
@@ -111,7 +111,7 @@ func initServer(logBuffer *handler.LogBuffer, extraRoots []string) (*state.Store
 
 	eng, err := engine.NewEngine(store, dbPath+"/engine_index")
 	if err != nil {
-		store.Close()
+		_ = store.Close() // nolint:errcheck // ignore error on close
 		return nil, nil, nil, nil, fmt.Errorf("engine init: %w", err)
 	}
 
@@ -126,7 +126,7 @@ func initServer(logBuffer *handler.LogBuffer, extraRoots []string) (*state.Store
 
 	scn, err := scanner.NewScanner(roots)
 	if err != nil {
-		store.Close()
+		_ = store.Close() // nolint:errcheck // ignore error on close
 		return nil, nil, nil, nil, fmt.Errorf("scanner init: %w", err)
 	}
 
@@ -168,21 +168,21 @@ func initSubsystems(ctx context.Context, eng *engine.Engine, scn *scanner.Scanne
 	}
 }
 
-func execute(ctx context.Context, cancel context.CancelFunc, logBuffer *handler.LogBuffer, reader io.Reader, writer io.Writer, extraRoots []string) error {
+func runServe(ctx context.Context, cancel context.CancelFunc, logBuffer *handler.LogBuffer, reader io.Reader, writer io.Writer, extraRoots []string) error {
 	logger := slog.Default()
 
 	store, eng, scn, h, err := initServer(logBuffer, extraRoots)
 	if err != nil {
 		return err
 	}
-	defer store.Close()
-	defer scn.Watcher.Close()
+	defer func() { _ = store.Close() }()       // nolint:errcheck // ignore error on close
+	defer func() { _ = scn.Watcher.Close() }() // nolint:errcheck // ignore error on close
 
 	initSubsystems(ctx, eng, scn, logBuffer, h.RecallClient)
 
 	if h.RecallClient != nil {
 		go func() {
-			if err := waitForRecallSocketReady(slog.Default()); err != nil {
+			if err := waitForRecallSocketReady(); err != nil {
 				slog.Error("recall socket wait failed", "error", err)
 			}
 			h.RecallClient.Start(ctx)
@@ -274,7 +274,7 @@ func (a *autoFlusher) Write(p []byte) (n int, err error) {
 	return n, err
 }
 
-func waitForRecallSocketReady(logger *slog.Logger) error {
+func waitForRecallSocketReady() error {
 	val := os.Getenv("MCP_API_URL")
 	if val == "" {
 		// Standalone execution bound; ignore ping.
@@ -301,7 +301,7 @@ func waitForRecallSocketReady(logger *slog.Logger) error {
 		case <-ticker.C:
 			conn, err := net.DialTimeout("tcp", u.Host, 100*time.Millisecond)
 			if err == nil && conn != nil {
-				conn.Close()
+				_ = conn.Close() // nolint:errcheck // ignore error on close
 				return nil
 			}
 		}

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"io"
 	"testing"
 )
@@ -35,7 +36,7 @@ func TestEOFDetector(t *testing.T) {
 	if n != 0 {
 		t.Errorf("expected 0 bytes, got %d", n)
 	}
-	if err != io.EOF {
+	if !errors.Is(err, io.EOF) {
 		t.Errorf("expected EOF error, got %v", err)
 	}
 

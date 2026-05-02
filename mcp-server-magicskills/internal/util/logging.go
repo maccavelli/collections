@@ -159,7 +159,7 @@ func SetupStandardLogging(serverName string, buffer io.Writer) func() {
 	}
 
 	var handler slog.Handler
-	if strings.ToLower(format) == "text" {
+	if strings.EqualFold(format, "text") {
 		handler = slog.NewTextHandler(sw, &slog.HandlerOptions{Level: lvl})
 	} else {
 		handler = slog.NewJSONHandler(sw, &slog.HandlerOptions{Level: lvl})

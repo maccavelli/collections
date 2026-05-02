@@ -66,12 +66,12 @@ func TestEngine_MatchSkills(t *testing.T) {
 		Metadata: models.SkillMetadata{Name: "go-skill", Description: "Go development", Tags: []string{"golang"}},
 		Sections: map[string]string{"full": "Go development golang"},
 	}
-	e.Bleve.Index("go-skill", map[string]interface{}{"name": "go-skill", "description": "Go development", "tags": []string{"golang"}, "content": "Go development golang"})
+	e.Bleve.Index("go-skill", map[string]any{"name": "go-skill", "description": "Go development", "tags": []string{"golang"}, "content": "Go development golang"})
 	e.Skills["python-skill"] = &models.Skill{
 		Metadata: models.SkillMetadata{Name: "python-skill", Description: "Python bot", Tags: []string{"scripting"}},
 		Sections: map[string]string{"full": "Python bot scripting"},
 	}
-	e.Bleve.Index("python-skill", map[string]interface{}{"name": "python-skill", "description": "Python bot", "tags": []string{"scripting"}, "content": "Python bot scripting"})
+	e.Bleve.Index("python-skill", map[string]any{"name": "python-skill", "description": "Python bot", "tags": []string{"scripting"}, "content": "Python bot scripting"})
 	ctx := context.Background()
 
 	t.Run("Match by name", func(t *testing.T) {
@@ -269,12 +269,12 @@ func BenchmarkMatchSkills_500(b *testing.B) {
 	store, _ := state.NewStore(b.TempDir())
 	e, _ := NewEngine(store, b.TempDir()+"/idx")
 	defer store.Close()
-	for i := 0; i < 500; i++ {
+	for i := range 500 {
 		name := fmt.Sprintf("skill-%d", i)
 		e.Skills[name] = &models.Skill{
 			Metadata: models.SkillMetadata{Name: name, Description: "Typical skill description for indexing."},
 		}
-		e.Bleve.Index(name, map[string]interface{}{"name": name, "description": "Typical skill description for indexing.", "content": "Detailed workflow steps for a typical skill in the index with some keywords."})
+		e.Bleve.Index(name, map[string]any{"name": name, "description": "Typical skill description for indexing.", "content": "Detailed workflow steps for a typical skill in the index with some keywords."})
 	}
 	ctx := context.Background()
 	b.ResetTimer()

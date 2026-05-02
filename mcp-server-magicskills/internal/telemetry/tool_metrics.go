@@ -57,7 +57,7 @@ func (t *ToolTracker) Record(urn string, latencyMs int64, isError bool) {
 // GetAll returns a snapshot of all observed tools.
 func (t *ToolTracker) GetAll() map[string]ToolMetrics {
 	snapshot := make(map[string]ToolMetrics)
-	t.tools.Range(func(key, value interface{}) bool {
+	t.tools.Range(func(key, value any) bool {
 		urn := key.(string)
 		m := value.(*internalToolMetrics)
 
@@ -67,7 +67,7 @@ func (t *ToolTracker) GetAll() map[string]ToolMetrics {
 			Faults:     m.faults.Load(),
 			LastCallAt: m.lastCallAt.Load(),
 		}
-		return true // continue iteration
+		return true
 	})
 	return snapshot
 }

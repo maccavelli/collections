@@ -33,11 +33,11 @@ func TestAddRootTool_Handle(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	skillDir := filepath.Join(tmpDir, ".agent", "skills", "test-skill")
-	if err := os.MkdirAll(skillDir, 0755); err != nil {
+	if err := os.MkdirAll(skillDir, 0750); err != nil {
 		t.Fatalf("failed to create skill dir: %v", err)
 	}
 	skillFile := filepath.Join(skillDir, "SKILL.md")
-	if err := os.WriteFile(skillFile, []byte("---\nname: test-skill\n---\n"), 0644); err != nil {
+	if err := os.WriteFile(skillFile, []byte("---\nname: test-skill\n---\n"), 0600); err != nil {
 		t.Fatalf("failed to write skill file: %v", err)
 	}
 

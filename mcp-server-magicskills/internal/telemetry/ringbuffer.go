@@ -65,7 +65,7 @@ func NewRingBuffer(path string) (*RingBuffer, error) {
 		}
 		// Write magic bytes
 		var header [RingHeaderSize]byte
-		copy(header[0:4], []byte("RING"))
+		copy(header[0:4], "RING")
 		binary.LittleEndian.PutUint32(header[4:8], 1)  // Version
 		binary.LittleEndian.PutUint64(header[8:16], 0) // Head starts at 0
 
@@ -97,7 +97,7 @@ func NewRingBuffer(path string) (*RingBuffer, error) {
 }
 
 // WriteGauges updates the 16KB header with a JSON snapshot.
-func (r *RingBuffer) WriteGauges(v interface{}) error {
+func (r *RingBuffer) WriteGauges(v any) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -123,8 +123,10 @@ func (r *RingBuffer) WriteRecord(record []byte) {
 		return
 	}
 
-	// Payload with newline boundary
-	payload := append(record, '\n')
+	// Payload with newline boundary securely cloned
+	payload := make([]byte, len(record)+1)
+	copy(payload, record)
+	payload[len(record)] = '\n'
 	sz := uint64(len(payload))
 
 	// Prevent RingBuffer mathematical underflow from payload poisoning
@@ -176,7 +178,7 @@ func ReadState(path string) ([]byte, []byte, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	defer m.Unmap()
+	defer func() { _ = m.Unmap() }() // nolint:errcheck
 
 	// Extract Gauges safely up to first null byte
 	gaugeBytes := make([]byte, RingHeaderSize-16)

@@ -99,8 +99,7 @@ func TestScanner_Listen(t *testing.T) {
 	updatedChan := make(chan string, 1)
 	deletedChan := make(chan string, 1)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	s.Listen(ctx, func(path string) {
 		updatedChan <- path

@@ -15,7 +15,7 @@ func TestSetupStandardLogging(t *testing.T) {
 	slog.Info("test message")
 	time.Sleep(100 * time.Millisecond)
 	cleanup()
-	if len(buf.String()) == 0 {
+	if buf.String() == "" {
 		t.Errorf("expected logs in buffer, got empty")
 	}
 }

@@ -9,6 +9,7 @@ import (
 
 var sectionRegex = regexp.MustCompile(`(?m)^##\s+(.*)$`)
 
+// GenerateDigest executes the designated operation.
 func GenerateDigest(s *models.Skill) string {
 	b := builderPool.Get().(*strings.Builder)
 	defer func() {
