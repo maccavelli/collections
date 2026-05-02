@@ -1,99 +1,106 @@
-# 🧠 Sequential Thinking MCP Server
+# 🧠 MagicSequential-Thinking Sub-Server
 
-A specialized Model Context Protocol (MCP) server for dynamic and reflective problem-solving through structured
-cognitive steps.
+A high-performance Model Context Protocol (MCP) sub-server for structured, deep cognitive reasoning and self-correcting logic loops.
 
 ## 🚀 Overview
 
-The Sequential Thinking server helps AI agents systematically reason through complex problems. By breaking
-problems down into sequentially linked thoughts, it provides out-of-band context tracking that supports
-branching, revising, and course correction.
+`mcp-server-sequential-thinking` provides a profound cognitive processing lattice. It is designed to help AI agents map intricate paradoxes, unravel complex logic topologies, and perform rigorous self-critique before committing to terminal actions.
 
 ### 📋 Core Pillars
 
-1. **Step-by-Step Breakdown**: Enforces a logical progression for planning and design.
-2. **Dynamic Course Correction**: Allows agents to revise previous thoughts as new insights emerge.
-3. **Hypothesis Branching**: Tracks alternate lines of reasoning without losing the main thread.
-4. **Context Filtering**: Maintains long-term reasoning state while filtering out irrelevant noise.
+1.  **Iterative Reasoning**: Forces the agent to think through multiple steps, documenting assumptions and revisions.
+2.  **Self-Critique**: Mandatory self-correction phase in every thought step to identify flaws or assumptions.
+3.  **Branching Logic**: Allows the agent to explore multiple reasoning paths (branches) and merge them back into a final insight.
+4.  **Resource Persistence**: Tracks the entire thinking process to ensure no cognitive context is lost during long tasks.
 
 ---
 
-## 🛠️ Tools
+## 🛠️ Usage & Functionality
 
-### `sequentialthinking`
+### Specialized Tools
 
-The primary reasoning tool for dynamic context tracking.
+*   **`sequentialthinking`**: The primary reasoning tool. It requires a detailed thought, self-critique, and a determination if more thoughts are needed.
 
-- **Parameters**:
-  - `thought`: Current reasoning content.
-  - `thoughtNumber` / `totalThoughts`: Progress estimation.
-  - `isRevision` / `revisesThought`: Revision metadata.
-  - `branchId` / `branchFromThought`: Branching metadata.
-
----
-
-## ⚙️ Installation
-
-### 1. Build the Binary
-
-```bash
-go build -o dist/mcp-server-sequential-thinking main.go
-```
-
-### 2. Configure for IDEs
-
-#### **Antigravity**
-
-```yaml
-mcpServers:
-  seq-thinking:
-    command: "/absolute/path/to/dist/mcp-server-sequential-thinking"
-```
-
-#### **VS Code (MCP Extension / Cline)**
-
-Add to your `mcp_config.json`:
-
+### Orchestration with MagicTools (Recommended)
+Invoke Sequential-Thinking tools via `magictools:call_proxy`:
 ```json
 {
-  "mcpServers": {
-    "seq-thinking": {
-      "command": "/absolute/path/to/dist/mcp-server-sequential-thinking",
-      "args": [],
-      "env": {
-        "PATH": "/usr/local/go/bin:/usr/local/bin:/usr/bin"
-      }
+  "name": "magictools:call_proxy",
+  "arguments": {
+    "urn": "seq-thinking:sequentialthinking",
+    "arguments": {
+      "thought": "I should refactor the auth system to use JWT",
+      "selfCritique": "JWT might be overkill for this local tool",
+      "contradictionDetected": false,
+      "nextThoughtNeeded": true,
+      "thoughtNumber": 1,
+      "totalThoughts": 5
     }
   }
 }
 ```
 
-#### **Cursor IDE**
-
-1. **Settings** -> **Features** -> **MCP**.
-2. **+ Add New MCP Server**.
-3. Name: `Sequential Thinking`
-4. Type: `stdio`
-5. Command: `/absolute/path/to/dist/mcp-server-sequential-thinking`
-
 ---
 
-## 📖 Use Cases
+## ⚙️ Configuration
 
-- **Complex Troubleshooting**: Test multiple bug hypotheses simultaneously using branches.
-- **Architectural Planning**: Break down refactors into logical steps with clear revision paths.
-- **Signal Extraction**: Filter signal from noise when dealing with massive context payloads.
-
----
-
-## 💻 CLI Functionality
-
-Check version and engine status:
-
+### 1. Build the Binary
 ```bash
-./mcp-server-sequential-thinking -version
+make build
+```
+
+### 2. CLI Options
+| Option | Description |
+| :--- | :--- |
+| `-version` | Print version info and exit. |
+
+---
+
+## 🖥️ IDE Configuration Examples (Standalone)
+
+### 🌌 Antigravity
+**Path:** `~/.gemini/mcp_config.json`
+```json
+{
+  "mcpServers": {
+    "sequential-thinking": {
+      "command": "/absolute/path/to/mcp-server-sequential-thinking",
+      "args": []
+    }
+  }
+}
+```
+
+### 💻 VSCode (Roo Code / Cline)
+**Paths:**
+*   **Linux/macOS**: `~/Library/Application Support/Code/User/globalStorage/rooveterinaryinc.roo-cline/settings/cline_mcp_settings.json`
+*   **Windows**: `%APPDATA%\Code\User\globalStorage\rooveterinaryinc.roo-cline\settings\cline_mcp_settings.json`
+
+```json
+{
+  "mcpServers": {
+    "sequential-thinking": {
+      "command": "C:/path/to/mcp-server-sequential-thinking.exe"
+    }
+  }
+}
+```
+
+### 🤖 Claude Desktop
+**Paths:**
+*   **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+*   **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+
+```json
+{
+  "mcpServers": {
+    "sequential-thinking": {
+      "command": "/usr/local/bin/mcp-server-sequential-thinking"
+    }
+  }
+}
 ```
 
 ---
 
-*Built with Go for performance and strict cognitive determinism.*
+*Part of the MagicTools Intelligence Suite. Built with Go.*

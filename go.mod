@@ -1,6 +1,6 @@
 module mcp-server-sequential-thinking
 
-go 1.26.1
+go 1.26.2
 
 require github.com/modelcontextprotocol/go-sdk v1.4.1
 
