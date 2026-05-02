@@ -27,7 +27,7 @@ var importCmd = &cobra.Command{
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
 
-		url := fmt.Sprintf("http://127.0.0.1:%d/mcp", port)
+		url := fmt.Sprintf("http://127.0.0.1:%d/mcp/internal", port)
 		fmt.Fprintf(os.Stderr, "Connecting to local recall server at %s...\n", url)
 
 		mcpClient := client.NewMCPClient(url)
@@ -46,13 +46,13 @@ var importCmd = &cobra.Command{
 
 		fmt.Fprintf(os.Stderr, "Connected. Importing database from %s\n", args[0])
 
-		toolArgs := map[string]interface{}{
+		toolArgs := map[string]any{
 			"filename": args[0],
 		}
 
-		res, err := mcpClient.CallDatabaseTool(ctx, "import_memories", toolArgs)
+		res, err := mcpClient.CallDatabaseTool(ctx, "import_records", toolArgs)
 		if err != nil {
-			return fmt.Errorf("import_memories: %w", err)
+			return fmt.Errorf("import_records: %w", err)
 		}
 
 		fmt.Fprintln(RealStdout, res)

@@ -90,7 +90,7 @@ func TestMemoryStore_ImportJSONL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp import jsonl: %v", err)
 	}
-	for i := 0; i < 150; i++ {
+	for i := range 150 {
 		line := fmt.Sprintf(`{"key":"import-%d","content":"val-%d","category":"test"}`+"\n", i, i)
 		f.WriteString(line)
 	}

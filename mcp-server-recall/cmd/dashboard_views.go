@@ -8,17 +8,14 @@ import (
 )
 
 var DashboardTabs = []string{
-	"Summary",
+	"Overview",
 	"Storage Diagnostics",
+	"Memory Consolidation & GC",
 	"Semantic Search Engine",
-	"AST Ingestion Pipeline",
-	"Memory Consolidation",
-	"Cryptographic Integrity",
-	"Gateway RPC Analytics",
-	"Taxonomy & Tag Distribution",
-	"Client Sync State",
-	"Ecosystem & Topology",
-	"Security & Access Control",
+	"Taxonomy & AST Pipeline",
+	"RPC & Gateway Analytics",
+	"Network Topology",
+	"Security & Cryptography",
 	"Config & Environment",
 	"Quit",
 }
@@ -32,7 +29,8 @@ func renderSummary(snapshot map[string]any, logs []TelemetryLog) string {
 		gr := fmt.Sprintf("%v", rt["goroutines"])
 		up := fmt.Sprintf("%v", rt["uptime_sec"])
 		gc := fmt.Sprintf("%v", rt["num_gc"])
-		rc = fmt.Sprintf("Memory Footprint: %s MB\nActive Goroutines: %s\nUptime: %s sec\nGC Cycles: %s\nConnection: LIVE", mem, gr, up, gc)
+		cpu := fmt.Sprintf("%.2f%%", rt["cpu_usage"])
+		rc = fmt.Sprintf("CPU Utilization: %s\nMemory Footprint: %s MB\nActive Goroutines: %s\nUptime: %s sec\nGC Cycles: %s\nConnection: LIVE", cpu, mem, gr, up, gc)
 	}
 
 	leftBox := pterm.DefaultBox.WithTitle("Health Overview").Sprint(rc)
@@ -150,6 +148,12 @@ func renderPtermDashboard(snapshot map[string]any, logs []TelemetryLog, uiState 
 		contentBox = renderStorage(snapshot)
 	case 3:
 		st := loadingText
+		if gc, ok := snapshot["memory_gc"].(map[string]any); ok {
+			st = fmt.Sprintf("State: Optimizing\nLSM ValueLog Sweeps: %v\nNodes Orphaned & Pruned: %v", gc["sweeps"], gc["pruned_nodes"])
+		}
+		contentBox = renderTextTab("Memory Consolidation & GC", st)
+	case 4:
+		st := loadingText
 		if b, ok := snapshot["bleve"].(map[string]any); ok {
 			docs := b["documents"]
 			queues := b["queues"]
@@ -162,74 +166,87 @@ func renderPtermDashboard(snapshot map[string]any, logs []TelemetryLog, uiState 
 			}
 			st, _ = pterm.DefaultTable.WithHasHeader().WithData(td).Srender()
 		}
+		
+		qpsPanel := loadingText
+		if an, ok := snapshot["analytics"].(map[string]any); ok {
+			qpsPanel = fmt.Sprintf("Average RPC Latency: %v ms", an["avg_rpc_latency_ms"])
+		}
+		
 		contentBox = mergeVertical(
 			pterm.DefaultBox.WithTitle("Semantic Search Engine").Sprint(st),
-			pterm.DefaultBox.WithTitle("TF-IDF Matrix").Sprint("Vector thresholds active and stable"),
+			pterm.DefaultBox.WithTitle("Search Latency & QPS").Sprint(qpsPanel),
 		)
-	case 4:
-		st := loadingText
+	case 5:
+		stAst := loadingText
 		if a, ok := snapshot["ast"].(map[string]any); ok {
 			dd := a["disable_drift"]
 			ed := a["exclude_dirs"]
+			pf := a["parsed_files"]
 			td := pterm.TableData{
-				{"Configuration", "Value"},
+				{"AST Configuration", "Value"},
 				{"Disable Drift Heuristics", fmt.Sprintf("%v", dd)},
-				{"Excluded Directories", fmt.Sprintf("%v directory boundaries mapped", ed)},
+				{"Excluded Directories", fmt.Sprintf("%v boundaries", ed)},
+				{"Parsed Abstract Files", fmt.Sprintf("%v", pf)},
 			}
-			st, _ = pterm.DefaultTable.WithHasHeader().WithData(td).Srender()
+			stAst, _ = pterm.DefaultTable.WithHasHeader().WithData(td).Srender()
 		}
-		contentBox = mergeVertical(
-			renderTextTab("AST Ingestion Pipeline", st),
-			renderTextTab("AST Parsing Activity", "Awaiting standards ingestion via CLI."),
-		)
-	case 5:
-		contentBox = renderTextTab("Memory Consolidation", "State: Optimizing\nPeriodic DAG garbage collection active.\nNo volatile fragmented memories found.")
-	case 6:
-		contentBox = renderTextTab("Cryptographic Integrity", "Curve25519 Native Encryption: ENABLED\nAES-GCM Memory Cipher: SECURE\nKey Rotation Delta: N/A")
-	case 7:
-		st := loadingText
-		if an, ok := snapshot["analytics"].(map[string]any); ok {
-			td := pterm.TableData{
-				{"Metric", "Absolute Requests Captured"},
-				{"Memory Hits (Latency < 2ms)", fmt.Sprintf("%v", an["cache_hits"])},
-				{"Memory Misses", fmt.Sprintf("%v", an["cache_misses"])},
-				{"LSM DB Traversal", fmt.Sprintf("%v", an["db_hits"])},
-				{"LSM DB Miss", fmt.Sprintf("%v", an["db_misses"])},
-			}
-			st, _ = pterm.DefaultTable.WithHasHeader().WithData(td).Srender()
-		}
-		contentBox = renderTextTab("Gateway RPC Analytics", st)
-	case 8:
-		st := loadingText
+		
+		stTax := loadingText
 		if tx, ok := snapshot["taxonomy"].(map[string]any); ok {
 			td := pterm.TableData{
-				{"Namespace", "Absolute Documents Configured"},
+				{"Taxonomy Namespace", "Absolute Documents Configured"},
 				{"memories", fmt.Sprintf("%v", tx["memories"])},
 				{"sessions", fmt.Sprintf("%v", tx["sessions"])},
 				{"standards", fmt.Sprintf("%v", tx["standards"])},
 				{"projects", fmt.Sprintf("%v", tx["projects"])},
 			}
+			stTax, _ = pterm.DefaultTable.WithHasHeader().WithData(td).Srender()
+		}
+		
+		contentBox = mergeVertical(
+			renderTextTab("AST Ingestion Pipeline", stAst),
+			renderTextTab("Taxonomy & Tag Distribution", stTax),
+		)
+	case 6:
+		st := loadingText
+		if an, ok := snapshot["analytics"].(map[string]any); ok {
+			td := pterm.TableData{
+				{"Metric", "Absolute Value"},
+				{"Memory Hits (Latency < 2ms)", fmt.Sprintf("%v", an["cache_hits"])},
+				{"Memory Misses", fmt.Sprintf("%v", an["cache_misses"])},
+				{"LSM DB Traversal", fmt.Sprintf("%v", an["db_hits"])},
+				{"LSM DB Miss", fmt.Sprintf("%v", an["db_misses"])},
+				{"RPC Payload Bytes", fmt.Sprintf("%v", an["rpc_payload_bytes"])},
+			}
 			st, _ = pterm.DefaultTable.WithHasHeader().WithData(td).Srender()
 		}
-		contentBox = renderTextTab("Taxonomy & Tag Distribution", st)
+		contentBox = renderTextTab("RPC & Gateway Analytics", st)
+	case 7:
+		stNet := loadingText
+		if nw, ok := snapshot["network"].(map[string]any); ok {
+			stNet = fmt.Sprintf("Clients Currently Authenticated: %v\nTransport Protocol: %v\nStatus: Connected\nUpstream Routes: Active", nw["active_sessions"], nw["transport"])
+		}
+		contentBox = renderTextTab("Network Topology", stNet)
+	case 8:
+		stSec := loadingText
+		if sec, ok := snapshot["security"].(map[string]any); ok {
+			stSec = fmt.Sprintf("Curve25519 Native Encryption: ENABLED\nAES-GCM Memory Cipher: SECURE\nBoundary Violations: %v\nAuth Failures: %v", sec["boundary_violations"], sec["auth_failures"])
+		}
+		contentBox = renderTextTab("Security & Cryptography", stSec)
 	case 9:
-		contentBox = renderTextTab("Client Sync State", "Clients Currently Authenticated: 1 native streamable-http\nTool Whitelists Applied\nResource Matrix: Clean")
-	case 10:
-		contentBox = renderTextTab("Ecosystem & Topology", "Status: Connected\nOrchestrator: mcp-server-magictools\nUpstream Routes: Active")
-	case 11:
-		contentBox = renderTextTab("Security & Access Control", "Boundary Violations: 0\nAuth Failures: 0\nActive Whitelist: Strict")
-	case 12:
 		st := loadingText
 		if c, ok := snapshot["config"].(map[string]any); ok {
 			td := pterm.TableData{
 				{"Key", "Value"},
 				{"Version", fmt.Sprintf("%v", c["version"])},
 				{"DB Path", fmt.Sprintf("%v", c["db_path"])},
+				{"Active Log Level", fmt.Sprintf("%v", c["log_level"])},
+				{"GOMEMLIMIT", fmt.Sprintf("%v", c["env_gomemlimit"])},
 			}
 			st, _ = pterm.DefaultTable.WithHasHeader().WithData(td).Srender()
 		}
 		contentBox = renderTextTab("Config & Environment", st)
-	case 13:
+	case 10:
 		contentBox = pterm.DefaultBox.WithTitle("Quit").Sprint("Press ENTER to exit the dashboard.")
 	default:
 		contentBox = renderTextTab("Unknown", "Invalid tab.")

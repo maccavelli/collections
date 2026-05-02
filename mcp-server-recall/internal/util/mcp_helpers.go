@@ -40,20 +40,26 @@ func ClientFromContext(ctx context.Context) string {
 	return "stdio"
 }
 
-// SafeToolHandler wraps a ToolHandler in recovery + audit middleware to prevent panics
+// HardenedAddTool registers an MCP tool with the server while automatically applying a recovery middleware.
+// It uses generics to match the official SDK's AddTool signature while providing a panic-safe execution environment.
+func HardenedAddTool[In any, Out any](
+	s *mcp.Server,
+	tool *mcp.Tool,
+	handler func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, Out, error),
+) {
+	mcp.AddTool(s, tool, InternalWrapHandler(tool, handler))
+}
+
+// InternalWrapHandler wraps a generic ToolHandler in recovery + audit middleware to prevent panics
 // from crashing the sub-server and to emit structured audit logs for every tool invocation.
-func SafeToolHandler(handler func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error)) func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	return func(ctx context.Context, req *mcp.CallToolRequest) (res *mcp.CallToolResult, err error) {
+func InternalWrapHandler[In any, Out any](
+	tool *mcp.Tool,
+	handler func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, Out, error),
+) func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, Out, error) {
+	return func(ctx context.Context, req *mcp.CallToolRequest, input In) (res *mcp.CallToolResult, output Out, err error) {
 		start := time.Now()
 
-		toolName := ""
-		func() {
-			defer func() { recover() }()
-			if req != nil {
-				toolName = req.Params.Name
-			}
-		}()
-
+		toolName := tool.Name
 		client := ClientFromContext(ctx)
 
 		defer func() {
@@ -81,7 +87,7 @@ func SafeToolHandler(handler func(context.Context, *mcp.CallToolRequest) (*mcp.C
 			)
 		}()
 
-		res, err = handler(ctx, req)
+		res, output, err = handler(ctx, req, input)
 		if err == nil && res != nil {
 			// 🛡️ Pure JSON Mandate: If structured content is provided, initialize Content
 			// as an empty slice to satisfy SDK checks and prevent hybrid text generation.
@@ -118,12 +124,12 @@ func SafeToolHandler(handler func(context.Context, *mcp.CallToolRequest) (*mcp.C
 				Category:      toolName, // Using extracted local toolName
 			}
 
-			sigBytes, _ := json.Marshal(map[string]interface{}{"__orchestrator_signal": signal})
+			sigBytes, _ := json.Marshal(map[string]any{"__orchestrator_signal": signal})
 			res.Content = append(res.Content, &mcp.TextContent{
 				Text: string(sigBytes),
 			})
 		}
 		// ---------------------------------------------------
-		return res, err
+		return res, output, err
 	}
 }

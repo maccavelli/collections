@@ -64,6 +64,13 @@ type MemoryStore struct {
 	sessionsCount  atomic.Int64
 	standardsCount atomic.Int64
 	projectsCount  atomic.Int64
+	// New Telemetry Hooks
+	gcSweeps           atomic.Uint64
+	gcPrunedNodes      atomic.Uint64
+	searchLatency      atomic.Int64
+	searchQueries      atomic.Uint64
+	rpcPayloadBytes    atomic.Uint64
+	boundaryViolations atomic.Uint64
 }
 
 // GetTelemetry surfaces memory and DB tier metrics.
@@ -79,10 +86,30 @@ func (s *MemoryStore) GetDBSize() (lsm int64, vlog int64) {
 	return s.db.Size()
 }
 
-
 // GetNamespaceCounts securely exports continuous atomic capacities across mapped domains.
 func (s *MemoryStore) GetNamespaceCounts() (int64, int64, int64, int64) {
 	return s.memoriesCount.Load(), s.sessionsCount.Load(), s.standardsCount.Load(), s.projectsCount.Load()
+}
+
+// GetExtendedTelemetry exports the new dashboard observability counters.
+func (s *MemoryStore) GetExtendedTelemetry() (uint64, uint64, int64, uint64, uint64, uint64) {
+	return s.gcSweeps.Load(), s.gcPrunedNodes.Load(), s.searchLatency.Load(), s.searchQueries.Load(), s.rpcPayloadBytes.Load(), s.boundaryViolations.Load()
+}
+
+// RecordSearchTelemetry tracks HNSW/Bleve query performance.
+func (s *MemoryStore) RecordSearchTelemetry(latencyMs int64) {
+	s.searchQueries.Add(1)
+	s.searchLatency.Add(latencyMs)
+}
+
+// RecordRPCBytes tracks gateway ingress/egress.
+func (s *MemoryStore) RecordRPCBytes(bytes uint64) {
+	s.rpcPayloadBytes.Add(bytes)
+}
+
+// RecordSecurityViolation tracks access denials.
+func (s *MemoryStore) RecordSecurityViolation() {
+	s.boundaryViolations.Add(1)
 }
 
 // NewMemoryStore initializes a new BadgerDB with optional AES-256 encryption.
@@ -182,7 +209,7 @@ func openBadgerWithRetry(opts badger.Options, maxRetries int) (*badger.DB, error
 	var err error
 
 	backoff := 500 * time.Millisecond
-	for i := 0; i < maxRetries; i++ {
+	for i := range maxRetries {
 		db, err = badger.Open(opts)
 		if err == nil {
 			return db, nil
@@ -335,6 +362,7 @@ func (s *MemoryStore) runGC() {
 					runCount++
 				}
 				if runCount > 0 {
+					s.gcSweeps.Add(uint64(runCount))
 					slog.Info("Badger progressive GC reclaimed disk blocks natively", "ratio", ratio, "cycles", runCount)
 				}
 			}
@@ -673,7 +701,7 @@ func (s *MemoryStore) updateRecordLocked(_ context.Context, key, title, content,
 // findSimilarLocked scans same-category memory-domain records for Jaccard similarity.
 // Returns the best match above threshold, or nil. Caller must hold s.mu.
 func (s *MemoryStore) findSimilarLocked(content, category string, threshold float64) *SearchResult {
-	catPrefix := []byte(fmt.Sprintf("_idx:cat:%s:", strings.ToLower(category)))
+	catPrefix := fmt.Appendf(nil, "_idx:cat:%s:", strings.ToLower(category))
 	var bestMatch *SearchResult
 	bestScore := 0.0
 
@@ -905,7 +933,7 @@ func (s *MemoryStore) VacuumSessions(ctx context.Context, targetOutcome string, 
 	// Trigger Async ValueLog GC
 	go func() {
 		reclaimed := 0
-		for i := 0; i < 100; i++ { // Bounded safety loop
+		for range 100 { // Bounded safety loop
 			gcErr := s.db.RunValueLogGC(0.5)
 			if gcErr != nil {
 				break
@@ -1074,15 +1102,12 @@ func (s *MemoryStore) VacuumMemories(ctx context.Context, daysOld int, dedupThre
 		})
 
 		// Jaccard duplicate detection — bounded to 100 entries per category.
-		sampleSize := len(entries)
-		if sampleSize > 100 {
-			sampleSize = 100
-		}
+		sampleSize := min(len(entries), 100)
 		sample := entries[:sampleSize]
 
 		// Track which keys are already part of a cluster to avoid duplicating.
 		clustered := make(map[string]bool)
-		for i := 0; i < len(sample); i++ {
+		for i := range sample {
 			if clustered[sample[i].key] {
 				continue
 			}
@@ -1246,6 +1271,8 @@ func (s *MemoryStore) VacuumStandards(ctx context.Context, reportOnly bool) (*Va
 // triggerDBMaintenance performs LSM Flatten + async ValueLog GC if mutations exceed the threshold.
 // Extracted from VacuumSessions to share across all vacuum namespaces.
 func (s *MemoryStore) triggerDBMaintenance(mutated, flattenThreshold int) {
+	s.gcPrunedNodes.Add(uint64(mutated))
+
 	if mutated >= flattenThreshold {
 		slog.Warn("LSM Flatten triggered by context vacuum threshold", "mutated", mutated, "threshold", flattenThreshold)
 		_ = s.db.Flatten(1)
@@ -1253,7 +1280,7 @@ func (s *MemoryStore) triggerDBMaintenance(mutated, flattenThreshold int) {
 
 	go func() {
 		reclaimed := 0
-		for i := 0; i < 100; i++ {
+		for range 100 {
 			gcErr := s.db.RunValueLogGC(0.5)
 			if gcErr != nil {
 				break
@@ -1261,6 +1288,7 @@ func (s *MemoryStore) triggerDBMaintenance(mutated, flattenThreshold int) {
 			reclaimed++
 		}
 		if reclaimed > 0 {
+			s.gcSweeps.Add(uint64(reclaimed))
 			slog.Info("Context vacuum GC reclaimed disk blocks", "blocks_rewritten", reclaimed)
 		}
 	}()
@@ -1272,7 +1300,7 @@ func searchByTag(ctx context.Context, txn *badger.Txn, tagFilter string) ([]*Sea
 	it := txn.NewIterator(badger.DefaultIteratorOptions)
 	defer it.Close()
 
-	prefix := []byte(fmt.Sprintf("_idx:tag:%s:", tagFilter))
+	prefix := fmt.Appendf(nil, "_idx:tag:%s:", tagFilter)
 	for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
 		select {
 		case <-ctx.Done():
@@ -1348,10 +1376,7 @@ func (s *MemoryStore) rankCandidates(ctx context.Context, query string, candidat
 
 	var wg sync.WaitGroup
 	// Concurrency: Use worker pool based on CPU count or chunking
-	workerCount := 4
-	if len(candidates) < workerCount {
-		workerCount = len(candidates)
-	}
+	workerCount := min(len(candidates), 4)
 
 	chunkSize := (len(candidates) + workerCount - 1) / workerCount
 	for i := 0; i < workerCount; i++ {
@@ -1359,10 +1384,7 @@ func (s *MemoryStore) rankCandidates(ctx context.Context, query string, candidat
 		if start >= len(candidates) {
 			break
 		}
-		end := start + chunkSize
-		if end > len(candidates) {
-			end = len(candidates)
-		}
+		end := min(start+chunkSize, len(candidates))
 
 		wg.Add(1)
 		go func(ctx context.Context, subset []*SearchResult) {
@@ -1594,6 +1616,26 @@ func (s *MemoryStore) ListSessions(ctx context.Context, projectID, serverID, out
 		}
 	}
 	return results, err
+}
+
+func (s *MemoryStore) SearchSessions(ctx context.Context, query, projectID, serverID, outcome, traceContext string, limit int) ([]*SearchResult, error) {
+	candidates, err := s.ListSessions(ctx, projectID, serverID, outcome, traceContext)
+	if err != nil {
+		return nil, err
+	}
+
+	if query == "" {
+		if limit > 0 && len(candidates) > limit {
+			return candidates[:limit], nil
+		}
+		return candidates, nil
+	}
+
+	final := s.rankCandidates(ctx, query, candidates)
+	if limit > 0 && len(final) > limit {
+		final = final[:limit]
+	}
+	return final, nil
 }
 
 func (s *MemoryStore) matchSessionFilters(rec *Record, pID, out, trace string) bool {
@@ -1834,8 +1876,8 @@ type BatchEntry struct {
 	SourcePath string    `json:"source_path,omitempty"`
 	SourceHash string    `json:"source_hash,omitempty"`
 	SymbolName string    `json:"symbolname,omitempty"`
-	CreatedAt  time.Time `json:"created_at,omitempty"`
-	UpdatedAt  time.Time `json:"updated_at,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
 }
 
 // BatchError reports a per-key failure during batch operations.
@@ -2082,7 +2124,7 @@ func (s *MemoryStore) UpdateWithRetry(fn func(txn *badger.Txn) error) error {
 	backoff := 10 * time.Millisecond
 
 	var err error
-	for i := 0; i < maxRetries; i++ {
+	for range maxRetries {
 		err = s.db.Update(fn)
 		if err == nil {
 			return nil
@@ -2207,8 +2249,8 @@ func (s *MemoryStore) scanHarvestedCodeIndex(ctx context.Context, txn *badger.Tx
 			if err := item.Value(func(v []byte) error {
 				if rec, err := migrateRecord(v); err == nil {
 					for _, tag := range rec.Tags {
-						if strings.HasPrefix(tag, "type:") {
-							symType = strings.TrimPrefix(tag, "type:")
+						if after, ok := strings.CutPrefix(tag, "type:"); ok {
+							symType = after
 							break
 						}
 					}
@@ -2512,8 +2554,8 @@ func (s *MemoryStore) ListDomainOverview(ctx context.Context, targetDomain strin
 					case "HarvestedCode":
 						var symType string
 						for _, tag := range rec.Tags {
-							if strings.HasPrefix(tag, "type:") {
-								symType = strings.TrimPrefix(tag, "type:")
+							if after, ok := strings.CutPrefix(tag, "type:"); ok {
+								symType = after
 								break
 							}
 						}
@@ -2646,13 +2688,13 @@ func computeJaccard(a, b string) float64 {
 	}
 
 	setA := make(map[string]struct{})
-	for _, w := range strings.Fields(clean(a)) {
+	for w := range strings.FieldsSeq(clean(a)) {
 		if len(w) > 2 {
 			setA[w] = struct{}{}
 		}
 	}
 	setB := make(map[string]struct{})
-	for _, w := range strings.Fields(clean(b)) {
+	for w := range strings.FieldsSeq(clean(b)) {
 		if len(w) > 2 {
 			setB[w] = struct{}{}
 		}
@@ -2744,13 +2786,7 @@ func matchesExportFilters(rec *Record, filterCategory string, filterTags []strin
 	}
 	if len(filterTags) > 0 {
 		for _, reqTag := range filterTags {
-			found := false
-			for _, existingTag := range rec.Tags {
-				if reqTag == existingTag {
-					found = true
-					break
-				}
-			}
+			found := slices.Contains(rec.Tags, reqTag)
 			if !found {
 				return false
 			}
@@ -2887,9 +2923,7 @@ func (m *MemoryStore) ImportJSONL(ctx context.Context, safePath string, mergeStr
 
 // DeleteStandards removes standards by category or specific package path prefix.
 func (s *MemoryStore) DeleteStandards(ctx context.Context, category, pkg string) (int, error) {
-	if category == "" && pkg == "" {
-		return 0, fmt.Errorf("must specify either category or package")
-	}
+	// Allow empty category and pkg to denote a global domain sweep
 	if category != "" && !HarvestedCategories[category] {
 		return 0, fmt.Errorf("category %q is not a valid standards category", category)
 	}
@@ -2918,12 +2952,17 @@ func (s *MemoryStore) DeleteStandards(ctx context.Context, category, pkg string)
 		return rec, nil
 	}
 
+	// Global Domain Sweep Delegation
+	if category == "" && pkg == "" {
+		return s.DeleteDomain(ctx, DomainStandards)
+	}
+
 	// First pass: collect matching domains logic
 	if category != "" {
 		if err := s.db.View(func(txn *badger.Txn) error {
 			it := txn.NewIterator(badger.DefaultIteratorOptions)
 			defer it.Close()
-			prefix := []byte(fmt.Sprintf("_idx:cat:%s:", strings.ToLower(category)))
+			prefix := fmt.Appendf(nil, "_idx:cat:%s:", strings.ToLower(category))
 			for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
 				if vErr := it.Item().Value(func(kVal []byte) error {
 					key := string(kVal)
@@ -2962,10 +3001,7 @@ func (s *MemoryStore) DeleteStandards(ctx context.Context, category, pkg string)
 	// Delete in chunks to avoid ErrTxnTooBig
 	batchSize := 500
 	for i := 0; i < len(keysToDelete); i += batchSize {
-		end := i + batchSize
-		if end > len(keysToDelete) {
-			end = len(keysToDelete)
-		}
+		end := min(i+batchSize, len(keysToDelete))
 		chunk := keysToDelete[i:end]
 
 		err := s.UpdateWithRetry(func(txn *badger.Txn) error {
@@ -2986,9 +3022,14 @@ func (s *MemoryStore) DeleteStandards(ctx context.Context, category, pkg string)
 
 	// Purge from Bleve search index
 	if s.search != nil && len(keysToDelete) > 0 {
-		for _, key := range keysToDelete {
-			if dErr := s.search.Delete(key); dErr != nil {
-				slog.Warn("Failed to purge key from search index", "key", key, "error", dErr)
+		for start := 0; start < len(keysToDelete); start += s.maxBatchSize {
+			end := start + s.maxBatchSize
+			if end > len(keysToDelete) {
+				end = len(keysToDelete)
+			}
+			chunk := keysToDelete[start:end]
+			if dErr := s.search.DeleteBatch(chunk); dErr != nil {
+				slog.Warn("Failed to purge batch from search index", "error", dErr)
 			}
 		}
 	}
@@ -2999,9 +3040,7 @@ func (s *MemoryStore) DeleteStandards(ctx context.Context, category, pkg string)
 
 // DeleteProjects removes projects by category or specific package path prefix.
 func (s *MemoryStore) DeleteProjects(ctx context.Context, category, pkg string) (int, error) {
-	if category == "" && pkg == "" {
-		return 0, fmt.Errorf("must specify either category or package")
-	}
+	// Allow empty category and pkg to denote a global domain sweep
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -3026,11 +3065,16 @@ func (s *MemoryStore) DeleteProjects(ctx context.Context, category, pkg string) 
 		return rec, nil
 	}
 
+	// Global Domain Sweep Delegation
+	if category == "" && pkg == "" {
+		return s.DeleteDomain(ctx, DomainProjects)
+	}
+
 	if category != "" {
 		if err := s.db.View(func(txn *badger.Txn) error {
 			it := txn.NewIterator(badger.DefaultIteratorOptions)
 			defer it.Close()
-			prefix := []byte(fmt.Sprintf("_idx:cat:%s:", strings.ToLower(category)))
+			prefix := fmt.Appendf(nil, "_idx:cat:%s:", strings.ToLower(category))
 			for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
 				if vErr := it.Item().Value(func(kVal []byte) error {
 					key := string(kVal)
@@ -3072,10 +3116,7 @@ func (s *MemoryStore) DeleteProjects(ctx context.Context, category, pkg string) 
 
 	batchSize := 500
 	for i := 0; i < len(keysToDelete); i += batchSize {
-		end := i + batchSize
-		if end > len(keysToDelete) {
-			end = len(keysToDelete)
-		}
+		end := min(i+batchSize, len(keysToDelete))
 		chunk := keysToDelete[i:end]
 
 		err := s.UpdateWithRetry(func(txn *badger.Txn) error {
@@ -3095,9 +3136,14 @@ func (s *MemoryStore) DeleteProjects(ctx context.Context, category, pkg string) 
 	}
 
 	if s.search != nil && len(keysToDelete) > 0 {
-		for _, key := range keysToDelete {
-			if dErr := s.search.Delete(key); dErr != nil {
-				slog.Warn("Failed to purge key from search index", "key", key, "error", dErr)
+		for start := 0; start < len(keysToDelete); start += s.maxBatchSize {
+			end := start + s.maxBatchSize
+			if end > len(keysToDelete) {
+				end = len(keysToDelete)
+			}
+			chunk := keysToDelete[start:end]
+			if dErr := s.search.DeleteBatch(chunk); dErr != nil {
+				slog.Warn("Failed to purge batch from search index", "error", dErr)
 			}
 		}
 	}
@@ -3157,10 +3203,7 @@ func (s *MemoryStore) PurgeDomain(ctx context.Context, targetDomain string) (int
 
 	batchSize := 500
 	for i := 0; i < len(keysToDelete); i += batchSize {
-		end := i + batchSize
-		if end > len(keysToDelete) {
-			end = len(keysToDelete)
-		}
+		end := min(i+batchSize, len(keysToDelete))
 		chunk := keysToDelete[i:end]
 
 		err := s.UpdateWithRetry(func(txn *badger.Txn) error {
@@ -3237,10 +3280,7 @@ func (s *MemoryStore) PruneDomain(ctx context.Context, targetDomain string, days
 
 	batchSize := 500
 	for i := 0; i < len(keysToDelete); i += batchSize {
-		end := i + batchSize
-		if end > len(keysToDelete) {
-			end = len(keysToDelete)
-		}
+		end := min(i+batchSize, len(keysToDelete))
 		chunk := keysToDelete[i:end]
 
 		err := s.UpdateWithRetry(func(txn *badger.Txn) error {

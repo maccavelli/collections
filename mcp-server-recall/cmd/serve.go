@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -185,8 +186,18 @@ func startStreamableHTTPAPI(ctx context.Context, mcpServer *server.MCPRecallServ
 		return readOnly
 	}, nil)
 
+	internalStreamHandler := mcp.NewStreamableHTTPHandler(func(req *http.Request) *mcp.Server {
+		internalSrv := mcp.NewServer(&mcp.Implementation{
+			Name:    config.Name + "-internal",
+			Version: Version,
+		}, &mcp.ServerOptions{Logger: slog.Default()})
+		mcpServer.RegisterSafeToolsInternal(internalSrv)
+		return internalSrv
+	}, nil)
+
 	mux := http.NewServeMux()
 	mux.Handle("/mcp", newAuditMiddleware(streamHandler))
+	mux.Handle("/mcp/internal", &localhostMiddleware{next: newAuditMiddleware(internalStreamHandler)})
 
 	srv := &http.Server{
 		Addr:    fmt.Sprintf(":%d", port),
@@ -214,6 +225,23 @@ func newAuditMiddleware(next http.Handler) *auditMiddleware {
 		next:     next,
 		sessions: make(map[string]string),
 	}
+}
+
+type localhostMiddleware struct {
+	next http.Handler
+}
+
+func (lm *localhostMiddleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	if host != "127.0.0.1" && host != "::1" && host != "localhost" {
+		slog.Warn("Blocked external request to internal CLI endpoint", "remote_addr", r.RemoteAddr)
+		http.Error(w, "Forbidden: internal CLI endpoint is bound to localhost", http.StatusForbidden)
+		return
+	}
+	lm.next.ServeHTTP(w, r)
 }
 
 type initializeParams struct {

@@ -1,6 +1,7 @@
 package memory
 
 import (
+	"maps"
 	"mcp-server-recall/internal/config"
 
 	"context"
@@ -196,7 +197,7 @@ func BenchmarkMemoryStore(b *testing.B) {
 
 	ctx := context.Background()
 	// Seed with 1000 items
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		_, _ = store.Save(ctx, "", fmt.Sprintf("key-%d", i), fmt.Sprintf("content block for record %d", i), "perf-test", []string{"tag"}, "", 0)
 	}
 
@@ -232,7 +233,7 @@ func TestDatabaseSizeConstraints(t *testing.T) {
 
 	// Write 50 entries of ~10KB each
 	largeContent := strings.Repeat("x", 10*1024)
-	for i := 0; i < 50; i++ {
+	for i := range 50 {
 		key := fmt.Sprintf("entry-%d", i)
 		_, err := store.Save(ctx, "", key, largeContent, "test", []string{"size-test"}, "", 0)
 		if err != nil {
@@ -241,8 +242,8 @@ func TestDatabaseSizeConstraints(t *testing.T) {
 	}
 
 	// Overwrite each entry 10 times (simulates real-world update patterns)
-	for round := 0; round < 10; round++ {
-		for i := 0; i < 50; i++ {
+	for round := range 10 {
+		for i := range 50 {
 			key := fmt.Sprintf("entry-%d", i)
 			content := fmt.Sprintf("round-%d: %s", round, largeContent[:5*1024])
 			_, err := store.Save(ctx, "", key, content, "test", []string{"size-test", "updated"}, "", 0)
@@ -442,9 +443,7 @@ type mockSearchEngine struct {
 }
 
 func (m *mockSearchEngine) Rebuild(ctx context.Context, docs map[string]*search.Document) error {
-	for k, v := range docs {
-		m.indexed[k] = v
-	}
+	maps.Copy(m.indexed, docs)
 	return nil
 }
 func (m *mockSearchEngine) Index(id string, doc *search.Document) error {

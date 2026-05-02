@@ -79,7 +79,7 @@ func TestIndexBatch_BulkWrite(t *testing.T) {
 	defer engine.Close()
 
 	docs := make(map[string]*Document, 50)
-	for i := 0; i < 50; i++ {
+	for i := range 50 {
 		docs[fmt.Sprintf("doc-%d", i)] = &Document{
 			Content:  fmt.Sprintf("Document number %d about Go performance", i),
 			Category: "testing",
@@ -134,7 +134,7 @@ func TestDelete_RemovesFromIndex(t *testing.T) {
 
 func TestDeleteBatch_BulkRemoval(t *testing.T) {
 	docs := make(map[string]*Document, 10)
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		docs[fmt.Sprintf("batch-%d", i)] = &Document{Content: fmt.Sprintf("batch content %d", i)}
 	}
 
@@ -143,7 +143,7 @@ func TestDeleteBatch_BulkRemoval(t *testing.T) {
 
 	// Delete first 5.
 	ids := make([]string, 5)
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		ids[i] = fmt.Sprintf("batch-%d", i)
 	}
 
@@ -311,7 +311,7 @@ func TestMergeHits_Deduplication(t *testing.T) {
 
 func BenchmarkSearch_1000Docs(b *testing.B) {
 	docs := make(map[string]*Document, 1000)
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		docs[fmt.Sprintf("doc-%d", i)] = &Document{
 			Content:  fmt.Sprintf("Document %d about Go systems engineering and performance optimization", i),
 			Category: "benchmark",

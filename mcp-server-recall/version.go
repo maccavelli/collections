@@ -6,7 +6,7 @@ import (
 )
 
 // Version is the current version of the Recall MCP server.
-var Version = "v4.2.10"
+var Version = "v4.2.11"
 
 func printVersion() {
 	fmt.Fprintf(os.Stderr, "mcp-server-recall version %s\n", Version)

@@ -14,30 +14,23 @@ import (
 	"mcp-server-recall/internal/memory"
 )
 
-
-func (rs *MCPRecallServer) handleHarvestStandards(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	return rs.handleHarvest(ctx, req, memory.DomainStandards)
+func (rs *MCPRecallServer) handleHarvestStandards(ctx context.Context, req *mcp.CallToolRequest, args HarvestStandardsInput) (*mcp.CallToolResult, any, error) {
+	return rs.handleHarvest(ctx, req, args.TargetPath, memory.DomainStandards)
 }
 
-func (rs *MCPRecallServer) handleHarvestProjects(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	return rs.handleHarvest(ctx, req, memory.DomainProjects)
+func (rs *MCPRecallServer) handleHarvestProjects(ctx context.Context, req *mcp.CallToolRequest, args HarvestProjectsInput) (*mcp.CallToolResult, any, error) {
+	return rs.handleHarvest(ctx, req, args.TargetPath, memory.DomainProjects)
 }
 
-func (rs *MCPRecallServer) handleHarvest(ctx context.Context, req *mcp.CallToolRequest, targetDomain string) (*mcp.CallToolResult, error) {
+func (rs *MCPRecallServer) handleHarvest(ctx context.Context, _ *mcp.CallToolRequest, targetPath string, targetDomain string) (*mcp.CallToolResult, any, error) {
 	startHarvest := time.Now()
-	var args struct {
-		TargetPath string `json:"target_path"`
-	}
-	if err := json.Unmarshal(req.Params.Arguments, &args); err != nil {
-		return nil, fmt.Errorf("invalid parameters: %w", err)
-	}
 
-	resolvedPkg, err := harvest.ResolveSource(ctx, args.TargetPath)
+	resolvedPkg, err := harvest.ResolveSource(ctx, targetPath)
 	if err != nil {
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Resolver Error: %v", err)}},
 			IsError: true,
-		}, nil
+		}, nil, nil
 	}
 
 	var res *harvest.HarvestResult
@@ -55,7 +48,7 @@ func (rs *MCPRecallServer) handleHarvest(ctx context.Context, req *mcp.CallToolR
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Harvest Engine critical failure: %v", err)}},
 			IsError: true,
-		}, nil
+		}, nil, nil
 	}
 
 	// Maintenance Mode: CheckDrift
@@ -65,7 +58,7 @@ func (rs *MCPRecallServer) handleHarvest(ctx context.Context, req *mcp.CallToolR
 
 	if !drifted {
 		return &mcp.CallToolResult{
-			StructuredContent: map[string]interface{}{
+			StructuredContent: map[string]any{
 				"summary": fmt.Sprintf("No API drift detected in %s domain. Package structurally identical to stored record.", targetDomain),
 				"data": map[string]string{
 					"checksum": res.Checksum,
@@ -73,7 +66,7 @@ func (rs *MCPRecallServer) handleHarvest(ctx context.Context, req *mcp.CallToolR
 					"domain":   targetDomain,
 				},
 			},
-		}, nil
+		}, nil, nil
 	}
 
 	// We drift! Process the ingestion natively.
@@ -87,9 +80,9 @@ func (rs *MCPRecallServer) handleHarvest(ctx context.Context, req *mcp.CallToolR
 	}
 
 	return &mcp.CallToolResult{
-		StructuredContent: map[string]interface{}{
+		StructuredContent: map[string]any{
 			"summary": fmt.Sprintf("%s Extracted %d structural symbols.", msg, stored),
-			"data": map[string]interface{}{
+			"data": map[string]any{
 				"symbols_harvested": len(res.Symbols),
 				"batch_errors":      batchErrs,
 				"checksum":          res.Checksum,
@@ -97,7 +90,7 @@ func (rs *MCPRecallServer) handleHarvest(ctx context.Context, req *mcp.CallToolR
 				"domain":            targetDomain,
 			},
 		},
-	}, nil
+	}, nil, nil
 }
 
 func (rs *MCPRecallServer) hasDrifted(ctx context.Context, domain, pkg string, newChecksum string) bool {
@@ -248,10 +241,7 @@ func (rs *MCPRecallServer) writeHarvestBatch(ctx context.Context, batch []memory
 	}
 
 	for i := 0; i < len(batch); i += chunkSize {
-		end := i + chunkSize
-		if end > len(batch) {
-			end = len(batch)
-		}
+		end := min(i+chunkSize, len(batch))
 		chunk := batch[i:end]
 		count, errors, bErr := rs.store.SaveBatch(ctx, chunk)
 		stored += count

@@ -481,13 +481,13 @@ func (e *Engine) extractDeps(t types.Type, deps map[string]bool) {
 		e.extractDeps(t.Elem(), deps)
 	case *types.Signature:
 		if params := t.Params(); params != nil {
-			for i := 0; i < params.Len(); i++ {
-				e.extractDeps(params.At(i).Type(), deps)
+			for v := range params.Variables() {
+				e.extractDeps(v.Type(), deps)
 			}
 		}
 		if results := t.Results(); results != nil {
-			for i := 0; i < results.Len(); i++ {
-				e.extractDeps(results.At(i).Type(), deps)
+			for v := range results.Variables() {
+				e.extractDeps(v.Type(), deps)
 			}
 		}
 	}
@@ -495,8 +495,8 @@ func (e *Engine) extractDeps(t types.Type, deps map[string]bool) {
 
 func (e *Engine) extractStructDeps(sType *types.Struct) []string {
 	deps := make(map[string]bool)
-	for i := 0; i < sType.NumFields(); i++ {
-		e.extractDeps(sType.Field(i).Type(), deps)
+	for field := range sType.Fields() {
+		e.extractDeps(field.Type(), deps)
 	}
 	var res []string
 	for k := range deps {
@@ -508,13 +508,13 @@ func (e *Engine) extractStructDeps(sType *types.Struct) []string {
 func (e *Engine) extractSignatureDeps(sig *types.Signature) []string {
 	deps := make(map[string]bool)
 	if params := sig.Params(); params != nil {
-		for i := 0; i < params.Len(); i++ {
-			e.extractDeps(params.At(i).Type(), deps)
+		for v := range params.Variables() {
+			e.extractDeps(v.Type(), deps)
 		}
 	}
 	if results := sig.Results(); results != nil {
-		for i := 0; i < results.Len(); i++ {
-			e.extractDeps(results.At(i).Type(), deps)
+		for v := range results.Variables() {
+			e.extractDeps(v.Type(), deps)
 		}
 	}
 	var res []string

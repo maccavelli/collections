@@ -16,10 +16,10 @@ import (
 func ResolveSource(ctx context.Context, input string) (string, error) {
 	// 1. Is it a URL or explicit protocol? Normalize it.
 	parsedPath := input
-	if strings.HasPrefix(input, "web://") {
-		return "https://" + strings.TrimPrefix(input, "web://"), nil
-	} else if strings.HasPrefix(input, "go://") {
-		parsedPath = strings.TrimPrefix(input, "go://")
+	if after, ok := strings.CutPrefix(input, "web://"); ok {
+		return "https://" + after, nil
+	} else if after, ok := strings.CutPrefix(input, "go://"); ok {
+		parsedPath = after
 	} else if strings.HasPrefix(input, "http://") || strings.HasPrefix(input, "https://") {
 		parsedPath = strings.TrimPrefix(input, "https://pkg.go.dev/")
 		parsedPath = strings.TrimPrefix(parsedPath, "http://pkg.go.dev/")

@@ -13,54 +13,8 @@ import (
 )
 
 // ecosystemTools returns the tool catalog for aggregated ecosystem-domain retrieval (standards + projects).
-func (rs *MCPRecallServer) ecosystemTools() []toolDef {
-	return []toolDef{
-		{
-			Name:        "search_ecosystem",
-			Description: "Multi-dimensional aggregated search across harvested standards AND project code. Supports free-text queries with structured filters for package, symbol_type, interface, receiver, and domain. Use this tool for comprehensive RAG intelligence.",
-			InputSchema: json.RawMessage(`{
-				"type": "object",
-				"properties": {
-					"query":       { "type": "string", "description": "Free-text search query (BM25 + fuzzy ranking)." },
-					"package":     { "type": "string", "description": "Scope search to a specific package path prefix." },
-					"symbol_type": { "type": "string", "description": "Filter by symbol type: func, struct, interface, type." },
-					"interface":   { "type": "string", "description": "Find symbols implementing a specific interface." },
-					"receiver":    { "type": "string", "description": "Find methods bound to a specific receiver type." },
-					"domain":      { "type": "string", "description": "Filter by semantic domain: auth, database, api, middleware." },
-					"limit":       { "type": "integer", "description": "Max results to return (default: 20)." }
-				},
-				"required": ["query"]
-			}`),
-			Handler: rs.handleSearchEcosystem,
-		},
-		{
-			Name:        "get_ecosystem",
-			Description: "Fetches a single ecosystem entry by its exact key. Wraps standard Key lookup logic.",
-			InputSchema: json.RawMessage(`{
-				"type": "object",
-				"properties": {
-					"key": { "type": "string", "description": "Exact key of the record to retrieve." }
-				},
-				"required": ["key"]
-			}`),
-			Handler: rs.handleGetEcosystem,
-		},
-	}
-}
 
-func (rs *MCPRecallServer) handleSearchEcosystem(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	var args struct {
-		Query      string `json:"query"`
-		Package    string `json:"package"`
-		SymbolType string `json:"symbol_type"`
-		Interface  string `json:"interface"`
-		Receiver   string `json:"receiver"`
-		Domain     string `json:"domain"`
-		Limit      int    `json:"limit"`
-	}
-	if err := json.Unmarshal(req.Params.Arguments, &args); err != nil {
-		return nil, fmt.Errorf("invalid parameters: %w", err)
-	}
+func (rs *MCPRecallServer) handleSearchEcosystem(ctx context.Context, _ *mcp.CallToolRequest, args SearchEcosystemInput) (*mcp.CallToolResult, any, error) {
 
 	if args.Limit <= 0 {
 		args.Limit = 20
@@ -88,13 +42,13 @@ func (rs *MCPRecallServer) handleSearchEcosystem(ctx context.Context, req *mcp.C
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Error querying standards: %v", standardsErr)}},
 			IsError: true,
-		}, nil
+		}, nil, nil
 	}
 	if projectsErr != nil {
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Error querying projects: %v", projectsErr)}},
 			IsError: true,
-		}, nil
+		}, nil, nil
 	}
 
 	// Merge exactly as Bleve scored them natively initially, and then sort globally.
@@ -152,33 +106,27 @@ func (rs *MCPRecallServer) handleSearchEcosystem(ctx context.Context, req *mcp.C
 
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{&mcp.TextContent{Text: sb.String()}},
-	}, nil
+	}, nil, nil
 }
 
-func (rs *MCPRecallServer) handleGetEcosystem(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	var args struct {
-		Key string `json:"key"`
-	}
-	if err := json.Unmarshal(req.Params.Arguments, &args); err != nil {
-		return nil, fmt.Errorf("invalid parameters: %w", err)
-	}
+func (rs *MCPRecallServer) handleGetEcosystem(ctx context.Context, _ *mcp.CallToolRequest, args GetEcosystemInput) (*mcp.CallToolResult, any, error) {
 
 	rec, err := rs.store.Get(ctx, args.Key)
 	if err != nil {
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Ecosystem record not found: %v", err)}},
 			IsError: true,
-		}, nil
+		}, nil, nil
 	}
 
 	if rec.Domain != memory.DomainStandards && rec.Domain != memory.DomainProjects {
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Key '%s' is not in the ecosystem domains (domain: %s).", args.Key, rec.Domain)}},
 			IsError: true,
-		}, nil
+		}, nil, nil
 	}
 
-	data, marshalErr := json.MarshalIndent(map[string]interface{}{
+	data, marshalErr := json.MarshalIndent(map[string]any{
 		"key":         args.Key,
 		"title":       rec.Title,
 		"category":    rec.Category,
@@ -194,10 +142,10 @@ func (rs *MCPRecallServer) handleGetEcosystem(ctx context.Context, req *mcp.Call
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Failed to marshal record: %v", marshalErr)}},
 			IsError: true,
-		}, nil
+		}, nil, nil
 	}
 
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{&mcp.TextContent{Text: string(data)}},
-	}, nil
+	}, nil, nil
 }

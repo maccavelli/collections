@@ -3,11 +3,14 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"log/slog"
+	"os"
+	"os/signal"
 	"strconv"
+	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
-	"mcp-server-recall/internal/memory"
+	"mcp-server-recall/internal/client"
 )
 
 var pruneCmd = &cobra.Command{
@@ -23,21 +26,51 @@ var pruneCmd = &cobra.Command{
 				return fmt.Errorf("invalid days argument: %s", args[0])
 			}
 		}
-
-		ctx := context.Background()
-		store, err := memory.NewMemoryStore(ctx, Cfg.GetDBPath(), Cfg.EncryptionKey(), Cfg.SearchLimit(), Cfg.BatchSettings())
-		if err != nil {
-			return err
-		}
-		defer store.Close()
-
-		deleted, err := store.PruneDomain(ctx, "", days)
-		if err != nil {
-			return err
-		}
-		slog.Info("Global prune complete", "days_older_than", days, "deleted_count", deleted)
-		return nil
+		return runPruneViaMCP("all", days)
 	},
+}
+
+// runPruneViaMCP connects to the running Recall MCP server and calls the prune_records tool.
+func runPruneViaMCP(namespace string, days int) error {
+	port := Cfg.APIPort()
+	if port == 0 {
+		port = 7000
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	url := fmt.Sprintf("http://127.0.0.1:%d/mcp", port)
+	fmt.Fprintf(os.Stderr, "Connecting to local recall server at %s...\n", url)
+
+	mcpClient := client.NewMCPClient(url)
+	go mcpClient.Start(ctx)
+
+	for {
+		if mcpClient.RecallEnabled() {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+
+	fmt.Fprintf(os.Stderr, "Connected. Pruning namespace: %s (older than %d days)\n", namespace, days)
+
+	toolArgs := map[string]interface{}{
+		"namespace": namespace,
+		"days_old":  days,
+	}
+
+	res, err := mcpClient.CallDatabaseTool(ctx, "prune_records", toolArgs)
+	if err != nil {
+		return fmt.Errorf("prune_records(%s): %w", namespace, err)
+	}
+
+	fmt.Fprintln(RealStdout, res)
+	return nil
 }
 
 func init() {
@@ -58,20 +91,7 @@ func init() {
 						return fmt.Errorf("invalid days argument: %s", args[0])
 					}
 				}
-
-				ctx := context.Background()
-				store, err := memory.NewMemoryStore(ctx, Cfg.GetDBPath(), Cfg.EncryptionKey(), Cfg.SearchLimit(), Cfg.BatchSettings())
-				if err != nil {
-					return err
-				}
-				defer store.Close()
-
-				deleted, err := store.PruneDomain(ctx, domainCopy, days)
-				if err != nil {
-					return err
-				}
-				slog.Info("Pruned namespace", "domain", domainCopy, "days_older_than", days, "deleted_count", deleted)
-				return nil
+				return runPruneViaMCP(domainCopy, days)
 			},
 		}
 		pruneCmd.AddCommand(subCmd)

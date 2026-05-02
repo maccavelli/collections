@@ -47,17 +47,17 @@ func InitStorage(path string) (*BleveEngine, error) {
 	var err error
 
 	// Build scorch kvconfig from fixed footprints
-	kvconfig := map[string]interface{}{
+	kvconfig := map[string]any{
 		"unsafe_batch":       false,
 		"numSnapshotsToKeep": 1,
-		"scorchPersisterOptions": map[string]interface{}{
+		"scorchPersisterOptions": map[string]any{
 			"PersisterNapTimeMSec":      0,
 			"PersisterNapUnderNumFiles": 1000,
 			// 🛡️ CPU CAP: Native 2-Core Topology Match
 			"NumPersisterWorkers":           2,
 			"MaxSizeInMemoryMergePerWorker": 16000000,
 		},
-		"scorchMergePlanOptions": map[string]interface{}{
+		"scorchMergePlanOptions": map[string]any{
 			"MaxSegmentsPerTier":   10,
 			"MaxSegmentSize":       2000000,
 			"TierGrowth":           4.0,
@@ -97,7 +97,7 @@ func InitStorage(path string) (*BleveEngine, error) {
 func buildMapping() (*mapping.IndexMappingImpl, error) {
 	indexMapping := bleve.NewIndexMapping()
 
-	err := indexMapping.AddCustomTokenizer("tech_tokenizer", map[string]interface{}{
+	err := indexMapping.AddCustomTokenizer("tech_tokenizer", map[string]any{
 		"type":   "regexp",
 		"regexp": `[a-zA-Z0-9_\.]+`,
 	})
@@ -105,7 +105,7 @@ func buildMapping() (*mapping.IndexMappingImpl, error) {
 		return nil, err
 	}
 
-	err = indexMapping.AddCustomAnalyzer("tech_analyzer", map[string]interface{}{
+	err = indexMapping.AddCustomAnalyzer("tech_analyzer", map[string]any{
 		"type":          "custom",
 		"tokenizer":     "tech_tokenizer",
 		"token_filters": []string{"camelCase", "to_lower"},

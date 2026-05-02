@@ -83,7 +83,7 @@ func (c *MCPClient) Start(ctx context.Context) {
 // the structured or text result. Returns a descriptive error for every failure
 // path so callers can distinguish server crashes from parsing issues.
 // No timeout — harvest can run indefinitely until context cancelled.
-func (c *MCPClient) CallDatabaseTool(ctx context.Context, toolName string, arguments map[string]interface{}) (string, error) {
+func (c *MCPClient) CallDatabaseTool(ctx context.Context, toolName string, arguments map[string]any) (string, error) {
 	if !c.RecallEnabled() {
 		return "", fmt.Errorf("recall unavailable: circuit breaker active")
 	}
@@ -115,7 +115,7 @@ func (c *MCPClient) CallDatabaseTool(ctx context.Context, toolName string, argum
 
 	// Priority: StructuredContent first (harvest, metrics, etc.)
 	if result.StructuredContent != nil {
-		if sc, ok := result.StructuredContent.(map[string]interface{}); ok {
+		if sc, ok := result.StructuredContent.(map[string]any); ok {
 			if data, exists := sc["data"]; exists {
 				j, jErr := json.Marshal(data)
 				if jErr != nil {
