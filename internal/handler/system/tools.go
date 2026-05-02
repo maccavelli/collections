@@ -65,7 +65,7 @@ func (t *GetInternalLogsTool) Name() string {
 func (t *GetInternalLogsTool) Register(s *mcp.Server) {
 	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
-		Description: "[DIRECTIVE: Local FS Manipulation] Retrieve recent internal server logs. Use for diagnostic troubleshooting and auditing. Keywords: file, os, disk, local, path, system",
+		Description: "[DIRECTIVE: Audit Streaming] Retrieve recent internal server logs. Use for diagnostic troubleshooting and auditing natively. Keywords: debug, errors, daemon-logs, traces, faults",
 	}, t.Handle)
 }
 

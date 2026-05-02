@@ -29,7 +29,7 @@ func (t *ReadTextFileTool) Name() string { return "read_text_file" }
 func (t *ReadTextFileTool) Register(s *mcp.Server) {
 	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
-		Description: "[DIRECTIVE: Local FS Manipulation] Read, view, open, cat, or print a text file. Supports optional 'head' (first N lines) or 'tail' (last N lines) parameters. Keywords: file, os, disk, local, path, system",
+		Description: "[DIRECTIVE: File Inspection] Read, view, open, cat, or print a text file. Supports optional 'head' (first N lines) or 'tail' (last N lines) parameters natively. Keywords: read-content, view-code, cat, string-data, head, tail",
 	}, t.Handle)
 }
 
@@ -86,7 +86,7 @@ func (t *ReadMediaFileTool) Name() string { return "read_media_file" }
 func (t *ReadMediaFileTool) Register(s *mcp.Server) {
 	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
-		Description: "[DIRECTIVE: Local FS Manipulation] Read, view, or open an image or audio file. Returns base64 encoded data and its MIME type. Keywords: file, os, disk, local, path, system",
+		Description: "[DIRECTIVE: Multimedia Extraction] Read, view, or open an image or audio file. Returns base64 encoded data and its MIME type securely. Keywords: binary-data, base64, audio, pictures, images, visual, assets",
 	}, t.Handle)
 }
 
@@ -153,7 +153,7 @@ func (t *ReadMultipleFilesTool) Name() string { return "read_multiple_files" }
 func (t *ReadMultipleFilesTool) Register(s *mcp.Server) {
 	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
-		Description: "[DIRECTIVE: Local FS Manipulation] Read, view, or open multiple text files simultaneously. Failed reads are omitted gracefully. Keywords: file, os, disk, local, path, system",
+		Description: "[DIRECTIVE: Batch Inspection] Read, view, or open multiple text files simultaneously. Failed reads are omitted gracefully natively. Keywords: multi-read, batch-fetch, array-read, bulk-content",
 	}, t.Handle)
 }
 
@@ -196,7 +196,7 @@ func (t *WriteFileTool) Name() string { return "write_file" }
 func (t *WriteFileTool) Register(s *mcp.Server) {
 	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
-		Description: "[DIRECTIVE: Local FS Manipulation] Completely overwrite or create a file. CAUTION: Destructive operation. Keywords: file, os, disk, local, path, system",
+		Description: "[DIRECTIVE: Destructive Generation] Completely overwrite or create a file natively. CAUTION: Destructive operation dropping previous state natively. Keywords: create-new, overwrite-data, truncate, write-content, initialize",
 	}, t.Handle)
 }
 
@@ -236,7 +236,7 @@ func (t *EditFileTool) Name() string { return "edit_file" }
 func (t *EditFileTool) Register(s *mcp.Server) {
 	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
-		Description: "[DIRECTIVE: Local FS Manipulation] Apply precise line-based text edits, modify, replace, change, or rewrite a file. Returns a git-style diff. Keywords: file, os, disk, local, path, system",
+		Description: "[DIRECTIVE: Precise Patching] Apply exact line-based text edits, modify, replace, change, or rewrite a file natively. Returns a git-style diff globally. Keywords: modify-code, line-edit, string-replace, diff-patch, rewrite",
 	}, t.Handle)
 }
 
@@ -278,7 +278,7 @@ func (t *CreateDirectoryTool) Name() string { return "create_directory" }
 func (t *CreateDirectoryTool) Register(s *mcp.Server) {
 	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
-		Description: "[DIRECTIVE: Local FS Manipulation] Create nested directories (mkdir -p) recursively. Keywords: file, os, disk, local, path, system",
+		Description: "[DIRECTIVE: Structural Allocation] Create nested directories (mkdir -p) recursively establishing physical bounds. Keywords: mkdir, new-folder, path-creation, allocate-dir",
 	}, t.Handle)
 }
 
@@ -317,7 +317,7 @@ func (t *ListDirectoryTool) Name() string { return "list_directory" }
 func (t *ListDirectoryTool) Register(s *mcp.Server) {
 	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
-		Description: "[DIRECTIVE: Local FS Manipulation] List files and directories in a path. Outputs are prefixed with [FILE] or [DIR]. Keywords: file, os, disk, local, path, system",
+		Description: "[DIRECTIVE: Basic Enumeration] List files and directories natively in a path. Outputs are prefixed with [FILE] or [DIR] explicitly. Keywords: ls, show-files, directory-contents, map-folder",
 	}, t.Handle)
 }
 
@@ -361,7 +361,7 @@ func (t *ListDirectoryWithSizesTool) Name() string { return "list_directory_with
 func (t *ListDirectoryWithSizesTool) Register(s *mcp.Server) {
 	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
-		Description: "[DIRECTIVE: Local FS Manipulation] List files and directories with sizes. Results can be sorted by 'name' or 'size'. Keywords: file, os, disk, local, path, system",
+		Description: "[DIRECTIVE: Footprint Enumeration] List files and directories natively with exact sizes. Results can be sorted by 'name' or 'size' globally. Keywords: ls-la, file-sizes, heavy-files, sorted-directory",
 	}, t.Handle)
 }
 
@@ -430,7 +430,7 @@ func (t *DirectoryTreeTool) Name() string { return "directory_tree" }
 func (t *DirectoryTreeTool) Register(s *mcp.Server) {
 	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
-		Description: "[DIRECTIVE: Local FS Manipulation] Generate a recursive JSON directory tree. Supports exclusion glob patterns. Keywords: file, os, disk, local, path, system",
+		Description: "[DIRECTIVE: Topological Mapping] Generate a recursive JSON directory tree natively. Supports explicit exclusion glob patterns. Keywords: tree, recursive-map, project-structure, nested-folders",
 	}, t.Handle)
 }
 
@@ -480,7 +480,7 @@ func (t *MoveFileTool) Name() string { return "move_file" }
 func (t *MoveFileTool) Register(s *mcp.Server) {
 	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
-		Description: "[DIRECTIVE: Local FS Manipulation] Move or rename files and directories atomically. Keywords: file, os, disk, local, path, system",
+		Description: "[DIRECTIVE: Path Reallocation] Move or rename files and directories atomically natively. Keywords: mv, rename, migrate, shift-location",
 	}, t.Handle)
 }
 
@@ -526,7 +526,7 @@ func (t *SearchFilesTool) Name() string { return "search_files" }
 func (t *SearchFilesTool) Register(s *mcp.Server) {
 	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
-		Description: "[DIRECTIVE: Local FS Manipulation] Search, find, locate, or glob for files matching a pattern recursively. Keywords: file, os, disk, local, path, system",
+		Description: "[DIRECTIVE: Pattern Discovery] Search, find, locate, or glob for files matching a string pattern recursively natively. Keywords: find, glob, recursive-search, locate, pattern-match",
 	}, t.Handle)
 }
 
@@ -574,7 +574,7 @@ func (t *GetFileInfoTool) Name() string { return "get_file_info" }
 func (t *GetFileInfoTool) Register(s *mcp.Server) {
 	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
-		Description: "[DIRECTIVE: Local FS Manipulation] Retrieve metadata for a file or directory (size, modified time, permissions, type). Keywords: file, os, disk, local, path, system",
+		Description: "[DIRECTIVE: Metadata Extraction] Retrieve structural metadata for a file or directory natively (size, modified time, permissions, type). Keywords: stat, file-metadata, permissions, timestamps, attributes",
 	}, t.Handle)
 }
 
@@ -618,7 +618,7 @@ func (t *ListAllowedDirectoriesTool) Name() string { return "list_allowed_direct
 func (t *ListAllowedDirectoriesTool) Register(s *mcp.Server) {
 	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
-		Description: "[DIRECTIVE: Local FS Manipulation] List all root workspace bounds this server is permitted to access. Keywords: file, os, disk, local, path, system",
+		Description: "[DIRECTIVE: Boundary Verification] List all root workspace bounds this OS server is permitted to access natively. Keywords: allowed-paths, permissions-check, root-access, security-bounds",
 	}, t.Handle)
 }
 
@@ -643,7 +643,7 @@ func (t *CopyPathTool) Name() string { return "copy_path" }
 func (t *CopyPathTool) Register(s *mcp.Server) {
 	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
-		Description: "[DIRECTIVE: Local FS Manipulation] Copy a file or directory recursively. Keywords: file, os, disk, local, path, system",
+		Description: "[DIRECTIVE: Replication] Copy a file or directory recursively securely natively. Keywords: cp, duplicate, clone, replicate-data",
 	}, t.Handle)
 }
 
@@ -684,7 +684,7 @@ func (t *RemovePathTool) Name() string { return "remove_path" }
 func (t *RemovePathTool) Register(s *mcp.Server) {
 	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
-		Description: "[DIRECTIVE: Local FS Manipulation] Forcefully delete a file or directory recursively. CAUTION: Destructive. Keywords: file, os, disk, local, path, system",
+		Description: "[DIRECTIVE: Destructive Eradication] Forcefully delete a file or directory recursively natively. CAUTION: Destructive string override natively. Keywords: rm, delete, wipe, destroy, erase-path",
 	}, t.Handle)
 }
 
@@ -714,7 +714,7 @@ func (t *AppendFileTool) Name() string { return "append_file" }
 func (t *AppendFileTool) Register(s *mcp.Server) {
 	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
-		Description: "[DIRECTIVE: Local FS Manipulation] Append text to the end of a file. Creates the file if it does not exist. Keywords: file, os, disk, local, path, system",
+		Description: "[DIRECTIVE: Sequential Addition] Append text to the end of a file securely. Creates the file if it does not exist. Keywords: append-text, add-to-end, insert-bottom, concatenate",
 	}, t.Handle)
 }
 
@@ -744,7 +744,7 @@ func (t *GetFileHashTool) Name() string { return "get_file_hash" }
 func (t *GetFileHashTool) Register(s *mcp.Server) {
 	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
-		Description: "[DIRECTIVE: Local FS Manipulation] Calculate the SHA-256 hash of a file for integrity verification. Keywords: file, os, disk, local, path, system",
+		Description: "[DIRECTIVE: Cryptographic Integrity] Calculate the absolute SHA-256 hash of a file for integrity verification natively. Keywords: sha256, checksum, fingerprint, verify-hash, integrity-check",
 	}, t.Handle)
 }
 
