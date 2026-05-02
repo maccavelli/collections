@@ -38,59 +38,61 @@ Invoke DuckDuckGo tools via `magictools:call_proxy`:
 
 ---
 
-## ⚙️ Configuration
+## 📦 Installation & Setup
 
 ### 1. Build the Binary
 ```bash
 make build
 ```
 
-### 2. CLI Options
-| Option | Description |
-| :--- | :--- |
-| `-version` | Print the current version and exit. |
+### 2. MagicTools Orchestrator Configuration (Recommended)
+Add this to your `~/.config/mcp-server-magictools/servers.yaml` to run DuckDuckGo as an orchestrated sub-server:
 
----
+```yaml
+- name: ddg-search
+  command: /absolute/path/to/mcp-server-duckduckgo
+  env:
+    HOME: /absolute/path/to/home
+  memory_limit_mb: 1024
+  max_cpu_limit: 2
+  disabled: false
+  deferred_boot: true
+```
 
-## 🖥️ IDE Configuration Examples (Standalone)
+### 3. Direct IDE Configuration
+If you prefer to run the server standalone, use the following configuration for your IDE:
 
-### 🌌 Antigravity
-**Path:** `~/.gemini/mcp_config.json`
+#### 🌌 Antigravity / VSCode (Roo Code / Cline)
+**Paths:**
+- **Linux/macOS:** `~/.gemini/antigravity/mcp_config.json`
+- **Windows:** `%APPDATA%\Antigravity\mcp_config.json`
+
 ```json
 {
   "mcpServers": {
     "duckduckgo": {
-      "command": "/absolute/path/to/mcp-server-duckduckgo"
+      "command": "C:\\path\\to\\mcp-server-duckduckgo.exe",
+      "env": {
+        "HOME": "C:\\Users\\YourName"
+      }
     }
   }
 }
 ```
 
-### 💻 VSCode (Roo Code / Cline)
+#### 🤖 Claude Desktop
 **Paths:**
-*   **Linux/macOS**: `~/Library/Application Support/Code/User/globalStorage/rooveterinaryinc.roo-cline/settings/cline_mcp_settings.json`
-*   **Windows**: `%APPDATA%\Code\User\globalStorage\rooveterinaryinc.roo-cline\settings\cline_mcp_settings.json`
+- **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
 
 ```json
 {
   "mcpServers": {
     "duckduckgo": {
-      "command": "C:/path/to/mcp-server-duckduckgo.exe"
-    }
-  }
-}
-```
-
-### 🤖 Claude Desktop
-**Paths:**
-*   **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
-*   **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
-
-```json
-{
-  "mcpServers": {
-    "duckduckgo": {
-      "command": "/usr/local/bin/mcp-server-duckduckgo"
+      "command": "/absolute/path/to/mcp-server-duckduckgo",
+      "env": {
+        "HOME": "/absolute/path/to/home"
+      }
     }
   }
 }
