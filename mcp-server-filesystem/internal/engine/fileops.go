@@ -206,10 +206,7 @@ func TailFile(filePath string, n int) (string, error) {
 	buf := make([]byte, chunkSize) // Reuse buffer across iterations
 
 	for position > 0 && len(lines) < n {
-		size := int64(chunkSize)
-		if size > position {
-			size = position
-		}
+		size := min(int64(chunkSize), position)
 		position -= size
 
 		_, err := f.ReadAt(buf[:size], position)

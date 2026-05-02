@@ -128,7 +128,7 @@ func run(ctx context.Context, cancel context.CancelFunc, dirs []string, buffer *
 	mcpServer.MCPServer().AddResource(&mcp.Resource{
 		Name:        "Logs",
 		URI:         "filesystem://logs",
-		Description: "[DIRECTIVE: Local FS Manipulation] Server logs Keywords: file, os, disk, local, path, system",
+		Description: "[DIRECTIVE: Audit Streaming] Server logs natively. Keywords: debug, errors, daemon-logs, traces, faults",
 		MIMEType:    "text/plain",
 	}, func(ctx context.Context, req *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
 		return &mcp.ReadResourceResult{

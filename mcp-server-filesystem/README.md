@@ -1,104 +1,106 @@
-# 📂 Filesystem MCP Server
+# 📂 MagicFilesystem Sub-Server
 
-A specialized Model Context Protocol (MCP) server providing safe, sandboxed filesystem operations with strict path
-boundaries and atomic write guarantees.
+A high-performance Model Context Protocol (MCP) sub-server providing secure, sandboxed filesystem operations.
 
 ## 🚀 Overview
 
-The Filesystem server provides AI agents with a robust interface for local file manipulation. It is designed with
-safety as a first-class citizen, ensuring that operations are confined to allowed directories while providing advanced
-features like atomic writes and media support.
+`mcp-server-filesystem` provides a secure way for AI agents to interact with the local filesystem. It uses a "safe-list" approach, where only explicitly allowed directories are accessible to the agent.
 
 ### 📋 Core Pillars
 
-1. **Sandboxed Execution**: All operations are strictly constrained to a whitelist of allowed directories.
-2. **Atomic Integrity**: Uses temporary files and rename mechanisms to ensure robust writes and prevent corruption.
-3. **Cross-Platform Fidelity**: Consistent path handling and normalization across Windows, Linux, and macOS.
-4. **Rich Media Support**: Capable of reading text, multi-file batches, and rendering media (images/audio) as base64
-   payloads.
+1.  **Sandboxed Access**: Only directories passed as arguments (or via MCP roots) are accessible.
+2.  **Path Normalization**: Automatically resolves symbolic links and prevents directory traversal attacks.
+3.  **Comprehensive File Operations**: Supports reading, writing, moving, and listing files.
+4.  **Metadata Inspection**: Provides tools for checking file stats and permissions.
 
 ---
 
-## 🛠️ Tools
+## 🛠️ Usage & Functionality
 
-The server exposes 14 tools including:
+### Specialized Tools
 
-- **`read_text_file`**: Read a file with optional line-range bounding.
-- **`write_file`**: Atomic single-file write operations.
-- **`edit_file`**: Line-based structural diff editing (supports flexible matching).
-- **`list_directory`**: Granular file listing with metadata (sizes, types).
-- **`directory_tree`**: Full recursive JSON tree builder with exclusion support.
-- **`search_files`**: Glob-based pattern matching within the sandbox.
-- **`get_file_info`**: Detailed OS stat metadata (permissions, dates, sizes).
+*   **`list_directory`**: Lists contents of an allowed directory.
+*   **`read_file`**: Reads the content of a file within the sandbox.
+*   **`write_to_file`**: Creates or overwrites a file with new content.
+*   **`move_file`**: Safely renames or moves a file.
+*   **`get_file_info`**: Retrieves metadata like size and modification time.
+
+### Orchestration with MagicTools (Recommended)
+Invoke Filesystem tools via `magictools:call_proxy`:
+```json
+{
+  "name": "magictools:call_proxy",
+  "arguments": {
+    "urn": "filesystem:list_directory",
+    "arguments": { "path": "/home/user/project" }
+  }
+}
+```
 
 ---
 
-## ⚙️ Installation
+## ⚙️ Configuration
 
 ### 1. Build the Binary
-
 ```bash
-go build -o dist/mcp-server-filesystem main.go
+make build
 ```
 
-### 2. Configure for IDEs
-
-#### **Antigravity**
-
-Configure allowed directories via positional arguments:
-
-```yaml
-mcpServers:
-  filesystem:
-    command: "/absolute/path/to/dist/mcp-server-filesystem"
-    args: ["/path/to/allowed/dir1", "/path/to/allowed/dir2"]
+### 2. Execution Usage
+You MUST specify the directories the server is allowed to access.
+```bash
+./dist/mcp-server-filesystem /path/to/project /path/to/docs
 ```
 
-#### **VS Code (MCP Extension / Cline)**
+---
 
-Add to your `mcp_config.json`:
+## 🖥️ IDE Configuration Examples (Standalone)
 
+### 🌌 Antigravity
+**Path:** `~/.gemini/mcp_config.json`
 ```json
 {
   "mcpServers": {
     "filesystem": {
-      "command": "/absolute/path/to/dist/mcp-server-filesystem",
-      "args": ["/home/user/projects"],
-      "env": {
-        "PATH": "/usr/local/go/bin:/usr/local/bin:/usr/bin"
-      }
+      "command": "/absolute/path/to/mcp-server-filesystem",
+      "args": ["/home/user/my-allowed-dir"]
     }
   }
 }
 ```
 
-#### **Cursor IDE**
+### 💻 VSCode (Roo Code / Cline)
+**Paths:**
+*   **Linux/macOS**: `~/Library/Application Support/Code/User/globalStorage/rooveterinaryinc.roo-cline/settings/cline_mcp_settings.json`
+*   **Windows**: `%APPDATA%\Code\User\globalStorage\rooveterinaryinc.roo-cline\settings\cline_mcp_settings.json`
 
-1. **Settings** -> **Features** -> **MCP**.
-2. **+ Add New MCP Server**.
-3. Name: `Filesystem`
-4. Type: `stdio`
-5. Command: `/absolute/path/to/dist/mcp-server-filesystem`
-6. Arguments (Optional but recommended): `/path/to/project/root`
+```json
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "C:/path/to/mcp-server-filesystem.exe",
+      "args": ["C:/Users/Name/Documents"]
+    }
+  }
+}
+```
 
----
+### 🤖 Claude Desktop
+**Paths:**
+*   **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+*   **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
 
-## 📖 Use Cases
-
-- **Code Auditing**: Recursively scan directories for specific patterns using `search_files`.
-- **Automated Refactoring**: Apply precise code changes safely using `edit_file`.
-- **Asset Review**: Load and preview media assets directly through the MCP interface.
-
----
-
-## 💻 CLI Functionality
-
-Check version and verify accessibility:
-
-```bash
-./mcp-server-filesystem -version
+```json
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "/usr/local/bin/mcp-server-filesystem",
+      "args": ["/Users/Name/Projects"]
+    }
+  }
+}
 ```
 
 ---
 
-*Built with Go for security and stability.*
+*Part of the MagicTools Intelligence Suite. Built with Go.*
