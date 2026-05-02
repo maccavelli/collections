@@ -29,24 +29,6 @@ func (t *GoTestValidationTool) Register(s util.SessionProvider) {
 	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
 		Description: "[ROLE: CRITIC] [PHASE: VALIDATION] POST-EDIT TEST VALIDATOR: Runs go test and go vet after code writes to verify structural stability. [Routing Tags: go-vet, post-edit, run-tests, structural-stability]",
-		InputSchema: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"session_id": map[string]any{
-					"type":        "string",
-					"description": "CSSA backend storage pipeline correlation ID.",
-				},
-				"target": map[string]any{
-					"type":        "string",
-					"description": "Absolute path to the project root.",
-				},
-				"context": map[string]any{
-					"type":        "string",
-					"description": "Optional arbitrary strings or directives.",
-				},
-			},
-			"required": []string{"session_id", "target"},
-		},
 	}, t.Handle)
 }
 

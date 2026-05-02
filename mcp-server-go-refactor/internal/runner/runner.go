@@ -14,8 +14,9 @@ import (
 
 // Runner provides a hardened interface for Go command execution.
 type Runner struct {
-	Dir       string // Execution working directory
-	SlogLevel string // slog level if needed
+	Dir          string // Execution working directory
+	SlogLevel    string // slog level if needed
+	GoBinaryPath string // Absolute path to the provisioned Go binary
 }
 
 // Result captures the result of a Go command.
@@ -39,9 +40,13 @@ func (s *StreamResult) Wait() error {
 	return s.Cmd.Wait()
 }
 
+// DefaultGoBinary holds the absolute path to the provisioned Go binary.
+// It is updated by EnsureToolchain on startup.
+var DefaultGoBinary = "go"
+
 // New creates a new Go runner from a directory.
 func New(dir string) *Runner {
-	return &Runner{Dir: dir}
+	return &Runner{Dir: dir, GoBinaryPath: DefaultGoBinary}
 }
 
 // RunGo executes a 'go' command from the configured directory.
@@ -50,7 +55,7 @@ func (r *Runner) RunGo(ctx context.Context, subCmd string, args ...string) (*Res
 	defer cancel()
 
 	cleanArgs := r.cleanArgs(subCmd, args)
-	cmd := exec.CommandContext(tctx, "go", cleanArgs...)
+	cmd := exec.CommandContext(tctx, r.GoBinaryPath, cleanArgs...)
 	cmd.Dir = r.Dir
 
 	var stdout, stderr bytes.Buffer
@@ -79,7 +84,7 @@ func (r *Runner) RunGoStream(ctx context.Context, subCmd string, args ...string)
 	tctx, cancel := context.WithTimeout(ctx, 300*time.Second) // Longer timeout for streaming
 
 	cleanArgs := r.cleanArgs(subCmd, args)
-	cmd := exec.CommandContext(tctx, "go", cleanArgs...)
+	cmd := exec.CommandContext(tctx, r.GoBinaryPath, cleanArgs...)
 	cmd.Dir = r.Dir
 
 	stdout, err := cmd.StdoutPipe()

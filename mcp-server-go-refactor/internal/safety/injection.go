@@ -28,7 +28,7 @@ func (t *Tool) Name() string {
 func (t *Tool) Register(s util.SessionProvider) {
 	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
-		Description: "[ROLE: CRITIC] [PHASE: ADVERSARIAL] SQL INJECTION GUARD: Performs safety-focused AST analysis to detect unsafe dynamic database query and SQL string construction. Critical audit step to ensure refactoring has not introduced injection vectors. Produces vulnerability list with severity. [REQUIRES: brainstorm:threat_model_auditor] [Routing Tags: injection, sql-injection, safety, threat-vector, dynamic-sql]",
+		Description: "[ROLE: THREAT] [PHASE: ADVERSARIAL] SQL INJECTION GUARD: Performs safety-focused AST analysis to detect unsafe dynamic database query and SQL string construction. Critical audit step to ensure refactoring has not introduced injection vectors. Produces vulnerability list with severity. [REQUIRES: brainstorm:threat_model_auditor] [Routing Tags: injection, sql-injection, safety, threat-vector, dynamic-sql]",
 	}, t.Handle)
 }
 
@@ -80,7 +80,7 @@ func (t *Tool) Handle(ctx context.Context, req *mcp.CallToolRequest, input Injec
 		}
 
 		if recallAvailable {
-			secStds := t.Engine.EnsureRecallCache(ctx, session, "security_standards", "search", map[string]interface{}{"namespace": "ecosystem",
+			secStds := t.Engine.EnsureRecallCache(ctx, session, "security_standards", "search", map[string]any{"namespace": "ecosystem",
 				"query": "SQL and NoSQL injection security AST standards for " + input.Target,
 				"limit": 10,
 			})

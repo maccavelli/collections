@@ -62,7 +62,7 @@ func (t *Tool) Handle(ctx context.Context, req *mcp.CallToolRequest, input Compl
 
 		if recallAvailable {
 			// Query Recall securely via WaitGroup synchronization for baseline complexity standards
-			standards := t.Engine.EnsureRecallCache(ctx, session, "metrics_complexity", "search", map[string]interface{}{"namespace": "ecosystem", "query": "Go cyclomatic and cognitive complexity thresholds", "limit": 10})
+			standards := t.Engine.EnsureRecallCache(ctx, session, "metrics_complexity", "search", map[string]any{"namespace": "ecosystem", "query": "Go cyclomatic and cognitive complexity thresholds", "limit": 10})
 			if session.Metadata == nil {
 				session.Metadata = make(map[string]any)
 			}
@@ -79,7 +79,7 @@ func (t *Tool) Handle(ctx context.Context, req *mcp.CallToolRequest, input Compl
 			}
 
 			// Phase 3: Query Recall for intentional Architectural Decision Records (ADR) exemptions.
-			adrs := t.Engine.EnsureRecallCache(ctx, session, "adr_exemptions", "search", map[string]interface{}{"namespace": "ecosystem", "query": "ADR Exemptions and intentional legacy overrides", "package": input.Target, "limit": 5})
+			adrs := t.Engine.EnsureRecallCache(ctx, session, "adr_exemptions", "search", map[string]any{"namespace": "ecosystem", "query": "ADR Exemptions and intentional legacy overrides", "package": input.Target, "limit": 5})
 			if adrs != "" {
 				session.Metadata["recall_adrs"] = adrs
 			}

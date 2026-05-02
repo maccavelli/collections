@@ -145,7 +145,7 @@ func (t *Tool) Handle(ctx context.Context, req *mcp.CallToolRequest, input Moder
 
 		if recallAvailable {
 			// Dynamically query recall for specific structural AST definitions tailored to this package
-			astStds := t.Engine.EnsureRecallCache(ctx, session, "modernizer_ast", "search", map[string]interface{}{"namespace": "ecosystem",
+			astStds := t.Engine.EnsureRecallCache(ctx, session, "modernizer_ast", "search", map[string]any{"namespace": "ecosystem",
 				"query":       "AST structural rules definitions modern standards",
 				"package":     input.Target,
 				"symbol_type": "struct",

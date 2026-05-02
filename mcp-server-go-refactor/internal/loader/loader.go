@@ -135,7 +135,7 @@ func Discover(ctx context.Context, pkgPath string) (*Result, error) {
 	}
 	discoveryCache.RUnlock()
 
-	v, err, _ := discoveryGroup.Do(abs, func() (interface{}, error) {
+	v, err, _ := discoveryGroup.Do(abs, func() (any, error) {
 		res, err := executeDiscovery(ctx, pkgPath, p, abs, isLocal, recursive)
 		if err != nil {
 			return nil, err
@@ -160,10 +160,10 @@ func fastLocalResolve(modPath string) string {
 	if err != nil {
 		return ""
 	}
-	for _, line := range strings.Split(string(data), "\n") {
+	for line := range strings.SplitSeq(string(data), "\n") {
 		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "module ") {
-			return strings.TrimSpace(strings.TrimPrefix(line, "module "))
+		if after, ok := strings.CutPrefix(line, "module "); ok {
+			return strings.TrimSpace(after)
 		}
 	}
 	return ""
@@ -243,7 +243,7 @@ func tryNeighborDiscovery(ctx context.Context, pkgPath string) (*Result, error) 
 
 	// Scan parents (up to 4 levels) to find siblings that look like the module
 	curr := wd
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		parent := filepath.Dir(curr)
 		if parent == curr {
 			break
@@ -339,7 +339,7 @@ func discoverViaGoList(ctx context.Context, p, abs string, isLocal, recursive bo
 		listArgs = []string{"list", "-m", "-json", "main"}
 	}
 
-	cmd := exec.CommandContext(tctx, "go", listArgs...)
+	cmd := exec.CommandContext(tctx, runner.DefaultGoBinary, listArgs...)
 	if dir != "" {
 		cmd.Dir = dir
 	}
@@ -416,12 +416,12 @@ func LoadPackages(ctx context.Context, pkgPath string, mode packages.LoadMode) (
 		return nil, err
 	}
 	// Check early if path isn't local
-	if strings.HasPrefix(res.Pattern, "./") {
-		full := filepath.Join(res.Workspace.ModuleRoot, strings.TrimPrefix(res.Pattern, "./"))
-		if strings.HasSuffix(full, "/...") {
-			full = strings.TrimSuffix(full, "/...")
-		} else if strings.HasSuffix(full, "...") {
-			full = strings.TrimSuffix(full, "...")
+	if after, ok := strings.CutPrefix(res.Pattern, "./"); ok {
+		full := filepath.Join(res.Workspace.ModuleRoot, after)
+		if before, ok := strings.CutSuffix(full, "/..."); ok {
+			full = before
+		} else if before, ok := strings.CutSuffix(full, "..."); ok {
+			full = before
 		}
 		if _, err := os.Stat(full); err != nil {
 			return nil, fmt.Errorf("local path not found: %s", full)

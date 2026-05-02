@@ -15,6 +15,7 @@ import (
 
 	"mcp-server-go-refactor/internal/hfsc"
 
+	"github.com/invopop/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -41,17 +42,11 @@ func (p *Pagination) Apply(length int) (start, end int) {
 	if limit <= 0 || limit > 1000 {
 		limit = 500
 	}
-	start = p.Offset
-	if start < 0 {
-		start = 0
-	}
+	start = max(p.Offset, 0)
 	if start > length {
 		start = length
 	}
-	end = start + limit
-	if end > length {
-		end = length
-	}
+	end = min(start+limit, length)
 	return start, end
 }
 
@@ -79,16 +74,15 @@ func HardenedAddTool[In any, Out any](
 	tool *mcp.Tool,
 	handler func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, Out, error),
 ) {
-	// Dynamically inject artifact_path mapping universally based on Option A schema ubiquity
-	if tool.InputSchema != nil {
-		if schemaMap, ok := tool.InputSchema.(map[string]any); ok {
-			if props, ok := schemaMap["properties"].(map[string]any); ok {
-				props["artifact_path"] = map[string]any{
-					"type":        "string",
-					"description": "Optional OS absolute path to route the generated output payload, bypassing JSON-RPC overhead.",
-				}
-			}
-		}
+	// Dynamically derive schema if omitted using reflection on the generic input type 'In'
+	if tool.InputSchema == nil {
+		r := new(jsonschema.Reflector)
+		r.ExpandedStruct = true
+		sch := r.Reflect(new(In))
+		b, _ := json.Marshal(sch)
+		var schemaMap map[string]any
+		json.Unmarshal(b, &schemaMap)
+		tool.InputSchema = schemaMap
 	}
 
 	s := sp.MCPServer()
@@ -122,7 +116,7 @@ func HardenedAddTool[In any, Out any](
 		if isOrchestrated {
 			var artifactPath string
 			if inStr, mErr := json.Marshal(input); mErr == nil {
-				var inMap map[string]interface{}
+				var inMap map[string]any
 				if json.Unmarshal(inStr, &inMap) == nil {
 					if p, ok := inMap["artifact_path"].(string); ok && strings.TrimSpace(p) != "" {
 						artifactPath = strings.TrimSpace(p)
@@ -187,7 +181,7 @@ func HardenedAddTool[In any, Out any](
 				Category:      tool.Name,
 			}
 
-			sigBytes, _ := json.Marshal(map[string]interface{}{"__orchestrator_signal": signal})
+			sigBytes, _ := json.Marshal(map[string]any{"__orchestrator_signal": signal})
 			res.Content = append(res.Content, &mcp.TextContent{
 				Text: string(sigBytes),
 			})

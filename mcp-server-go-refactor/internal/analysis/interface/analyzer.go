@@ -34,7 +34,7 @@ func (t *Tool) Name() string {
 func (t *Tool) Register(s util.SessionProvider) {
 	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
-		Description: "[ROLE: ANALYZER] INTERFACE DISCOVERY: AST-driven scan for shared method signatures across structs in a package. Finds, locates, and groups types with 2+ common exported methods into candidate interface clusters. Use FIRST in the interface refactoring pipeline. [TRIGGERS: go-refactor:find_interface_implementations] [Routing Tags: find-interfaces, abstract-types, structure-interfaces, decouple]",
+		Description: "[ROLE: ANALYZER] INTERFACE DISCOVERY: AST-driven scan for shared method signatures across structs in a package. Finds, locates, and groups types with 2+ common exported methods into candidate interface clusters. Use FIRST in the interface refactoring pipeline. [TRIGGERS: go-refactor:find_interface_implementations, brainstorm:peer_review] [Routing Tags: find-interfaces, abstract-types, structure-interfaces, decouple]",
 	}, t.Handle)
 }
 
@@ -97,7 +97,7 @@ func (t *Tool) Handle(ctx context.Context, req *mcp.CallToolRequest, input Disco
 		}
 
 		if recallAvailable {
-			itfStds := t.Engine.EnsureRecallCache(ctx, session, "interface_ast", "search", map[string]interface{}{"namespace": "ecosystem",
+			itfStds := t.Engine.EnsureRecallCache(ctx, session, "interface_ast", "search", map[string]any{"namespace": "ecosystem",
 				"query": "Go interface abstraction AST structural standards for " + input.Target,
 				"limit": 10,
 			})
@@ -384,8 +384,8 @@ func DiscoverSharedInterfaces(ctx context.Context, pkgPath string) ([]interfaceS
 					ptr := types.NewPointer(obj.Type())
 					ms := types.NewMethodSet(ptr)
 					methods := []*types.Func{}
-					for i := 0; i < ms.Len(); i++ {
-						m := ms.At(i).Obj().(*types.Func)
+					for method := range ms.Methods() {
+						m := method.Obj().(*types.Func)
 						if m.Exported() {
 							methods = append(methods, m)
 						}

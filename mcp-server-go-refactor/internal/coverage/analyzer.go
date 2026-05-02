@@ -10,9 +10,11 @@ import (
 	"log/slog"
 	"mcp-server-go-refactor/internal/engine"
 	"mcp-server-go-refactor/internal/loader"
+	"mcp-server-go-refactor/internal/models"
 	"mcp-server-go-refactor/internal/registry"
 	"mcp-server-go-refactor/internal/util"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"time"
 
@@ -41,10 +43,9 @@ func Register(eng *engine.Engine) {
 }
 
 type CoverageInput struct {
-	SessionID string `json:"session_id,omitempty" jsonschema:"Optional CSSA backend storage pipeline correlation ID."`
-	Limit     int    `json:"limit,omitempty" jsonschema:"Maximum items to return. Defaults to 500 if unassigned."`
-	Offset    int    `json:"offset,omitempty" jsonschema:"Pagination offset slice start."`
-	Pkg       string `json:"pkg" jsonschema:"The package path to test"`
+	models.UniversalPipelineInput
+	Limit  int `json:"limit,omitempty" jsonschema:"Maximum items to return. Defaults to 500 if unassigned."`
+	Offset int `json:"offset,omitempty" jsonschema:"Pagination offset slice start."`
 }
 
 func (t *Tool) Handle(ctx context.Context, req *mcp.CallToolRequest, input CoverageInput) (*mcp.CallToolResult, any, error) {
@@ -57,11 +58,11 @@ func (t *Tool) Handle(ctx context.Context, req *mcp.CallToolRequest, input Cover
 	}
 
 	if t.Engine != nil {
-		session = t.Engine.LoadSession(ctx, input.Pkg)
+		session = t.Engine.LoadSession(ctx, input.Target)
 
 		if recallAvailable {
 			// Load historical coverage data for this package for delta analysis.
-			if history := t.Engine.LoadCrossSessionFromRecall(ctx, "gorefactor", input.Pkg); history != "" {
+			if history := t.Engine.LoadCrossSessionFromRecall(ctx, "gorefactor", input.Target); history != "" {
 				if session.Metadata == nil {
 					session.Metadata = make(map[string]any)
 				}
@@ -70,7 +71,7 @@ func (t *Tool) Handle(ctx context.Context, req *mcp.CallToolRequest, input Cover
 		}
 
 		// Sniff for native offline coverage files to force Test-Scaffolding pipelines locally
-		if _, err := os.Stat(filepath.Join(input.Pkg, "coverage.out")); err == nil {
+		if _, err := os.Stat(filepath.Join(input.Target, "coverage.out")); err == nil {
 			if session.Metadata == nil {
 				session.Metadata = make(map[string]any)
 			}
@@ -78,23 +79,30 @@ func (t *Tool) Handle(ctx context.Context, req *mcp.CallToolRequest, input Cover
 		}
 	}
 
-	result, err := Trace(ctx, input.Pkg)
+	result, err := Trace(ctx, input.Target)
+	var summary string
 	if err != nil {
-		res := &mcp.CallToolResult{IsError: true}
-		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
-			res.Content = []mcp.Content{
-				&mcp.TextContent{
-					Text: "TIMEOUT: The test suite execution was interrupted or exceeded the allocated time limit. This usually happens for large packages or slow environments. Try running tests for a smaller sub-package or increasing the proxy gateway timeout.",
-				},
+		if errors.Is(err, exec.ErrNotFound) {
+			result = &TraceResult{}
+			summary = "Test suite execution skipped: Go toolchain not found (offline degradation gracefully applied)."
+		} else {
+			res := &mcp.CallToolResult{IsError: true}
+			if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+				res.Content = []mcp.Content{
+					&mcp.TextContent{
+						Text: "TIMEOUT: The test suite execution was interrupted or exceeded the allocated time limit. This usually happens for large packages or slow environments. Try running tests for a smaller sub-package or increasing the proxy gateway timeout.",
+					},
+				}
+				return res, nil, nil
 			}
+			res.SetError(err)
 			return res, nil, nil
 		}
-		res.SetError(err)
-		return res, nil, nil
-	}
-	summary := "All tests passed successfully."
-	if len(result.Failures) > 0 {
-		summary = fmt.Sprintf("Found %d test failures in %s", len(result.Failures), input.Pkg)
+	} else {
+		summary = "All tests passed successfully."
+		if len(result.Failures) > 0 {
+			summary = fmt.Sprintf("Found %d test failures in %s", len(result.Failures), input.Target)
+		}
 	}
 
 	// ---- CSSA / Pagination Fallback Logic ----
@@ -126,8 +134,8 @@ func (t *Tool) Handle(ctx context.Context, req *mcp.CallToolRequest, input Cover
 		}
 
 		if recallAvailable {
-			testStds := t.Engine.EnsureRecallCache(ctx, session, "testing_standards", "search", map[string]interface{}{"namespace": "ecosystem",
-				"query": "Go test coverage thresholds, table-driven test patterns, testing convention standards, and benchmark requirements for " + input.Pkg,
+			testStds := t.Engine.EnsureRecallCache(ctx, session, "testing_standards", "search", map[string]any{"namespace": "ecosystem",
+				"query": "Go test coverage thresholds, table-driven test patterns, testing convention standards, and benchmark requirements for " + input.Target,
 				"limit": 15,
 			})
 			session.Metadata["recall_cache_testing"] = testStds
@@ -160,7 +168,7 @@ func (t *Tool) Handle(ctx context.Context, req *mcp.CallToolRequest, input Cover
 		t.Engine.SaveSession(session)
 
 		if recallAvailable {
-			t.Engine.PublishSessionToRecall(ctx, input.SessionID, input.Pkg, "coverage_traced", "native", "go_test_coverage_tracer", "", session.Metadata)
+			t.Engine.PublishSessionToRecall(ctx, input.SessionID, input.Target, "coverage_traced", "native", "go_test_coverage_tracer", "", session.Metadata)
 		}
 	}
 

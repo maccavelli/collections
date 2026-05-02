@@ -30,24 +30,6 @@ func (t *Tool) Register(s util.SessionProvider) {
 	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
 		Description: "[ROLE: MUTATOR] INTERFACE EXTRACTOR: Makes, creates, and extracts formal interface definitions from structs or verifies compatibility. Performs AST-driven interface generation. Use AFTER go_interface_discovery confirms it is safe. Produces extracted interface definition or compatibility verdict. In orchestrator mode, publishes telemetry.",
-		InputSchema: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"pkg": map[string]any{
-					"type":        "string",
-					"description": "The package path",
-				},
-				"structName": map[string]any{
-					"type":        "string",
-					"description": "The name of the struct",
-				},
-				"ifaceName": map[string]any{
-					"type":        "string",
-					"description": "The name of the interface to check against (optional). If omitted, extracts a new interface from the struct.",
-				},
-			},
-			"required": []string{"pkg"},
-		},
 	}, t.Handle)
 }
 
@@ -216,8 +198,8 @@ func AnalyzeInterface(ctx context.Context, pkgPath string, structName string, if
 	ptr := types.NewPointer(obj.Type())
 	missing := []string{}
 
-	for i := 0; i < iface.NumMethods(); i++ {
-		m := iface.Method(i)
+	for m := range iface.Methods() {
+		m := m
 		// We use LookupFieldOrMethod to check for existence; index and indirect are implicitly ignored.
 		selection, _, _ := types.LookupFieldOrMethod(ptr, true, targetPkg.Types, m.Name())
 		if selection == nil {
@@ -265,8 +247,8 @@ func ExtractInterface(ctx context.Context, pkgPath string, structName string) (*
 
 	// Iterate through all methods (including pointer receivers)
 	ms := types.NewMethodSet(ptr)
-	for i := 0; i < ms.Len(); i++ {
-		m := ms.At(i).Obj().(*types.Func)
+	for method := range ms.Methods() {
+		m := method.Obj().(*types.Func)
 		// Need go/ast for IsExported which we can import
 		if m.Exported() {
 			sig := m.Type().(*types.Signature)

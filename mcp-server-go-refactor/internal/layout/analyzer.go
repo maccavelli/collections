@@ -95,7 +95,7 @@ func (t *Tool) Handle(ctx context.Context, req *mcp.CallToolRequest, input Align
 		}
 
 		if recallAvailable {
-			structStds := t.Engine.EnsureRecallCache(ctx, session, "struct_layout", "search", map[string]interface{}{"namespace": "ecosystem",
+			structStds := t.Engine.EnsureRecallCache(ctx, session, "struct_layout", "search", map[string]any{"namespace": "ecosystem",
 				"query": "Go struct memory alignment optimization, field ordering standards, and cache-line padding conventions for " + input.Target,
 				"limit": 10,
 			})

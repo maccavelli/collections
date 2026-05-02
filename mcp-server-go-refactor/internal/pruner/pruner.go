@@ -28,7 +28,7 @@ func (t *Tool) Name() string {
 func (t *Tool) Register(s util.SessionProvider) {
 	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
-		Description: "[ROLE: ANALYZER] ORPHAN SYMBOL DETECTOR: Locates unreferenced exports. Eliminates, cleans, removes, and deletes unused symbols to reduce noise before downstream pipeline stages. WARNING: Deterministic AST mapping inherently generates false positives against reflection frameworks. Produces unused symbol list for cleanup planning. [REQUIRES: Completion of test coverage mappings] [Routing Tags: dead-code, orphan, unused-exports, prune, remove-code]",
+		Description: "[ROLE: ANALYZER] ORPHAN SYMBOL DETECTOR: Locates unreferenced exports. Eliminates, cleans, removes, and deletes unused symbols to reduce noise before downstream pipeline stages. WARNING: Deterministic AST mapping inherently generates false positives against reflection frameworks. Produces unused symbol list for cleanup planning. [REQUIRES: Completion of test coverage mappings] [TRIGGERS: brainstorm:peer_review] [Routing Tags: dead-code, orphan, unused-exports, prune, remove-code]",
 	}, t.Handle)
 }
 
@@ -77,7 +77,7 @@ func (t *Tool) Handle(ctx context.Context, req *mcp.CallToolRequest, input Prune
 		}
 
 		if recallAvailable {
-			prunerStds := t.Engine.EnsureRecallCache(ctx, session, "pruner_standards", "search", map[string]interface{}{"namespace": "ecosystem",
+			prunerStds := t.Engine.EnsureRecallCache(ctx, session, "pruner_standards", "search", map[string]any{"namespace": "ecosystem",
 				"query": "Go dead code removal conventions, API deprecation policies, export hygiene standards, and unused symbol management for " + input.Target,
 				"limit": 15,
 			})

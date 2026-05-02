@@ -2,6 +2,7 @@ package astsuite
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -32,7 +33,7 @@ func (t *Tool) Name() string {
 func (t *Tool) Register(s util.SessionProvider) {
 	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
-		Description: "[ROLE: ANALYZER] AST SUITE ANALYZER: Comprehensive structural diagnostic suite parsing Go AST bounds. Executes recursive sweeps tracking cyclomatic complexity limits, missing contextual propagation, dependency impact footprints, deprecated logic modernization scopes, and undocumented topologies. [Routing Tags: ast-scan, inspect, audit-code, structural-diagnostic, complexity-sweep]",
+		Description: "[ROLE: ANALYZER] AST SUITE ANALYZER: Comprehensive structural diagnostic suite parsing Go AST bounds. Executes recursive sweeps tracking cyclomatic complexity limits, missing contextual propagation, dependency impact footprints, deprecated logic modernization scopes, and undocumented topologies. [TRIGGERS: brainstorm:brainstorm_complexity_forecaster, brainstorm:analyze_evolution] [Routing Tags: ast-scan, inspect, audit-code, structural-diagnostic, complexity-sweep]",
 	}, t.Handle)
 }
 
@@ -74,42 +75,69 @@ func (t *Tool) Handle(ctx context.Context, req *mcp.CallToolRequest, input ASTSu
 	result := &ASTSuiteResult{}
 	var summary string
 
+	astHash := engine.ComputeASTHash(input.Target)
+	cacheKey := fmt.Sprintf("ast_cache:%s", astHash)
+
+	if db != nil {
+		var cachedRaw string
+		_ = db.View(func(tx *buntdb.Tx) error {
+			val, err := tx.Get(cacheKey)
+			if err == nil {
+				cachedRaw = val
+			}
+			return err
+		})
+		if cachedRaw != "" {
+			if err := json.Unmarshal([]byte(cachedRaw), result); err == nil {
+				summary = fmt.Sprintf("[CACHE HIT] Recovered structural metrics instantly for hash: %s", astHash[:8])
+				goto FINALIZE
+			}
+		}
+	}
+
 	// 1. Complexity
-	cRes, cErr := metrics.CalculateComplexity(ctx, db, input.Target)
-	if cErr == nil && cRes != nil {
+	if cRes, cErr := metrics.CalculateComplexity(ctx, db, input.Target); cErr == nil && cRes != nil {
 		result.Complexity = cRes
 		summary += fmt.Sprintf("Calculated complexity metrics for %d functions. ", len(cRes.Functions))
 	}
 
 	// 2. Modernization
-	mRes, mErr := modernizer.Analyze(ctx, input.Target)
-	if mErr == nil {
+	if mRes, mErr := modernizer.Analyze(ctx, input.Target); mErr == nil {
 		result.Modernization = mRes
 		summary += fmt.Sprintf("Identified %d modernization opportunities. ", len(mRes))
 	}
 
 	// 3. Documentation
-	dRes, dErr := docgen.GenerateDocs(ctx, input.Target)
-	if dErr == nil && dRes != nil {
+	if dRes, dErr := docgen.GenerateDocs(ctx, input.Target); dErr == nil && dRes != nil {
 		result.Documentation = dRes
 		summary += fmt.Sprintf("Found %d undocumented exported symbols. ", len(dRes.MissingComments))
 	}
 
 	// 4. Dependencies
-	depRes, depErr := dependency.Analyze(ctx, input.Target)
-	if depErr == nil && depRes != nil {
+	if depRes, depErr := dependency.Analyze(ctx, input.Target); depErr == nil && depRes != nil {
 		result.Dependency = depRes
 		summary += fmt.Sprintf("Discovered %d transitive dependencies. ", len(depRes.Modules))
 	}
 
 	// 5. Layout / Cycler
 	if input.Context != "" {
-		lRes, lErr := layout.AnalyzeStructAlignment(ctx, input.Context, input.Target)
-		if lErr == nil && lRes != nil {
+		if lRes, lErr := layout.AnalyzeStructAlignment(ctx, input.Context, input.Target); lErr == nil && lRes != nil {
 			result.Alignment = lRes
 			summary += fmt.Sprintf("Analyzed alignment mapping for struct %s. ", input.Context)
 		}
 	}
+
+	// Cache result
+	if db != nil {
+		if b, err := json.Marshal(result); err == nil {
+			_ = db.Update(func(tx *buntdb.Tx) error {
+				_, _, err := tx.Set(cacheKey, string(b), nil)
+				return err
+			})
+		}
+	}
+
+FINALIZE:
 
 	if summary == "" {
 		summary = "AST suite executed, but no structural metrics were mapped locally."

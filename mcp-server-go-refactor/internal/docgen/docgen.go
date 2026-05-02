@@ -71,7 +71,7 @@ func (t *Tool) Handle(ctx context.Context, req *mcp.CallToolRequest, input DocIn
 		}
 
 		if recallAvailable {
-			godocStds := t.Engine.EnsureRecallCache(ctx, session, "godoc_standards", "search", map[string]interface{}{"namespace": "ecosystem",
+			godocStds := t.Engine.EnsureRecallCache(ctx, session, "godoc_standards", "search", map[string]any{"namespace": "ecosystem",
 				"query":       "godoc formatting conventions standard",
 				"package":     input.Target,
 				"symbol_type": "func",

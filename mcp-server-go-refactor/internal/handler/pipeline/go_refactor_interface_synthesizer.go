@@ -25,20 +25,6 @@ func (t *InterfaceSynthesizerTool) Register(s util.SessionProvider) {
 	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
 		Description: "[ROLE: MUTATOR] AST INTERFACE SYNTHESIZER: High-Fidelity State Conservation (HFSC) structural generator mathematically extrapolating unified type interface abstractions natively across disjointed structs. Performs exact overlapping method tracking and rewrites syntax cleanly securely. [Routing Tags: ast-synthesize, conserve-state, unified-types, interface-generation]",
-		InputSchema: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"session_id": map[string]any{
-					"type":        "string",
-					"description": "CSSA backend storage pipeline correlation ID.",
-				},
-				"target": map[string]any{
-					"type":        "string",
-					"description": "Absolute path to the target .go struct file to synthesize.",
-				},
-			},
-			"required": []string{"session_id", "target"},
-		},
 	}, t.Handle)
 }
 

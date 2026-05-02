@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"mcp-server-go-refactor/internal/models"
 	"mcp-server-go-refactor/internal/registry"
 	"mcp-server-go-refactor/internal/util"
+	"os/exec"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -66,12 +68,19 @@ func (t *Tool) Handle(ctx context.Context, _ *mcp.CallToolRequest, input ImpactI
 	}
 
 	impact, err := Analyze(ctx, pkg)
+	var summary string
 	if err != nil {
-		res := &mcp.CallToolResult{}
-		res.SetError(err)
-		return res, nil, nil
+		if errors.Is(err, exec.ErrNotFound) {
+			impact = &Impact{TargetModule: pkg}
+			summary = fmt.Sprintf("Dependency analysis for %s skipped: Go toolchain not found (offline degradation gracefully applied).", pkg)
+		} else {
+			res := &mcp.CallToolResult{}
+			res.SetError(err)
+			return res, nil, nil
+		}
+	} else {
+		summary = fmt.Sprintf("Dependency analysis for %s found %d modules", pkg, len(impact.Modules))
 	}
-	summary := fmt.Sprintf("Dependency analysis for %s found %d modules", pkg, len(impact.Modules))
 
 	if session != nil {
 		if session.Metadata == nil {
@@ -79,7 +88,7 @@ func (t *Tool) Handle(ctx context.Context, _ *mcp.CallToolRequest, input ImpactI
 		}
 
 		if recallAvailable {
-			depStds := t.Engine.EnsureRecallCache(ctx, session, "dependency_mgmt", "search", map[string]interface{}{"namespace": "ecosystem",
+			depStds := t.Engine.EnsureRecallCache(ctx, session, "dependency_mgmt", "search", map[string]any{"namespace": "ecosystem",
 				"query": "Go module dependency management standards, version pinning policies, and upgrade impact analysis rules for " + pkg,
 				"limit": 15,
 			})

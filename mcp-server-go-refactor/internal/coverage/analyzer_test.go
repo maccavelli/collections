@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"mcp-server-go-refactor/internal/models"
+
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -31,7 +33,7 @@ func TestTool_HandleTimeout(t *testing.T) {
 	cancel() // Immediate cancellation to simulate timeout
 
 	tool := &Tool{}
-	resp, _, err := tool.Handle(ctx, nil, CoverageInput{Pkg: "invalid"})
+	resp, _, err := tool.Handle(ctx, nil, CoverageInput{UniversalPipelineInput: models.UniversalPipelineInput{Target: "invalid"}})
 	if err != nil {
 		t.Fatalf("unexpected handler error: %v", err)
 	}

@@ -5,6 +5,8 @@ import (
 	"os"
 	"testing"
 
+	"mcp-server-go-refactor/internal/models"
+
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -19,7 +21,7 @@ func TestTool_Handle(t *testing.T) {
 	ctx := context.Background()
 	req := &mcp.CallToolRequest{}
 	input := CoverageInput{
-		Pkg: "mcp-server-go-refactor/internal/coverage",
+		UniversalPipelineInput: models.UniversalPipelineInput{Target: "mcp-server-go-refactor/internal/coverage"},
 	}
 
 	res, _, err := tool.Handle(ctx, req, input)

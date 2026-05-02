@@ -23,7 +23,9 @@ import (
 	"mcp-server-go-refactor/internal/handler"
 	"mcp-server-go-refactor/internal/handler/system"
 	"mcp-server-go-refactor/internal/loader"
+	"mcp-server-go-refactor/internal/runner"
 	"mcp-server-go-refactor/internal/server"
+	"mcp-server-go-refactor/internal/staging"
 	"mcp-server-go-refactor/internal/util"
 
 	"github.com/tidwall/buntdb"
@@ -99,6 +101,14 @@ func isExpectedShutdownErr(err error) bool {
 }
 
 func run(ctx context.Context, cancel context.CancelFunc, buffer *system.LogBuffer, reader io.Reader, writer io.Writer) error {
+	// Provision the standalone Go toolchain to ensure independence from host OS.
+	goBin, err := runner.EnsureToolchain(ctx, "1.26.2")
+	if err != nil {
+		slog.Warn("failed to provision isolated Go toolchain; attempting graceful degradation", "error", err)
+	} else {
+		runner.DefaultGoBinary = goBin
+	}
+
 	// Initialize persistent cache using platform-native cache directory.
 	cacheDir, err := os.UserCacheDir()
 	if err != nil {
@@ -124,6 +134,11 @@ func run(ctx context.Context, cancel context.CancelFunc, buffer *system.LogBuffe
 	} else {
 		slog.Warn("failed to read buntdb cache configuration", "error", err)
 	}
+
+	if err := staging.SetupIndexes(db); err != nil {
+		slog.Warn("failed to setup staging indexes", "error", err)
+	}
+
 	defer db.Close()
 
 	eng := engine.NewEngine(db)

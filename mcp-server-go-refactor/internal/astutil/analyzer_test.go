@@ -2,6 +2,7 @@ package astutil
 
 import (
 	"context"
+	"slices"
 	"testing"
 )
 
@@ -33,13 +34,7 @@ func TestExtractInterface(t *testing.T) {
 	if result == nil {
 		t.Fatal("expected result data")
 	}
-	found := false
-	for _, m := range result.Methods {
-		if m == "DoWork()" {
-			found = true
-			break
-		}
-	}
+	found := slices.Contains(result.Methods, "DoWork()")
 	if !found {
 		t.Errorf("expected to find DoWork() in methods, got: %v", result.Methods)
 	}
