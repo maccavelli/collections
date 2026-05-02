@@ -24,6 +24,7 @@ type ValidateDepsTool struct {
 
 func (t *ValidateDepsTool) Name() string { return "magicskills_validate_deps" }
 
+// ValidateDepsInput defines the structural representation for the entity.
 type ValidateDepsInput struct {
 	Name string `json:"name" jsonschema:"The skill name"`
 }
@@ -38,7 +39,7 @@ func (t *ValidateDepsTool) Register(s *mcp.Server) {
 func (t *ValidateDepsTool) Handle(ctx context.Context, request *mcp.CallToolRequest, input ValidateDepsInput) (*mcp.CallToolResult, any, error) {
 	if err := t.Engine.WaitReady(ctx); err != nil {
 		res := &mcp.CallToolResult{}
-		res.SetError(fmt.Errorf("engine initialization aborted: %v", err))
+		res.SetError(fmt.Errorf("engine initialization aborted: %w", err))
 		return res, nil, nil
 	}
 	if input.Name == "" {
@@ -76,7 +77,7 @@ func (t *ValidateDepsTool) Handle(ctx context.Context, request *mcp.CallToolRequ
 		Data    any    `json:"data"`
 	}{
 		Summary: summary,
-		Data: map[string]interface{}{
+		Data: map[string]any{
 			"skill_name": input.Name,
 			"found":      found,
 			"missing":    missing,
@@ -92,6 +93,7 @@ type AddRootTool struct {
 
 func (t *AddRootTool) Name() string { return "magicskills_add_root" }
 
+// AddRootInput defines the structural representation for the entity.
 type AddRootInput struct {
 	Path string `json:"path" jsonschema:"Absolute path to index"`
 }
@@ -106,7 +108,7 @@ func (t *AddRootTool) Register(s *mcp.Server) {
 func (t *AddRootTool) Handle(ctx context.Context, request *mcp.CallToolRequest, input AddRootInput) (*mcp.CallToolResult, any, error) {
 	if err := t.Engine.WaitReady(ctx); err != nil {
 		res := &mcp.CallToolResult{}
-		res.SetError(fmt.Errorf("engine initialization aborted: %v", err))
+		res.SetError(fmt.Errorf("engine initialization aborted: %w", err))
 		return res, nil, nil
 	}
 	if info, err := os.Stat(input.Path); err == nil && info.IsDir() {
@@ -115,13 +117,13 @@ func (t *AddRootTool) Handle(ctx context.Context, request *mcp.CallToolRequest, 
 		if err != nil {
 			slog.Error("discovery error while adding manual root", "error", err)
 			res := &mcp.CallToolResult{}
-			res.SetError(fmt.Errorf("discovery error: %v", err))
+			res.SetError(fmt.Errorf("discovery error: %w", err))
 			return res, nil, nil
 		}
 		if _, _, _, err := t.Engine.SyncDir(ctx, files); err != nil {
 			slog.Error("ingestion error while adding manual root", "error", err)
 			res := &mcp.CallToolResult{}
-			res.SetError(fmt.Errorf("sync error: %v", err))
+			res.SetError(fmt.Errorf("sync error: %w", err))
 			return res, nil, nil
 		}
 		summary := fmt.Sprintf("Added and indexed root: %s", input.Path)
@@ -145,6 +147,7 @@ type GetInternalLogsTool struct {
 
 func (t *GetInternalLogsTool) Name() string { return "get_internal_logs" }
 
+// LogsInput defines the structural representation for the entity.
 type LogsInput struct {
 	MaxLines int `json:"max_lines" jsonschema:"Max log lines to return (default 25)."`
 }
@@ -180,6 +183,7 @@ type HealthTool struct {
 
 func (t *HealthTool) Name() string { return "magicskills_health" }
 
+// HealthInput defines the structural representation for the entity.
 type HealthInput struct{}
 
 func (t *HealthTool) Register(s *mcp.Server) {
@@ -192,7 +196,7 @@ func (t *HealthTool) Register(s *mcp.Server) {
 func (t *HealthTool) Handle(ctx context.Context, _ *mcp.CallToolRequest, _ HealthInput) (*mcp.CallToolResult, any, error) {
 	if err := t.Engine.WaitReady(ctx); err != nil {
 		res := &mcp.CallToolResult{}
-		res.SetError(fmt.Errorf("engine initialization aborted: %v", err))
+		res.SetError(fmt.Errorf("engine initialization aborted: %w", err))
 		return res, nil, nil
 	}
 	broken := t.Engine.GetBrokenSkills()
@@ -207,7 +211,7 @@ func (t *HealthTool) Handle(ctx context.Context, _ *mcp.CallToolRequest, _ Healt
 		Data    any    `json:"data"`
 	}{
 		Summary: summary,
-		Data: map[string]interface{}{
+		Data: map[string]any{
 			"degraded_skills": broken,
 		},
 	}, nil

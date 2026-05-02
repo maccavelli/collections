@@ -20,6 +20,7 @@ type SyncTool struct {
 
 func (t *SyncTool) Name() string { return "magicskills_sync_skills" }
 
+// SyncInput defines the structural representation for the entity.
 type SyncInput struct{}
 
 func (t *SyncTool) Register(s *mcp.Server) {
@@ -32,7 +33,7 @@ func (t *SyncTool) Register(s *mcp.Server) {
 func (t *SyncTool) Handle(ctx context.Context, request *mcp.CallToolRequest, input SyncInput) (*mcp.CallToolResult, any, error) {
 	if err := t.Engine.WaitReady(ctx); err != nil {
 		res := &mcp.CallToolResult{}
-		res.SetError(fmt.Errorf("engine initialization aborted: %v", err))
+		res.SetError(fmt.Errorf("engine initialization aborted: %w", err))
 		return res, nil, nil
 	}
 	files, err := t.Scanner.Discover(ctx)
@@ -59,7 +60,7 @@ func (t *SyncTool) Handle(ctx context.Context, request *mcp.CallToolRequest, inp
 		Data    any    `json:"data"`
 	}{
 		Summary: summary,
-		Data: map[string]interface{}{
+		Data: map[string]any{
 			"added":   added,
 			"updated": updated,
 			"deleted": deleted,

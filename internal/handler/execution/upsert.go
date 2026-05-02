@@ -14,12 +14,14 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
+// UpsertTool defines the structural representation for the entity.
 type UpsertTool struct {
 	Engine *engine.Engine
 }
 
 func (t *UpsertTool) Name() string { return "magicskills_upsert" }
 
+// UpsertInput defines the structural representation for the entity.
 type UpsertInput struct {
 	Name          string   `json:"name" jsonschema:"The formal name of the skill"`
 	Description   string   `json:"description" jsonschema:"Brief description of what the skill does"`
@@ -38,7 +40,7 @@ func (t *UpsertTool) Register(s *mcp.Server) {
 func (t *UpsertTool) Handle(ctx context.Context, request *mcp.CallToolRequest, input UpsertInput) (*mcp.CallToolResult, any, error) {
 	if err := t.Engine.WaitReady(ctx); err != nil {
 		res := &mcp.CallToolResult{}
-		res.SetError(fmt.Errorf("engine initialization aborted: %v", err))
+		res.SetError(fmt.Errorf("engine initialization aborted: %w", err))
 		return res, nil, nil
 	}
 	if input.Name == "" || input.Description == "" || input.Content == "" {
@@ -57,7 +59,7 @@ func (t *UpsertTool) Handle(ctx context.Context, request *mcp.CallToolRequest, i
 
 	dirName := strings.ReplaceAll(strings.ToLower(input.Name), " ", "-")
 	targetDir := filepath.Join(targetRoot, dirName)
-	if err := os.MkdirAll(targetDir, 0755); err != nil {
+	if err := os.MkdirAll(targetDir, 0750); err != nil {
 		res := &mcp.CallToolResult{}
 		res.SetError(fmt.Errorf("failed to create skill directory: %w", err))
 		return res, nil, nil
@@ -82,7 +84,7 @@ func (t *UpsertTool) Handle(ctx context.Context, request *mcp.CallToolRequest, i
 	sb.WriteString(strings.TrimSpace(input.Content))
 	sb.WriteString("\n")
 
-	if err := os.WriteFile(targetFile, []byte(sb.String()), 0644); err != nil {
+	if err := os.WriteFile(targetFile, []byte(sb.String()), 0600); err != nil {
 		res := &mcp.CallToolResult{}
 		res.SetError(fmt.Errorf("failed to write skill file: %w", err))
 		return res, nil, nil
@@ -99,7 +101,7 @@ func (t *UpsertTool) Handle(ctx context.Context, request *mcp.CallToolRequest, i
 		Data    any    `json:"data"`
 	}{
 		Summary: fmt.Sprintf("Successfully upserted and indexed %s", input.Name),
-		Data: map[string]interface{}{
+		Data: map[string]any{
 			"path":   targetFile,
 			"target": targetRoot,
 		},

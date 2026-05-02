@@ -14,8 +14,8 @@ func TestInitServer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("initServer failed: %v", err)
 	}
-	defer store.Close()
-	defer scn.Watcher.Close()
+	defer func() { _ = store.Close() }()       // nolint:errcheck // ignore close error
+	defer func() { _ = scn.Watcher.Close() }() // nolint:errcheck // ignore close error
 
 	if eng == nil || scn == nil || h == nil {
 		t.Fatal("expected non-nil server components")
@@ -25,9 +25,9 @@ func TestInitServer(t *testing.T) {
 func TestInitSubsystems(t *testing.T) {
 	t.Setenv("MAGIC_SKILLS_DATA_DIR", t.TempDir())
 	lb := &handler.LogBuffer{}
-	store, eng, scn, _, _ := initServer(lb, nil)
-	defer store.Close()
-	defer scn.Watcher.Close()
+	store, eng, scn, _, _ := initServer(lb, nil) // nolint:errcheck // ignore initServer error
+	defer func() { _ = store.Close() }()         // nolint:errcheck // ignore close error
+	defer func() { _ = scn.Watcher.Close() }()   // nolint:errcheck // ignore close error
 
 	initSubsystems(t.Context(), eng, scn, lb, nil)
 }

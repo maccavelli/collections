@@ -8,10 +8,12 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
+// MCPServer defines the structural representation for the entity.
 type MCPServer struct {
 	mcpServer *mcp.Server
 }
 
+// NewMCPServer executes the designated operation.
 func NewMCPServer(name, version string, logger *slog.Logger) *MCPServer {
 	return &MCPServer{
 		mcpServer: mcp.NewServer(

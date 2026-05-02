@@ -27,7 +27,7 @@ type MCPClient struct {
 type telemetryEvent struct {
 	sessionID string
 	projectID string
-	payload   interface{}
+	payload   any
 }
 
 // NewMCPClient initializes a new Streamable HTTP MCP client.
@@ -36,7 +36,7 @@ func NewMCPClient(url string) *MCPClient {
 		URL:    url,
 		logger: slog.Default(),
 	}
-	for i := 0; i < 8; i++ {
+	for i := range 8 {
 		client.telemetryShards[i] = make(chan telemetryEvent, 2048)
 	}
 	return client
@@ -63,7 +63,7 @@ func (c *MCPClient) Start(ctx context.Context) {
 	c.mu.Lock()
 	if !c.workersStarted {
 		c.workersStarted = true
-		for i := 0; i < 8; i++ {
+		for i := range 8 {
 			go c.workerFlusher(ctx, i)
 		}
 	}
@@ -112,10 +112,7 @@ func (c *MCPClient) Start(ctx context.Context) {
 					return
 				case <-time.After(backoff):
 				}
-				backoff = backoff * 2
-				if backoff > maxBackoff {
-					backoff = maxBackoff
-				}
+				backoff = min(backoff*2, maxBackoff)
 				continue
 			}
 
@@ -163,7 +160,7 @@ func (c *MCPClient) Start(ctx context.Context) {
 }
 
 // CallDatabaseTool generically executes remote database tools on the Recall server.
-func (c *MCPClient) CallDatabaseTool(ctx context.Context, toolName string, arguments map[string]interface{}) string {
+func (c *MCPClient) CallDatabaseTool(ctx context.Context, toolName string, arguments map[string]any) string {
 	if !c.RecallEnabled() {
 		return ""
 	}
@@ -186,7 +183,7 @@ func (c *MCPClient) CallDatabaseTool(ctx context.Context, toolName string, argum
 	}
 
 	if result.StructuredContent != nil {
-		if sc, ok := result.StructuredContent.(map[string]interface{}); ok {
+		if sc, ok := result.StructuredContent.(map[string]any); ok {
 			if data, exists := sc["data"]; exists {
 				j, _ := json.Marshal(data)
 				return string(j)
@@ -206,7 +203,7 @@ func (c *MCPClient) CallDatabaseTool(ctx context.Context, toolName string, argum
 }
 
 // SaveSession persists context state into the remote recall server.
-func (c *MCPClient) SaveSession(ctx context.Context, sessionID, projectID string, payload interface{}) error {
+func (c *MCPClient) SaveSession(ctx context.Context, sessionID, projectID string, payload any) error {
 	shardIdx := 0
 	if len(sessionID) > 0 {
 		shardIdx = int(sessionID[0]) % 8
@@ -243,39 +240,68 @@ func (c *MCPClient) workerFlusher(ctx context.Context, shard int) {
 			if pID == "" {
 				pID = "global"
 			}
-			args := map[string]interface{}{
-			"server_id":     "magicskills",
-			"project_id":    pID,
-			"outcome":       "saved",
-			"session_id":    sID,
-			"model":         "native",
-			"token_spend":   0,
-			"trace_context": "async_push",
-			"state_data":    string(payloadBytes),
-		}
+			args := map[string]any{
+				"server_id":     "magicskills",
+				"project_id":    pID,
+				"outcome":       "saved",
+				"session_id":    sID,
+				"model":         "native",
+				"token_spend":   0,
+				"trace_context": "async_push",
+				"state_data":    string(payloadBytes),
+			}
 
-		retries := 15
-		backoff := 100 * time.Millisecond
+			retries := 15
+			backoff := 100 * time.Millisecond
 
-		for i := 0; i < retries; i++ {
-			res := c.CallDatabaseTool(ctx, "save_sessions", args)
-			if res != "" {
-				break
+			for i := range retries {
+				res := c.CallDatabaseTool(ctx, "save_sessions", args)
+				if res != "" {
+					break
+				}
+				if i == retries-1 {
+					c.logger.Warn("telemetry_push_failed: recall save_sessions returned empty repeatedly, dropping payload",
+						"server_id", "magicskills",
+						"session_id", event.sessionID,
+						"shard", shard,
+						"attempts", retries,
+					)
+				}
+				time.Sleep(backoff)
+				backoff *= 2
+				if backoff > 2*time.Second {
+					backoff = 2 * time.Second
+				}
 			}
-			if i == retries-1 {
-				c.logger.Warn("telemetry_push_failed: recall save_sessions returned empty repeatedly, dropping payload",
-					"server_id", "magicskills",
-					"session_id", event.sessionID,
-					"shard", shard,
-					"attempts", retries,
-				)
-			}
-			time.Sleep(backoff)
-			backoff *= 2
-			if backoff > 2*time.Second {
-				backoff = 2 * time.Second
-			}
-		}
 		} // end select
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Sessions Namespace Convenience API
+// ---------------------------------------------------------------------------
+
+// SearchSessions queries the recall sessions namespace with multi-dimensional
+// BM25/Jaccard search. Filters are optional — pass empty string to skip.
+// Returns empty string if recall is unavailable or no matches found.
+func (c *MCPClient) SearchSessions(ctx context.Context, query, projectID, serverID, outcome, traceContext string, limit int) string {
+	args := map[string]any{"query": query}
+	if limit > 0 {
+		args["limit"] = limit
+	}
+	if projectID != "" {
+		args["project_id"] = projectID
+	}
+	if serverID != "" {
+		args["server_id"] = serverID
+	}
+	if outcome != "" {
+		args["outcome"] = outcome
+	}
+	if traceContext != "" {
+		args["trace_context"] = traceContext
+	}
+	args["namespace"] = "sessions"
+	return c.CallDatabaseTool(ctx, "search", args)
+}
+

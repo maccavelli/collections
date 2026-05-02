@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -14,14 +15,16 @@ import (
 	"github.com/dgraph-io/badger/v4/options"
 )
 
+// EfficacyStats defines the structural representation for the entity.
 type EfficacyStats struct {
 	Successes     int       `json:"successes"`
 	Failures      int       `json:"failures"`
-	LastSuccessAt time.Time `json:"last_success_at,omitempty"`
-	LastFailureAt time.Time `json:"last_failure_at,omitempty"`
+	LastSuccessAt time.Time `json:"last_success_at"`
+	LastFailureAt time.Time `json:"last_failure_at"`
 	LastUsedAt    time.Time `json:"last_used_at"`
 }
 
+// Store defines the structural representation for the entity.
 type Store struct {
 	db     *badger.DB
 	ctx    context.Context
@@ -30,6 +33,7 @@ type Store struct {
 	misses uint64
 }
 
+// NewStore executes the designated operation.
 func NewStore(dbPath string) (*Store, error) {
 	if err := os.MkdirAll(dbPath, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create data dir: %w", err)
@@ -58,7 +62,7 @@ func NewStore(dbPath string) (*Store, error) {
 	var err error
 	maxRetries := 5
 	backoff := 500 * time.Millisecond
-	for i := 0; i < maxRetries; i++ {
+	for i := range maxRetries {
 		db, err = badger.Open(opts)
 		if err == nil {
 			break
@@ -114,7 +118,7 @@ func (s *Store) Close() error {
 }
 
 func (s *Store) RecordEfficacy(workspaceRoot, skillName string, success bool) error {
-	key := []byte(fmt.Sprintf("%s:eff:%s", workspaceRoot, skillName))
+	key := fmt.Appendf(nil, "%s:eff:%s", workspaceRoot, skillName)
 	return s.db.Update(func(txn *badger.Txn) error {
 		var stats EfficacyStats
 		item, err := txn.Get(key)
@@ -125,7 +129,7 @@ func (s *Store) RecordEfficacy(workspaceRoot, skillName string, success bool) er
 			if err != nil {
 				return err
 			}
-		} else if err != badger.ErrKeyNotFound {
+		} else if !errors.Is(err, badger.ErrKeyNotFound) {
 			return err
 		}
 
@@ -149,7 +153,7 @@ func (s *Store) RecordEfficacy(workspaceRoot, skillName string, success bool) er
 
 func (s *Store) GetEfficacy(workspaceRoot, skillName string) (EfficacyStats, error) {
 	var stats EfficacyStats
-	key := []byte(fmt.Sprintf("%s:eff:%s", workspaceRoot, skillName))
+	key := fmt.Appendf(nil, "%s:eff:%s", workspaceRoot, skillName)
 	err := s.db.View(func(txn *badger.Txn) error {
 		item, err := txn.Get(key)
 		if err != nil {
@@ -159,7 +163,7 @@ func (s *Store) GetEfficacy(workspaceRoot, skillName string) (EfficacyStats, err
 			return json.Unmarshal(val, &stats)
 		})
 	})
-	if err == badger.ErrKeyNotFound {
+	if errors.Is(err, badger.ErrKeyNotFound) {
 		atomic.AddUint64(&s.misses, 1)
 		return stats, nil
 	}

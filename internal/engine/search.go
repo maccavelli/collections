@@ -53,6 +53,7 @@ func (e *Engine) AllSkills() iter.Seq[*models.Skill] {
 	}
 }
 
+// ScoredSkill defines the structural representation for the entity.
 type ScoredSkill struct {
 	Skill *models.Skill `json:"skill"`
 	Score float64       `json:"score"`
@@ -164,13 +165,10 @@ func (e *Engine) MatchSkills(ctx context.Context, intent string, filterCategory 
 		return 0
 	})
 
-	limit := matchLimit
-	if len(matches) < limit {
-		limit = len(matches)
-	}
+	limit := min(len(matches), matchLimit)
 
 	result := make([]ScoredSkill, limit)
-	for i := 0; i < limit; i++ {
+	for i := range limit {
 		result[i] = matches[i]
 	}
 

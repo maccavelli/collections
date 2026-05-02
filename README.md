@@ -1,112 +1,106 @@
-# ✨ MagicSkills MCP Server
+# ✨ MagicSkills Sub-Server
 
-A specialized Model Context Protocol (MCP) server for high-density knowledge retrieval, skill discovery, and
-automated workflow bootstrapping.
+A high-performance Model Context Protocol (MCP) sub-server for managing, discovering, and delivering executable AI skills.
 
 ## 🚀 Overview
 
-The MagicSkills server manages a sophisticated repository of expert-level "skills"—complex, multi-step procedures
-and domain knowledge. It acts as a long-term memory and procedural accelerator for developers and AI agents.
+`mcp-server-magicskills` is the knowledge repository for the MagicTools ecosystem. It manages "Skills"—structured markdown files containing technical directives, best practices, and execution patterns that govern agent behavior.
 
 ### 📋 Core Pillars
 
-1. **Skill Discovery & Matching**: Intelligent searching for relevant procedures using semantic matching (BM25)
-   and tag filtering.
-2. **Density & Compression**: Refines large, verbose documentation into "Dense Summaries" optimized for LLM
-   context windows.
-3. **Workflow Bootstrapping**: Automatically extracts checklists and validation steps from skill definitions.
-4. **Host Verification**: Audits and validates the necessary environment dependencies required for a specific skill.
+1.  **Dynamic Skill Matching**: Uses semantic alignment to find the most relevant skill for a given task.
+2.  **Directive Extraction**: Retrieves specific sections of a skill (e.g., "Execution Constraints") to minimize context window usage.
+3.  **Cross-Session Persistence**: Maintains a standard set of skills (like the `default` skill) across all AI interactions.
+4.  **Optimized Delivery**: Uses a specialized transport protocol to deliver large skill documents without hitting IDE size limits.
 
 ---
 
-## 🛠️ Tools
+## 🛠️ Usage & Functionality
 
-### `magicskills_list`
+### Specialized Tools
 
-Provides a comprehensive list of all skills available in the current index.
+*   **`magicskills_match`**: Searches the skill repository for the best match for an intent.
+*   **`magicskills_get`**: Retrieves the full or partial content of a specific skill.
+*   **`magicskills_list`**: Provides an index of all available skills in the current environment.
 
-### `magicskills_match`
-
-Automatically finds the best-matching skills for a given goal and returns a dense digest.
-
-- **Parameter**: `intent` (string)
-
-### `magicskills_get`
-
-Fetches high-relevance expert knowledge for a specific skill.
-
-- **Parameters**: `name` (string), `section` (string, optional), `version` (string, optional)
-
-### `magicskills_validate_deps`
-
-Checks the host environment for required binary dependencies for a skill.
-
-- **Parameter**: `name` (string)
+### Orchestration with MagicTools (Recommended)
+Invoke MagicSkills tools via `magictools:call_proxy`:
+```json
+{
+  "name": "magictools:call_proxy",
+  "arguments": {
+    "urn": "magicskills:magicskills_get",
+    "arguments": { "name": "default", "section": "orchestrator constraints" }
+  }
+}
+```
 
 ---
 
-## ⚙️ Installation
+## ⚙️ Configuration
 
 ### 1. Build the Binary
-
 ```bash
-go build -o dist/mcp-server-magicskills main.go
+make build
 ```
 
-### 2. Configure for IDEs
+### 2. CLI Options
+| Option | Description |
+| :--- | :--- |
+| `-db` | Path to the BadgerDB data directory (default: platform-native). |
+| `-debug` | Enable full trace logging for diagnostic purposes. |
+| `-no-optimize` | Disables minification and SqueezeWriter optimizations. |
+| `-version` | Print version info and exit. |
 
-#### **Antigravity**
+---
 
-```yaml
-mcpServers:
-  magicskills:
-    command: "/absolute/path/to/dist/mcp-server-magicskills"
-```
+## 🖥️ IDE Configuration Examples (Standalone)
 
-#### **VS Code (MCP Extension / Cline)**
-
-Add to your `mcp_config.json`:
-
+### 🌌 Antigravity
+**Path:** `~/.gemini/mcp_config.json`
 ```json
 {
   "mcpServers": {
     "magicskills": {
-      "command": "/absolute/path/to/dist/mcp-server-magicskills",
-      "args": [],
-      "env": {
-        "PATH": "/usr/local/go/bin:/usr/local/bin:/usr/bin"
-      }
+      "command": "/absolute/path/to/mcp-server-magicskills",
+      "args": ["serve"]
     }
   }
 }
 ```
 
-#### **Cursor IDE**
+### 💻 VSCode (Roo Code / Cline)
+**Paths:**
+*   **Linux/macOS**: `~/Library/Application Support/Code/User/globalStorage/rooveterinaryinc.roo-cline/settings/cline_mcp_settings.json`
+*   **Windows**: `%APPDATA%\Code\User\globalStorage\rooveterinaryinc.roo-cline\settings\cline_mcp_settings.json`
 
-1. **Settings** -> **Features** -> **MCP**.
-2. **+ Add New MCP Server**.
-3. Name: `MagicSkills`
-4. Type: `stdio`
-5. Command: `/absolute/path/to/dist/mcp-server-magicskills`
+```json
+{
+  "mcpServers": {
+    "magicskills": {
+      "command": "C:/path/to/mcp-server-magicskills.exe",
+      "args": ["serve"]
+    }
+  }
+}
+```
 
----
+### 🤖 Claude Desktop
+**Paths:**
+*   **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+*   **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
 
-## 📖 Use Cases
-
-- **Intent-Based Assistance**: Automatically find the right troubleshooting guide for a specific error.
-- **Knowledge Transfer**: Capture senior developer knowledge into machine-readable skills for universal reuse.
-- **Dependency Guarding**: Ensure all team members have required tools installed before starting a task.
-
----
-
-## 💻 CLI Functionality
-
-Check version and manage roots:
-
-```bash
-./mcp-server-magicskills -version
+```json
+{
+  "mcpServers": {
+    "magicskills": {
+      "command": "/usr/local/bin/mcp-server-magicskills",
+      "args": ["serve"]
+    }
+  }
+}
 ```
 
 ---
 
-*Built with Go for maximum knowledge density and speed.*
+*Part of the MagicTools Intelligence Suite. Built with Go.*

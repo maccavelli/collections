@@ -30,7 +30,7 @@ func (t *ListTool) Register(s *mcp.Server) {
 func (t *ListTool) Handle(ctx context.Context, request *mcp.CallToolRequest, input struct{}) (*mcp.CallToolResult, any, error) {
 	if err := t.Engine.WaitReady(ctx); err != nil {
 		res := &mcp.CallToolResult{}
-		res.SetError(fmt.Errorf("engine initialization aborted: %v", err))
+		res.SetError(fmt.Errorf("engine initialization aborted: %w", err))
 		return res, nil, nil
 	}
 	var skills []any
@@ -48,7 +48,7 @@ func (t *ListTool) Handle(ctx context.Context, request *mcp.CallToolRequest, inp
 		Data    any    `json:"data"`
 	}{
 		Summary: summary,
-		Data: map[string]interface{}{
+		Data: map[string]any{
 			"skills": skills,
 		},
 	}, nil
@@ -62,6 +62,7 @@ type MatchTool struct {
 
 func (t *MatchTool) Name() string { return "magicskills_match" }
 
+// MatchInput defines the structural representation for the entity.
 type MatchInput struct {
 	Intent   string `json:"intent" jsonschema:"Your goal"`
 	Category string `json:"category,omitempty" jsonschema:"Optional category or domain filter (e.g. 'go', 'python')"`
@@ -78,7 +79,7 @@ func (t *MatchTool) Register(s *mcp.Server) {
 func (t *MatchTool) Handle(ctx context.Context, request *mcp.CallToolRequest, input MatchInput) (*mcp.CallToolResult, any, error) {
 	if err := t.Engine.WaitReady(ctx); err != nil {
 		res := &mcp.CallToolResult{}
-		res.SetError(fmt.Errorf("engine initialization aborted: %v", err))
+		res.SetError(fmt.Errorf("engine initialization aborted: %w", err))
 		return res, nil, nil
 	}
 	if input.Intent == "" {
@@ -92,7 +93,7 @@ func (t *MatchTool) Handle(ctx context.Context, request *mcp.CallToolRequest, in
 	// Standards-Aware Contextual Weighting (orchestrator mode only)
 	var standards []string
 	if t.RecallClient != nil && t.RecallClient.RecallEnabled() {
-		searchArgs := map[string]interface{}{
+		searchArgs := map[string]any{
 			"query": input.Intent,
 			"limit": 5,
 		}
@@ -102,7 +103,7 @@ func (t *MatchTool) Handle(ctx context.Context, request *mcp.CallToolRequest, in
 		res := t.RecallClient.CallDatabaseTool(ctx, "search", appendNamespace(searchArgs, "standards"))
 		if res != "" {
 			var searchRes struct {
-				Entries []map[string]interface{} `json:"entries"`
+				Entries []map[string]any `json:"entries"`
 			}
 			if json.Unmarshal([]byte(res), &searchRes) == nil {
 				for _, entry := range searchRes.Entries {
@@ -122,9 +123,9 @@ func (t *MatchTool) Handle(ctx context.Context, request *mcp.CallToolRequest, in
 		}
 	}
 
-	var matchData []map[string]interface{}
+	var matchData []map[string]any
 	for _, m := range matches {
-		matchData = append(matchData, map[string]interface{}{
+		matchData = append(matchData, map[string]any{
 			"name":        m.Skill.Metadata.Name,
 			"description": m.Skill.Metadata.Description,
 			"score":       m.Score,
@@ -137,7 +138,7 @@ func (t *MatchTool) Handle(ctx context.Context, request *mcp.CallToolRequest, in
 		Data    any    `json:"data"`
 	}{
 		Summary: summary,
-		Data: map[string]interface{}{
+		Data: map[string]any{
 			"intent":  input.Intent,
 			"matches": matchData,
 		},
@@ -150,9 +151,9 @@ func Register(eng *engine.Engine, cl *external.MCPClient) {
 	registry.Global.Register(&MatchTool{Engine: eng, RecallClient: cl})
 }
 
-func appendNamespace(m map[string]interface{}, ns string) map[string]interface{} {
+func appendNamespace(m map[string]any, ns string) map[string]any {
 	if m == nil {
-		m = make(map[string]interface{})
+		m = make(map[string]any)
 	}
 	m["namespace"] = ns
 	return m

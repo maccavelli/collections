@@ -29,5 +29,6 @@ func TestMCPServer(t *testing.T) {
 
 	err := srv.Serve(ctx, stdout, reader)
 	if err != nil && err != context.DeadlineExceeded && err.Error() != "context deadline exceeded" {
+		t.Errorf("unexpected error: %v", err)
 	}
 }

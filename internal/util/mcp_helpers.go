@@ -11,10 +11,12 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
+// NopReadCloser defines the structural representation for the entity.
 type NopReadCloser struct{ io.Reader }
 
 func (n NopReadCloser) Close() error { return nil }
 
+// NopWriteCloser defines the structural representation for the entity.
 type NopWriteCloser struct{ io.Writer }
 
 func (n NopWriteCloser) Close() error { return nil }
@@ -79,7 +81,7 @@ func InternalWrapHandler[In any, Out any](
 				Category:      tool.Name,
 			}
 
-			sigBytes, _ := json.Marshal(map[string]interface{}{"__orchestrator_signal": signal})
+			sigBytes, _ := json.Marshal(map[string]any{"__orchestrator_signal": signal})
 			res.Content = append(res.Content, &mcp.TextContent{
 				Text: string(sigBytes),
 			})

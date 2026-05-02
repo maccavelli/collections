@@ -17,12 +17,12 @@ import (
 )
 
 func extractWorkspace(p string) string {
-	idx := strings.Index(p, "/.agent/")
-	if idx == -1 {
+	before, _, ok := strings.Cut(p, "/.agent/")
+	if !ok {
 		// Fallback to raw directory structure if standalone file
 		return filepath.Dir(p)
 	}
-	return p[:idx]
+	return before
 }
 
 // SyncDir intelligently processes directory paths sequentially by calculating SHA-256 deltas.
@@ -124,7 +124,7 @@ func (e *Engine) IngestSingle(ctx context.Context, path string) error {
 	e.mu.Unlock()
 
 	// Index in Bleve after releasing the lock (Bleve has internal locking)
-	err = e.Bleve.Index(slug, map[string]interface{}{
+	err = e.Bleve.Index(slug, map[string]any{
 		"workspace":      workspace,
 		"name":           skill.Metadata.Name,
 		"description":    skill.Metadata.Description,
@@ -181,7 +181,7 @@ func (e *Engine) InjectRemoteCapability(ctx context.Context, apiURL, name, desc 
 	e.Skills[slug] = skill
 	e.PathToName[skill.RawPath] = slug
 
-	err := e.Bleve.Index(slug, map[string]interface{}{
+	err := e.Bleve.Index(slug, map[string]any{
 		"name":           name,
 		"description":    desc,
 		"context_domain": skill.Metadata.ContextDomain,

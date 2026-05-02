@@ -21,6 +21,7 @@ var (
 	RealStdout *os.File
 )
 
+// HijackStdout executes the designated operation.
 func HijackStdout() {
 	if RealStdout != nil {
 		return

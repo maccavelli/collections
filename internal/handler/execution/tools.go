@@ -20,6 +20,7 @@ type DecomposeTool struct {
 
 func (t *DecomposeTool) Name() string { return "magicskills_decompose_task" }
 
+// DecomposeInput defines the structural representation for the entity.
 type DecomposeInput struct {
 	Prompt string `json:"prompt" jsonschema:"The complex task or high-level prompt to decompose into skills"`
 }
@@ -34,7 +35,7 @@ func (t *DecomposeTool) Register(s *mcp.Server) {
 func (t *DecomposeTool) Handle(ctx context.Context, request *mcp.CallToolRequest, input DecomposeInput) (*mcp.CallToolResult, any, error) {
 	if err := t.Engine.WaitReady(ctx); err != nil {
 		res := &mcp.CallToolResult{}
-		res.SetError(fmt.Errorf("engine initialization aborted: %v", err))
+		res.SetError(fmt.Errorf("engine initialization aborted: %w", err))
 		return res, nil, nil
 	}
 	if input.Prompt == "" {
@@ -50,8 +51,8 @@ func (t *DecomposeTool) Handle(ctx context.Context, request *mcp.CallToolRequest
 	for _, numDelim := range delimiters {
 		var newParts []string
 		for _, part := range parts {
-			split := strings.Split(part, numDelim)
-			for _, s := range split {
+			split := strings.SplitSeq(part, numDelim)
+			for s := range split {
 				if strings.TrimSpace(s) != "" {
 					newParts = append(newParts, strings.TrimSpace(s))
 				}
@@ -60,7 +61,7 @@ func (t *DecomposeTool) Handle(ctx context.Context, request *mcp.CallToolRequest
 		parts = newParts
 	}
 
-	var chain []map[string]interface{}
+	var chain []map[string]any
 	seen := make(map[string]bool)
 
 	for _, subIntent := range parts {
@@ -69,7 +70,7 @@ func (t *DecomposeTool) Handle(ctx context.Context, request *mcp.CallToolRequest
 			best := matches[0] // take the top match for each sub-intent
 			if !seen[best.Skill.Metadata.Name] {
 				seen[best.Skill.Metadata.Name] = true
-				chain = append(chain, map[string]interface{}{
+				chain = append(chain, map[string]any{
 					"intent": subIntent,
 					"skill":  best.Skill.Metadata.Name,
 					"score":  best.Score,
@@ -82,7 +83,7 @@ func (t *DecomposeTool) Handle(ctx context.Context, request *mcp.CallToolRequest
 	if len(chain) == 0 {
 		matches := t.Engine.MatchSkills(ctx, input.Prompt, "", "", 3)
 		for _, m := range matches {
-			chain = append(chain, map[string]interface{}{
+			chain = append(chain, map[string]any{
 				"intent": "general",
 				"skill":  m.Skill.Metadata.Name,
 				"score":  m.Score,
@@ -95,7 +96,7 @@ func (t *DecomposeTool) Handle(ctx context.Context, request *mcp.CallToolRequest
 		Data    any    `json:"data"`
 	}{
 		Summary: fmt.Sprintf("Decomposed task into %d skill steps.", len(chain)),
-		Data: map[string]interface{}{
+		Data: map[string]any{
 			"original_prompt": input.Prompt,
 			"chain_of_skills": chain,
 		},
@@ -110,6 +111,7 @@ type EfficacyTool struct {
 
 func (t *EfficacyTool) Name() string { return "magicskills_record_efficacy" }
 
+// EfficacyInput defines the structural representation for the entity.
 type EfficacyInput struct {
 	SkillName string `json:"skill_name" jsonschema:"The exact name of the skill evaluated"`
 	Target    string `json:"target,omitempty" jsonschema:"Optional target workspace root to dynamically constrain stats bounds"`
@@ -126,7 +128,7 @@ func (t *EfficacyTool) Register(s *mcp.Server) {
 func (t *EfficacyTool) Handle(ctx context.Context, request *mcp.CallToolRequest, input EfficacyInput) (*mcp.CallToolResult, any, error) {
 	if err := t.Engine.WaitReady(ctx); err != nil {
 		res := &mcp.CallToolResult{}
-		res.SetError(fmt.Errorf("engine initialization aborted: %v", err))
+		res.SetError(fmt.Errorf("engine initialization aborted: %w", err))
 		return res, nil, nil
 	}
 	if input.SkillName == "" {
@@ -159,7 +161,7 @@ func (t *EfficacyTool) Handle(ctx context.Context, request *mcp.CallToolRequest,
 		Data    any    `json:"data"`
 	}{
 		Summary: fmt.Sprintf("Successfully %s for %s", statusMsg, input.SkillName),
-		Data: map[string]interface{}{
+		Data: map[string]any{
 			"skill_name": input.SkillName,
 			"success":    input.Success,
 			"stats":      stats,

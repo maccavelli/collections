@@ -21,7 +21,7 @@ import (
 )
 
 func init() {
-	registry.RegisterAnalyzer("edgeNgramAnalyzer", func(config map[string]interface{}, cache *registry.Cache) (analysis.Analyzer, error) {
+	_ = registry.RegisterAnalyzer("edgeNgramAnalyzer", func(config map[string]any, cache *registry.Cache) (analysis.Analyzer, error) { // nolint:errcheck
 		tokenizer, err := cache.TokenizerNamed(unicode.Name)
 		if err != nil {
 			return nil, err
@@ -52,6 +52,7 @@ var (
 	}
 )
 
+// Engine defines the structural representation for the entity.
 type Engine struct {
 	mu           sync.RWMutex
 	Skills       map[string]*models.Skill
@@ -95,6 +96,7 @@ func buildMapping() mapping.IndexMapping {
 	return indexMapping
 }
 
+// NewEngine executes the designated operation.
 func NewEngine(store *state.Store, indexPath string) (*Engine, error) {
 	// 🛡️ PERF: Strict in-memory volatile execution natively bypassing disk SSD thrashing
 	idx, err := bleve.NewMemOnly(buildMapping())

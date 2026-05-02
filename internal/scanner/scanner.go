@@ -79,7 +79,7 @@ func (s *Scanner) Discover(ctx context.Context) ([]string, error) {
 		g.Go(func() error {
 			return filepath.WalkDir(r, func(path string, d fs.DirEntry, err error) error {
 				if err != nil {
-					return nil
+					return nil // nolint:nilerr // Ignore walk errors to avoid aborting the entire scan
 				}
 
 				select {

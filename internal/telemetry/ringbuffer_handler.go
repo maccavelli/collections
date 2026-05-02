@@ -79,10 +79,11 @@ func (h *RingBufferHandler) Handle(ctx context.Context, rec slog.Record) error {
 		if len(attrs) > 0 {
 			for k, v := range attrs {
 				if k == "tool_id" {
-					if idFloat, ok := v.(float64); ok {
-						toolID = uint16(idFloat)
-					} else if idInt, ok := v.(int); ok {
-						toolID = uint16(idInt)
+					switch val := v.(type) {
+					case float64:
+						toolID = uint16(val)
+					case int:
+						toolID = uint16(val)
 					}
 				}
 				entry[k] = v

@@ -26,6 +26,7 @@ type GetTool struct {
 
 func (t *GetTool) Name() string { return "magicskills_get" }
 
+// GetInput defines the structural representation for the entity.
 type GetInput struct {
 	Name    string `json:"name" jsonschema:"The name of the skill to retrieve"`
 	Section string `json:"section" jsonschema:"Optional granular section to retrieve"`
@@ -42,7 +43,7 @@ func (t *GetTool) Register(s *mcp.Server) {
 func (t *GetTool) Handle(ctx context.Context, request *mcp.CallToolRequest, input GetInput) (*mcp.CallToolResult, any, error) {
 	if err := t.Engine.WaitReady(ctx); err != nil {
 		res := &mcp.CallToolResult{}
-		res.SetError(fmt.Errorf("engine initialization aborted: %v", err))
+		res.SetError(fmt.Errorf("engine initialization aborted: %w", err))
 		return res, nil, nil
 	}
 	if input.Name == "" {
@@ -78,21 +79,21 @@ func (t *GetTool) Handle(ctx context.Context, request *mcp.CallToolRequest, inpu
 
 	output := struct {
 		*models.Skill
-		RecallStandards []map[string]interface{} `json:"recall_standards,omitempty"`
+		RecallStandards []map[string]any `json:"recall_standards,omitempty"`
 	}{
 		Skill: skill,
 	}
 
 	// Standards-Aware Enrichment (orchestrator mode only)
 	if t.RecallClient != nil && t.RecallClient.RecallEnabled() {
-		searchArgs := map[string]interface{}{
+		searchArgs := map[string]any{
 			"query": skill.Metadata.Name,
 			"limit": 3,
 		}
 		res := t.RecallClient.CallDatabaseTool(ctx, "search", appendNamespace(searchArgs, "standards"))
 		if res != "" {
 			var searchRes struct {
-				Entries []map[string]interface{} `json:"entries"`
+				Entries []map[string]any `json:"entries"`
 			}
 			if json.Unmarshal([]byte(res), &searchRes) == nil {
 				output.RecallStandards = searchRes.Entries
@@ -128,7 +129,7 @@ func (t *GetTool) Handle(ctx context.Context, request *mcp.CallToolRequest, inpu
 		}
 		if ringData, err := json.Marshal(record); err == nil {
 			telemetry.GlobalRingBuffer.WriteRecord(ringData)
-			finalData = map[string]interface{}{
+			finalData = map[string]any{
 				"intent":  "CSSA_STREAMED_PAYLOAD_READY",
 				"size":    len(payloadBytes),
 				"message": "High-Density Skill payload successfully streamed to the orchestrator ring buffer natively avoiding socket I/O loops.",
@@ -150,9 +151,9 @@ func Register(eng *engine.Engine, cl *external.MCPClient) {
 	registry.Global.Register(&GetTool{Engine: eng, RecallClient: cl})
 }
 
-func appendNamespace(m map[string]interface{}, ns string) map[string]interface{} {
+func appendNamespace(m map[string]any, ns string) map[string]any {
 	if m == nil {
-		m = make(map[string]interface{})
+		m = make(map[string]any)
 	}
 	m["namespace"] = ns
 	return m

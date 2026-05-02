@@ -115,7 +115,7 @@ func TestHandleMatchSkills(t *testing.T) {
 		Metadata: models.SkillMetadata{Name: "test-skill", Description: "Searchable info"},
 		Sections: map[string]string{"full": "Searchable info content"},
 	}
-	eng.Bleve.Index("test-skill", map[string]interface{}{"name": "test-skill", "description": "Searchable info"})
+	eng.Bleve.Index("test-skill", map[string]any{"name": "test-skill", "description": "Searchable info"})
 
 	tool := &discovery.MatchTool{Engine: eng}
 	ctx := context.Background()
@@ -254,7 +254,7 @@ func TestLogBuffer_Truncation(t *testing.T) {
 	// config.LogBufferLimit is 1MB, config.LogTrimTarget is 512KB.
 	// We'll write 1.2MB of 'A's with some newlines.
 	chunk := strings.Repeat("A", 1023) + "\n"
-	for i := 0; i < 1200; i++ {
+	for range 1200 {
 		_, _ = lb.Write([]byte(chunk))
 	}
 

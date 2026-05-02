@@ -40,13 +40,13 @@ func TestEOFDetector_Fallback(t *testing.T) {
 	}
 
 	buf := make([]byte, 5)
-	_, _ = detector.Read(buf)
+	_, _ = detector.Read(buf) // nolint:errcheck // ignore return in test
 	if called {
 		t.Error("cancel shouldn't be called on success")
 	}
 
 	// Trigger EOF
-	_, _ = detector.Read(buf)
+	_, _ = detector.Read(buf) // nolint:errcheck // ignore return in test
 	if !called {
 		t.Error("cancel should be called on EOF")
 	}
@@ -55,8 +55,8 @@ func TestEOFDetector_Fallback(t *testing.T) {
 // TestAutoFlusher_Fallback verifies the auto-flushing write proxy executes
 // without panicking against a discard writer.
 func TestAutoFlusher_Fallback(t *testing.T) {
-	defer func() { recover() }()
+	defer func() { _ = recover() }() // nolint:errcheck // ignore recover return
 	// Basic execution check
 	a := &autoFlusher{w: io.Discard}
-	_, _ = a.Write([]byte("test write logic"))
+	_, _ = a.Write([]byte("test write logic")) // nolint:errcheck // ignore return in test
 }

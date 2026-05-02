@@ -26,12 +26,10 @@ func TestExecutionTools(t *testing.T) {
 
 	ctx := context.Background()
 	_, _, err := tool1.Handle(ctx, &mcp.CallToolRequest{}, DecomposeInput{Prompt: ""})
-	if err != nil {
-		// Just want to cover the path where it returns error struct
-	}
+	_ = err
 
 	eng.Skills["test-skill"] = &models.Skill{Metadata: models.SkillMetadata{Name: "test-skill"}}
-	_ = eng.Bleve.Index("test-skill", map[string]interface{}{"name": "test-skill", "content": "hello world test followed by split"})
+	_ = eng.Bleve.Index("test-skill", map[string]any{"name": "test-skill", "content": "hello world test followed by split"})
 
 	_, out1, err := tool1.Handle(ctx, &mcp.CallToolRequest{}, DecomposeInput{Prompt: "hello world test followed by split"})
 	if err != nil || out1 == nil {
@@ -44,9 +42,7 @@ func TestExecutionTools(t *testing.T) {
 	}
 
 	_, _, err = tool2.Handle(ctx, &mcp.CallToolRequest{}, EfficacyInput{SkillName: ""})
-	if err != nil {
-		// Cover empty path
-	}
+	_ = err
 
 	_, out2, err := tool2.Handle(ctx, &mcp.CallToolRequest{}, EfficacyInput{SkillName: "test-skill", Success: true})
 	if err != nil || out2 == nil {
