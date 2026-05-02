@@ -30,7 +30,7 @@ func (t *GenerateReportTool) Name() string {
 func (t *GenerateReportTool) Register(s util.SessionProvider) {
 	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
-		Description: "[ROLE: SYNTHESIZER] [PHASE: TERMINAL] PIPELINE REPORT GENERATOR: Generates a consolidated Markdown artifact detailing the session's analytical outcomes with conflict resolution ('Rejects First' formatting). [Routing Tags: final-report, artifact, summarize-decisions, markdown-report]",
+		Description: "[ROLE: REPORTING] [PHASE: TERMINAL] PIPELINE REPORT GENERATOR: Generates a consolidated Markdown artifact detailing the session's analytical outcomes with conflict resolution ('Rejects First' formatting). [REQUIRES: brainstorm:architectural_diagrammer] [Routing Tags: final-report, artifact, summarize-decisions, markdown-report]",
 	}, t.Handle)
 }
 
@@ -104,7 +104,7 @@ func (t *GenerateReportTool) Handle(ctx context.Context, req *mcp.CallToolReques
 		}
 	}
 
-	var sessionData map[string]interface{}
+	var sessionData map[string]any
 	var localGaps []models.Gap
 
 	if isOrchestrated {
@@ -160,7 +160,7 @@ func (t *GenerateReportTool) Handle(ctx context.Context, req *mcp.CallToolReques
 			return res, nil, nil
 		}
 
-		sessionData = make(map[string]interface{})
+		sessionData = make(map[string]any)
 		sessionData["project_root"] = localSession.ProjectRoot
 		sessionData["project_name"] = localSession.ProjectName
 		sessionData["language"] = localSession.Language
@@ -193,7 +193,7 @@ func (t *GenerateReportTool) Handle(ctx context.Context, req *mcp.CallToolReques
 
 	// Create a pruned copy for serialization, excluding bulky aggregation data.
 	// The full sessionData (with _stages) is still written to recall for idempotency.
-	reportData := make(map[string]interface{}, len(sessionData))
+	reportData := make(map[string]any, len(sessionData))
 	for k, v := range sessionData {
 		if k == "_stages" || k == "_stage_count" || k == "_total_entries" {
 			continue // Skip internal aggregation metadata
@@ -348,9 +348,9 @@ func (t *GenerateReportTool) Handle(ctx context.Context, req *mcp.CallToolReques
 }
 
 // deepPruneTelemetry recursively drops huge byte payloads to stop UI formatting bounds overflow.
-func deepPruneTelemetry(node interface{}) interface{} {
+func deepPruneTelemetry(node any) any {
 	switch v := node.(type) {
-	case map[string]interface{}:
+	case map[string]any:
 		for key, val := range v {
 			lowKey := strings.ToLower(key)
 			if strings.Contains(lowKey, "ast") || strings.Contains(lowKey, "syntax") || strings.Contains(lowKey, "source_code") {
@@ -360,10 +360,10 @@ func deepPruneTelemetry(node interface{}) interface{} {
 			v[key] = deepPruneTelemetry(val)
 		}
 		return v
-	case []interface{}:
+	case []any:
 		if len(v) > 25 {
-			pruned := make([]interface{}, 0, 26)
-			for i := 0; i < 25; i++ {
+			pruned := make([]any, 0, 26)
+			for i := range 25 {
 				pruned = append(pruned, deepPruneTelemetry(v[i]))
 			}
 			pruned = append(pruned, "[Array Truncated: Exceeds Safe Size]")
@@ -398,7 +398,7 @@ func filterSerializable(m map[string]any) map[string]any {
 		}
 		probe, err := json.Marshal(v)
 		if err == nil && len(probe) > 0 {
-			var generic interface{}
+			var generic any
 			if err := json.Unmarshal(probe, &generic); err == nil {
 				safe[k] = deepPruneTelemetry(generic)
 			} else {

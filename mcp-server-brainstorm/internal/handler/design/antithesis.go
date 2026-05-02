@@ -9,6 +9,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"mcp-server-brainstorm/internal/engine"
 	"mcp-server-brainstorm/internal/models"
+	"mcp-server-brainstorm/internal/staging"
 	"mcp-server-brainstorm/internal/state"
 	"mcp-server-brainstorm/internal/util"
 )
@@ -76,7 +77,7 @@ func (t *AntithesisSkepticTool) Handle(ctx context.Context, req *mcp.CallToolReq
 
 	// Orchestrator-only: fetch live standards from recall.
 	if standards == "" && recallAvailable {
-		standards = t.Engine.EnsureRecallCache(ctx, session, "antithesis_skeptic", "search", map[string]interface{}{"namespace": "ecosystem", "query": "performance regression blast radius complexity", "domain": "robustness", "limit": 10})
+		standards = t.Engine.EnsureRecallCache(ctx, session, "antithesis_skeptic", "search", map[string]any{"namespace": "ecosystem", "query": "performance regression blast radius complexity", "domain": "robustness", "limit": 10})
 		if session.Metadata == nil {
 			session.Metadata = make(map[string]any)
 		}
@@ -84,7 +85,7 @@ func (t *AntithesisSkepticTool) Handle(ctx context.Context, req *mcp.CallToolReq
 	}
 
 	// Orchestrator-only: load go-refactor AST trace data.
-	var traceMap map[string]interface{}
+	var traceMap map[string]any
 	if recallAvailable && session.ProjectRoot != "" {
 		if tm, err := t.Engine.ExternalClient.AggregateSessionFromRecall(ctx, "go-refactor", session.ProjectRoot); err == nil && tm != nil {
 			traceMap = tm
@@ -116,10 +117,28 @@ func (t *AntithesisSkepticTool) Handle(ctx context.Context, req *mcp.CallToolReq
 		t.Engine.PublishSessionToRecall(ctx, input.SessionID, session.ProjectRoot, "counter_thesis_generated", "native", "antithesis_skeptic", "", session.Metadata)
 	}
 
+	var stagingURI string
+	if t.Engine != nil && t.Engine.DB != nil {
+		if uri, err := staging.SavePayload(t.Engine.DB, report); err == nil {
+			stagingURI = uri
+		} else {
+			slog.Error("[antithesis_skeptic] failed to stage payload", "error", err)
+		}
+	}
+
 	var returnData any = report
 	var returnSummary string = report.Summary
 
-	if input.SessionID != "" && recallAvailable {
+	if stagingURI != "" {
+		returnSummary += fmt.Sprintf("\n[STAGING]: Payload staged at %s", stagingURI)
+		returnData = struct {
+			Summary    string `json:"summary"`
+			StagingURI string `json:"staging_uri"`
+		}{
+			Summary:    returnSummary,
+			StagingURI: stagingURI,
+		}
+	} else if input.SessionID != "" && recallAvailable {
 		saveErr := t.Engine.ExternalClient.SaveSession(ctx, input.SessionID, input.SessionID, report)
 		if saveErr == nil {
 			returnSummary += fmt.Sprintf("\n[CSSA STATUS]: Complete structural data saved successfully to recall session '%s'", input.SessionID)

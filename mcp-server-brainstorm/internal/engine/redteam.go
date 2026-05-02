@@ -10,7 +10,7 @@ import (
 
 // hasASTPresence intelligently scans the traceMap for empirical evidence.
 // In standalone mode (traceMap == nil), it falls back to true to allow textual heuristics.
-func hasASTPresence(traceMap map[string]interface{}, keywords ...string) bool {
+func hasASTPresence(traceMap map[string]any, keywords ...string) bool {
 	if traceMap == nil {
 		return true // Standalone Mode: Always true, relying on textual heuristics
 	}
@@ -27,7 +27,7 @@ func hasASTPresence(traceMap map[string]interface{}, keywords ...string) bool {
 // challenge the design from multiple angles. Returns
 // compact structured challenges.
 func (e *Engine) RedTeamReview(
-	ctx context.Context, design string, traceMap map[string]interface{},
+	ctx context.Context, design string, traceMap map[string]any,
 ) ([]models.RedTeamChallenge, error) {
 	select {
 	case <-ctx.Done():
@@ -77,7 +77,7 @@ func (e *Engine) RedTeamReview(
 	return out, nil
 }
 
-func (e *Engine) checkMaintenancePersona(design string, traceMap map[string]interface{}) []models.RedTeamChallenge {
+func (e *Engine) checkMaintenancePersona(design string, traceMap map[string]any) []models.RedTeamChallenge {
 	// If AST has logging/metrics injected, bypass this challenge completely.
 	if traceMap != nil && hasASTPresence(traceMap, "log", "zap", "prometheus", "telemetry") {
 		return nil
@@ -93,7 +93,7 @@ func (e *Engine) checkMaintenancePersona(design string, traceMap map[string]inte
 	return nil
 }
 
-func (e *Engine) checkSecurityPersona(design string, traceMap map[string]interface{}) []models.RedTeamChallenge {
+func (e *Engine) checkSecurityPersona(design string, traceMap map[string]any) []models.RedTeamChallenge {
 	// Disable Security bounds checking if no HTTP/Auth logic is physically present
 	if traceMap != nil && !hasASTPresence(traceMap, "net/http", "crypto", "auth", "token", "password", "context") {
 		return nil
@@ -111,7 +111,7 @@ func (e *Engine) checkSecurityPersona(design string, traceMap map[string]interfa
 	return nil
 }
 
-func (e *Engine) checkScalabilityPersona(design string, traceMap map[string]interface{}) []models.RedTeamChallenge {
+func (e *Engine) checkScalabilityPersona(design string, traceMap map[string]any) []models.RedTeamChallenge {
 	// Only run scalability checks if network or DB layer is detected
 	if traceMap != nil && !hasASTPresence(traceMap, "net/http", "database/sql", "grpc") {
 		return nil
@@ -129,7 +129,7 @@ func (e *Engine) checkScalabilityPersona(design string, traceMap map[string]inte
 	return nil
 }
 
-func (e *Engine) checkCompatibilityPersona(design string, traceMap map[string]interface{}) []models.RedTeamChallenge {
+func (e *Engine) checkCompatibilityPersona(design string, _ map[string]any) []models.RedTeamChallenge {
 	if strings.Contains(design, "change") ||
 		strings.Contains(design, "migrat") ||
 		strings.Contains(design, "deprecat") {
@@ -141,7 +141,7 @@ func (e *Engine) checkCompatibilityPersona(design string, traceMap map[string]in
 	return nil
 }
 
-func (e *Engine) checkReliabilityPersona(design string, traceMap map[string]interface{}) []models.RedTeamChallenge {
+func (e *Engine) checkReliabilityPersona(design string, traceMap map[string]any) []models.RedTeamChallenge {
 	if traceMap != nil && !hasASTPresence(traceMap, "net/http", "database", "net", "grpc", "io") {
 		return nil // Pure logic functions rarely need circuit breakers.
 	}
@@ -157,7 +157,7 @@ func (e *Engine) checkReliabilityPersona(design string, traceMap map[string]inte
 	return nil
 }
 
-func (e *Engine) checkPerformancePersona(design string, traceMap map[string]interface{}) []models.RedTeamChallenge {
+func (e *Engine) checkPerformancePersona(design string, _ map[string]any) []models.RedTeamChallenge {
 	if strings.Contains(design, "loop") ||
 		strings.Contains(design, "recursive") ||
 		strings.Contains(design, "search") {
@@ -169,7 +169,7 @@ func (e *Engine) checkPerformancePersona(design string, traceMap map[string]inte
 	return nil
 }
 
-func (e *Engine) checkCompliancePersona(design string, traceMap map[string]interface{}) []models.RedTeamChallenge {
+func (e *Engine) checkCompliancePersona(design string, traceMap map[string]any) []models.RedTeamChallenge {
 	// Base persona only enabled if persistence or tracking is detected via AST.
 	if traceMap != nil && !hasASTPresence(traceMap, "database", "store", "os", "file") {
 		return nil
@@ -186,7 +186,7 @@ func (e *Engine) checkCompliancePersona(design string, traceMap map[string]inter
 	return nil
 }
 
-func (e *Engine) checkOperationsPersona(design string, traceMap map[string]interface{}) []models.RedTeamChallenge {
+func (e *Engine) checkOperationsPersona(design string, traceMap map[string]any) []models.RedTeamChallenge {
 	if traceMap != nil && !hasASTPresence(traceMap, "main", "deploy", "kubernetes", "cmd") {
 		return nil
 	}

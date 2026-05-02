@@ -11,6 +11,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"mcp-server-brainstorm/internal/engine"
 	"mcp-server-brainstorm/internal/models"
+	"mcp-server-brainstorm/internal/staging"
 	"mcp-server-brainstorm/internal/state"
 	"mcp-server-brainstorm/internal/util"
 )
@@ -31,20 +32,6 @@ func (t *AporiaEngineTool) Register(s util.SessionProvider) {
 	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
 		Description: "[ROLE: SYNTHESIZER] MODERATOR OF PARADOX: Synthesizes thesis and antithesis arguments to find Aporia — points where both arguments are technically valid but mutually exclusive. Cross-references 6 pillar pairs to determine the safe path forward. [REQUIRES: brainstorm:thesis_architect, brainstorm:antithesis_skeptic] [Routing Tags: aporia, paradox, synthesis, resolve-conflict, merge-arguments]",
-		InputSchema: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"session_id": map[string]any{
-					"type":        "string",
-					"description": "CSSA backend storage pipeline correlation ID.",
-				},
-				"target": map[string]any{
-					"type":        "string",
-					"description": "Absolute path to the project root.",
-				},
-			},
-			"required": []string{"session_id", "target"},
-		},
 	}, t.Handle)
 }
 
@@ -63,19 +50,37 @@ func (t *AporiaEngineTool) Handle(ctx context.Context, _ *mcp.CallToolRequest, i
 
 	report := models.AporiaReport{}
 
-	// --- Phase 1: Load thesis and antithesis from session ---
+	// --- Phase 1: Load thesis and antithesis from session or context ---
 
 	var thesis models.ThesisDocument
 	var counter models.CounterThesisReport
 	hasDialecticPair := false
 
-	if raw, ok := session.Metadata["thesis_document"]; ok {
-		if doc, ok := raw.(models.ThesisDocument); ok {
-			thesis = doc
+	if input.Context != "" && staging.IsStagingURI(input.Context) && t.Engine != nil && t.Engine.DB != nil {
+		var payload struct {
+			Thesis  models.ThesisDocument      `json:"thesis"`
+			Counter models.CounterThesisReport `json:"counter"`
+		}
+		if err := staging.LoadPayload(t.Engine.DB, input.Context, &payload); err == nil {
+			thesis = payload.Thesis
+			counter = payload.Counter
+			if len(thesis.Data.Pillars) > 0 && len(counter.Pillars) > 0 {
+				hasDialecticPair = true
+			}
 		} else {
-			// Handle JSON-deserialized map[string]interface{} from recall
-			if b, err := json.Marshal(raw); err == nil {
-				_ = json.Unmarshal(b, &thesis)
+			slog.Warn("[aporia_engine] failed to load explicitly staged dialetics", "uri", input.Context, "error", err)
+		}
+	}
+
+	if !hasDialecticPair {
+		if raw, ok := session.Metadata["thesis_document"]; ok {
+			if doc, ok := raw.(models.ThesisDocument); ok {
+				thesis = doc
+			} else {
+				// Handle JSON-deserialized map[string]interface{} from recall
+				if b, err := json.Marshal(raw); err == nil {
+					_ = json.Unmarshal(b, &thesis)
+				}
 			}
 		}
 	}
@@ -148,7 +153,7 @@ func (t *AporiaEngineTool) Handle(ctx context.Context, _ *mcp.CallToolRequest, i
 			analysisText = thesis.Data.Narrative
 		}
 		if analysisText != "" {
-			var traceMap map[string]interface{}
+			var traceMap map[string]any
 			if session.ProjectRoot != "" {
 				tm, err := t.Engine.ExternalClient.AggregateSessionFromRecall(ctx, "go-refactor", session.ProjectRoot)
 				if err == nil {
@@ -168,7 +173,7 @@ func (t *AporiaEngineTool) Handle(ctx context.Context, _ *mcp.CallToolRequest, i
 		}
 
 		// Standards integration
-		_ = t.Engine.EnsureRecallCache(ctx, session, "aporia_engine", "search", map[string]interface{}{"namespace": "ecosystem", "query": "Aporia Socratic Dialectics"})
+		_ = t.Engine.EnsureRecallCache(ctx, session, "aporia_engine", "search", map[string]any{"namespace": "ecosystem", "query": "Aporia Socratic Dialectics"})
 	}
 
 	// --- Phase 5: Publish results ---

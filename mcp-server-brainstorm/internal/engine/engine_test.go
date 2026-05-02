@@ -112,7 +112,7 @@ func TestAnalyzeEvolution_Refactor(t *testing.T) {
 	ctx := context.Background()
 
 	got, err := e.AnalyzeEvolution(
-		ctx, "refactor the auth module", "", map[string]interface{}{
+		ctx, "refactor the auth module", "", map[string]any{
 			"total_nodes":     600.0,
 			"total_functions": 25.0,
 		},
@@ -173,7 +173,7 @@ func TestAnalyzeEvolution_Displacement(t *testing.T) {
 	ctx := context.Background()
 
 	got, err := e.AnalyzeEvolution(
-		ctx, "split the auth package", "", map[string]interface{}{
+		ctx, "split the auth package", "", map[string]any{
 			"total_nodes": 150.0,
 		},
 	)
@@ -299,8 +299,8 @@ func TestEvaluateQuality_EmpiricalAST(t *testing.T) {
 
 	// Provide an AST import array natively mapped to crypto edges
 	metrics, err := e.EvaluateQualityAttributes(
-		ctx, "general logic", map[string]interface{}{
-			"imports": []interface{}{
+		ctx, "general logic", map[string]any{
+			"imports": []any{
 				"crypto/sha256",
 			},
 		},

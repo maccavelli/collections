@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"golang.org/x/mod/modfile"
 	"golang.org/x/sync/errgroup"
 	"mcp-server-brainstorm/internal/models"
 )
@@ -170,6 +171,55 @@ func (e *Engine) analyzeStackAndSource(ctx context.Context, target string) ([]mo
 	return gaps, nil
 }
 
+// extractDiscoveryMetadata gathers deep foundation metrics without parsing AST
+func (e *Engine) extractDiscoveryMetadata(ctx context.Context, target string) models.DiscoveryMetadata {
+	md := models.DiscoveryMetadata{}
+
+	// 1. README Intent
+	readmePath := filepath.Join(target, "README.md")
+	if content, err := os.ReadFile(readmePath); err == nil {
+		str := string(content)
+		if len(str) > 500 {
+			str = str[:500] + "..."
+		}
+		md.Intent = str
+	}
+
+	// 2. Parse go.mod
+	goModPath := filepath.Join(target, "go.mod")
+	if content, err := os.ReadFile(goModPath); err == nil {
+		if file, err := modfile.Parse(goModPath, content, nil); err == nil {
+			if file.Go != nil {
+				md.GoVersion = file.Go.Version
+			}
+			for i, req := range file.Require {
+				if i >= 10 {
+					break
+				}
+				md.Dependencies = append(md.Dependencies, req.Mod.Path)
+			}
+		}
+	}
+
+	// 3. Architecture Topology
+	dirs := []string{"cmd", "internal", "pkg", "api"}
+	for _, d := range dirs {
+		if fi, err := os.Stat(filepath.Join(target, d)); err == nil && fi.IsDir() {
+			md.ArchitectureMap = append(md.ArchitectureMap, d)
+		}
+	}
+
+	// 4. Deploy Markers
+	markers := []string{"Dockerfile", ".github", ".gitlab-ci.yml"}
+	for _, m := range markers {
+		if _, err := os.Stat(filepath.Join(target, m)); err == nil {
+			md.DeployMarkers = append(md.DeployMarkers, m)
+		}
+	}
+
+	return md
+}
+
 // DiscoverProject performs a unified discovery scan, identifying
 // gaps and suggesting the next logical step. It returns a
 // consolidated DiscoveryResponse with a narrative summary
@@ -182,8 +232,11 @@ func (e *Engine) DiscoverProject(
 		return models.DiscoveryResponse{}, err
 	}
 
+	// Extract Foundation Metadata
+	meta := e.extractDiscoveryMetadata(ctx, path)
+
 	// Query Recall lazily for architectural standards
-	standards := e.EnsureRecallCache(ctx, session, "discovery_architectural", "search", map[string]interface{}{"namespace": "ecosystem", "query": "baseline project architectural standards", "domain": "discovery", "limit": 10})
+	standards := e.EnsureRecallCache(ctx, session, "discovery_architectural", "search", map[string]any{"namespace": "ecosystem", "query": "baseline project architectural standards", "domain": "discovery", "limit": 10})
 
 	// Update session gaps for SuggestNextStep.
 	session.Gaps = gaps
@@ -201,6 +254,9 @@ func (e *Engine) DiscoverProject(
 	}
 	if standards != "" {
 		narrative += " Standards baseline retrieved from Recall."
+	}
+	if len(meta.Dependencies) > 0 {
+		narrative += " Ecosystem footprint mapped."
 	}
 
 	// Generate Markdown Summary.
@@ -223,11 +279,12 @@ func (e *Engine) DiscoverProject(
 	return models.DiscoveryResponse{
 		Summary: fmt.Sprintf("Project discovery complete. %d gaps identified.", len(gaps)),
 		Data: struct {
-			Narrative string       `json:"narrative"`
-			Reasoning string       `json:"reasoning,omitempty"`
-			Gaps      []models.Gap `json:"gaps"`
-			NextStep  string       `json:"next_step"`
-			Standards string       `json:"standards,omitempty"`
+			Narrative string                   `json:"narrative"`
+			Reasoning string                   `json:"reasoning,omitempty"`
+			Gaps      []models.Gap             `json:"gaps"`
+			NextStep  string                   `json:"next_step"`
+			Standards string                   `json:"standards,omitempty"`
+			Metadata  models.DiscoveryMetadata `json:"metadata"`
 		}{
 			Narrative: narrative,
 			Reasoning: fmt.Sprintf(
@@ -239,6 +296,7 @@ func (e *Engine) DiscoverProject(
 			Gaps:      gaps,
 			NextStep:  nextStep,
 			Standards: standards,
+			Metadata:  meta,
 		},
 	}, nil
 }

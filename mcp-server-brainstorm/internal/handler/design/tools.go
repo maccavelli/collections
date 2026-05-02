@@ -27,7 +27,7 @@ func (t *CritiqueDesignTool) Name() string {
 func (t *CritiqueDesignTool) Register(s util.SessionProvider) {
 	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
-		Description: "[ROLE: CRITIC] DESIGN CRITIQUE ENGINE: Subjects architectural designs, feature plans, and major modifications to a rigorous, multi-perspective review. Evaluates quality metrics and generates red-team challenges. [TRIGGERS: The subsequent multi-perspective component evaluation phase] [Routing Tags: critique, review, red-team, design-check, evaluate-plan]",
+		Description: "[ROLE: CRITIC] DESIGN CRITIQUE ENGINE: Subjects architectural designs, feature plans, and major modifications to a rigorous, multi-perspective review. Evaluates quality metrics and generates red-team challenges based on go-refactor memory and context analysis findings. [REQUIRES: go-refactor:go_memory_analyzer, go-refactor:go_context_analyzer] [Routing Tags: critique, review, red-team, design-check, evaluate-plan]",
 	}, t.Handle)
 }
 
@@ -64,14 +64,14 @@ func (t *CritiqueDesignTool) Handle(ctx context.Context, req *mcp.CallToolReques
 	}
 
 	if goldenTruth == "" && recallAvailable {
-		goldenTruth = t.Engine.EnsureRecallCache(ctx, session, "critique_design", "search", map[string]interface{}{"namespace": "ecosystem", "query": "anti-patterns edge cases", "domain": "design", "limit": 10})
+		goldenTruth = t.Engine.EnsureRecallCache(ctx, session, "critique_design", "search", map[string]any{"namespace": "ecosystem", "query": "anti-patterns edge cases", "domain": "design", "limit": 10})
 		if session.Metadata == nil {
 			session.Metadata = make(map[string]any)
 		}
 		session.Metadata["standards"] = goldenTruth
 	}
 
-	var traceMap map[string]interface{}
+	var traceMap map[string]any
 	if recallAvailable && session.ProjectRoot != "" {
 		if tm, err := t.Engine.ExternalClient.AggregateSessionFromRecall(ctx, "go-refactor", session.ProjectRoot); err == nil && tm != nil {
 			traceMap = tm
@@ -137,7 +137,7 @@ func (t *AnalyzeEvolutionTool) Name() string {
 func (t *AnalyzeEvolutionTool) Register(s util.SessionProvider) {
 	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
-		Description: "[ROLE: CRITIC] EVOLUTION RISK ANALYZER: Evaluates and predicts the potential cascading risks and future blast radius of proposed architectural changes or refactors. Categorizes change impact and assesses risk level. [Routing Tags: risk, impact, blast-radius, evolution, analyze-future]",
+		Description: "[ROLE: CRITIC] EVOLUTION RISK ANALYZER: Evaluates and predicts the potential cascading risks and future blast radius of proposed architectural changes or refactors. Categorizes change impact and assesses risk level. [REQUIRES: go-refactor:go_ast_suite_analyzer] [Routing Tags: risk, impact, blast-radius, evolution, analyze-future]",
 	}, t.Handle)
 }
 
@@ -174,14 +174,14 @@ func (t *AnalyzeEvolutionTool) Handle(ctx context.Context, req *mcp.CallToolRequ
 	}
 
 	if standards == "" && recallAvailable {
-		standards = t.Engine.EnsureRecallCache(ctx, session, "analyze_evolution", "search", map[string]interface{}{"namespace": "ecosystem", "query": "technical debt blast radius compatibility", "domain": "evolution", "limit": 10})
+		standards = t.Engine.EnsureRecallCache(ctx, session, "analyze_evolution", "search", map[string]any{"namespace": "ecosystem", "query": "technical debt blast radius compatibility", "domain": "evolution", "limit": 10})
 		if session.Metadata == nil {
 			session.Metadata = make(map[string]any)
 		}
 		session.Metadata["standards"] = standards
 	}
 
-	var traceMap map[string]interface{}
+	var traceMap map[string]any
 	if recallAvailable && session.ProjectRoot != "" {
 		if tm, err := t.Engine.ExternalClient.AggregateSessionFromRecall(ctx, "go-refactor", session.ProjectRoot); err == nil && tm != nil {
 			traceMap = tm
@@ -284,7 +284,7 @@ func (t *ClarifyRequirementsTool) Handle(ctx context.Context, req *mcp.CallToolR
 	}
 
 	if standards == "" && recallAvailable {
-		standards = t.Engine.EnsureRecallCache(ctx, session, "clarify_requirements", "search", map[string]interface{}{"namespace": "ecosystem", "query": "architectural ambiguity requirements constraints", "domain": "architecture", "limit": 10})
+		standards = t.Engine.EnsureRecallCache(ctx, session, "clarify_requirements", "search", map[string]any{"namespace": "ecosystem", "query": "architectural ambiguity requirements constraints", "domain": "architecture", "limit": 10})
 		if session.Metadata == nil {
 			session.Metadata = make(map[string]any)
 		}

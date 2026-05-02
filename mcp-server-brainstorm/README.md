@@ -1,130 +1,106 @@
-# 🧠 Brainstorm MCP Server
+# 🧠 MagicBrainstorm Sub-Server
 
-A powerful Model Context Protocol (MCP) server designed to facilitate deep technical brainstorming, project discovery,
-and architectural decision-making through a Socratic, adversarial approach.
+A high-performance Model Context Protocol (MCP) sub-server for deep architectural brainstorming, requirement exploration, and project discovery.
 
 ## 🚀 Overview
 
-The Brainstorm server helps engineers and architects stress-test designs, identify project gaps, and document decisions.
-It bridges the gap between raw LLM analysis and complex project context by providing structured rubrics, automated
-discovery, and a proactive clarification engine.
+`mcp-server-brainstorm` is a core sub-server of the MagicTools suite. It helps engineers stress-test designs, identify project gaps, and document decisions through Socratic analysis and adversarial personas.
 
 ### 📋 Core Pillars
 
-1. **Requirement Grounding**: Proactively identifies architectural "decision forks" (e.g., Database choice, Auth
-   strategy) and uses Socratic questioning to force precise definitions.
-2. **Discovery**: Unified scanning of project structure, technology stacks, and documentation to identify gaps or
-   technical debt.
-3. **Design Analysis**: Interactive stress-testing using adversarial personas (Red Teaming) and multi-dimensional
-   quality rubrics (Scalability, Security, Modularity).
-4. **Decision Tracking**: Capturing architectural logic and rejected alternatives into structured Architecture Decision
-   Records (ADR).
+1.  **Requirement Synthesis**: Breaks down high-level requests into technical specifications.
+2.  **Context-Aware Analysis**: Scans project structure and tech stacks to identify documentation gaps.
+3.  **Adversarial Persona (Red Teaming)**: Audits designs for scalability, security, and modularity.
+4.  **Decision Records**: Translates discussions into structured Architecture Decision Records (ADRs).
 
 ---
 
-## 🛠️ Tools
+## 🛠️ Usage & Functionality
 
-### `clarify_requirements`
+### Specialized Tools
 
-Analyzes high-level requirements to detect architectural "decision forks".
+*   **`clarify_requirements`**: Detects architectural "decision forks" in your requirements.
+*   **`discover_project`**: Performs a unified scan of your tech stack and structure.
+*   **`critique_design`**: Multi-dimensional assessment of a design snippet.
+*   **`capture_decision_logic`**: Generates ADRs from your brainstorming sessions.
 
-- **Parameter**: `requirements` (string)
-- **Usage**: Use this at the start of any project to resolve ambiguity early.
-
-### `discover_project`
-
-Performs a unified scan of the project structure and technology stack.
-
-- **Parameter**: `path` (string, optional)
-- **Usage**: Identify documentation gaps and suggest critical next steps.
-
-### `critique_design`
-
-Provides a consolidated, multi-dimensional assessment of a design snippet.
-
-- **Parameter**: `design` (string)
-- **Usage**: Audit for scalability, security, and modularity using Red Team personas.
-
-### `analyze_evolution`
-
-Evaluates the risks, breaking changes, and deprecation paths of a proposed extension.
-
-- **Parameter**: `proposal` (string)
-
-### `capture_decision_logic`
-
-Translates architectural discussions into structured ADRs.
-
-- **Parameters**: `decision` (string), `alternatives` (string)
+### Orchestration with MagicTools (Recommended)
+MagicTools manages Brainstorm's lifecycle. Invoke its tools via `magictools:call_proxy`:
+```json
+{
+  "name": "magictools:call_proxy",
+  "arguments": {
+    "urn": "brainstorm:clarify_requirements",
+    "arguments": { "requirements": "build a distributed cache" }
+  }
+}
+```
 
 ---
 
-## ⚙️ Installation
+## ⚙️ Configuration
 
 ### 1. Build the Binary
-
 ```bash
-go build -o dist/mcp-server-brainstorm main.go
+make build
 ```
 
-### 2. Configure for IDEs
+### 2. Standalone Environment Variables
+If running without the MagicTools orchestrator:
+| Variable | Description |
+| :--- | :--- |
+| `MCP_API_URL` | Comma-separated list of context servers (e.g., `recall`). |
+| `MCP_ORCHESTRATOR_OWNED` | Set to `true` for full swarm integration. |
 
-#### **Antigravity (Internal Orchestrator)**
+---
 
-Antigravity automatically manages this server. If you need to add it manually to a custom environment:
+## 🖥️ IDE Configuration Examples (Standalone)
 
-```yaml
-# antigravity/config.yaml
-mcpServers:
-  brainstorm:
-    command: "/absolute/path/to/dist/mcp-server-brainstorm"
-```
-
-#### **VS Code (MCP Extension / Cline)**
-
-Add to your `mcp_config.json`:
-
+### 🌌 Antigravity
+**Path:** `~/.gemini/mcp_config.json`
 ```json
 {
   "mcpServers": {
     "brainstorm": {
-      "command": "/absolute/path/to/dist/mcp-server-brainstorm",
-      "args": [],
+      "command": "/absolute/path/to/mcp-server-brainstorm",
       "env": {
-        "PATH": "/usr/local/go/bin:/usr/local/bin:/usr/bin"
+        "MCP_ORCHESTRATOR_OWNED": "true"
       }
     }
   }
 }
 ```
 
-#### **Cursor IDE**
+### 💻 VSCode (Roo Code / Cline)
+**Paths:**
+*   **Linux/macOS**: `~/Library/Application Support/Code/User/globalStorage/rooveterinaryinc.roo-cline/settings/cline_mcp_settings.json`
+*   **Windows**: `%APPDATA%\Code\User\globalStorage\rooveterinaryinc.roo-cline\settings\cline_mcp_settings.json`
 
-1. Open **Settings** -> **Features** -> **MCP**.
-2. Click **+ Add New MCP Server**.
-3. Name: `Brainstorm`
-4. Type: `stdio`
-5. Command: `/absolute/path/to/dist/mcp-server-brainstorm`
+```json
+{
+  "mcpServers": {
+    "brainstorm": {
+      "command": "C:/path/to/mcp-server-brainstorm.exe"
+    }
+  }
+}
+```
 
----
+### 🤖 Claude Desktop
+**Paths:**
+*   **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+*   **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
 
-## 📖 Use Cases
-
-- **Initial Scoping**: Run `clarify_requirements` to ensure the technical foundation is solid.
-- **Pre-Implementation Design Review**: Run a feature proposal through `critique_design` to find potential flaws.
-- **Project Onboarding**: Use `discover_project` when starting on a new repository.
-- **Architecture Governance**: Use `capture_decision_logic` to document technical pivots.
-
----
-
-## 💻 CLI Functionality
-
-The binary supports a `-version` flag to check the current build version.
-
-```bash
-./mcp-server-brainstorm -version
+```json
+{
+  "mcpServers": {
+    "brainstorm": {
+      "command": "/usr/local/bin/mcp-server-brainstorm"
+    }
+  }
+}
 ```
 
 ---
 
-*Built with Go for performance and reliability.*
+*Part of the MagicTools Intelligence Suite. Built with Go.*

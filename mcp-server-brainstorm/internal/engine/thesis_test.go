@@ -119,8 +119,8 @@ func TestGenerateThesis_Empty(t *testing.T) {
 
 func TestGenerateThesis_WithTraceMap(t *testing.T) {
 	eng := NewEngine("/tmp", nil)
-	traceMap := map[string]interface{}{
-		"interfaces":      []interface{}{"Foo", "Bar", "Baz", "Qux", "Quux", "Corge"},
+	traceMap := map[string]any{
+		"interfaces":      []any{"Foo", "Bar", "Baz", "Qux", "Quux", "Corge"},
 		"dead_code":       "3 unreachable functions detected",
 		"coverage":        30.5,
 		"total_functions": 25.0,

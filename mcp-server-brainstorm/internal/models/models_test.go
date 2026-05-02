@@ -31,11 +31,12 @@ func TestModelsCoverage(t *testing.T) {
 	dr := DiscoveryResponse{
 		Summary: "summary",
 		Data: struct {
-			Narrative string `json:"narrative"`
-			Reasoning string `json:"reasoning,omitempty"`
-			Gaps      []Gap  `json:"gaps"`
-			NextStep  string `json:"next_step"`
-			Standards string `json:"standards,omitempty"`
+			Narrative string            `json:"narrative"`
+			Reasoning string            `json:"reasoning,omitempty"`
+			Gaps      []Gap             `json:"gaps"`
+			NextStep  string            `json:"next_step"`
+			Standards string            `json:"standards,omitempty"`
+			Metadata  DiscoveryMetadata `json:"metadata"`
 		}{
 			Narrative: "narrative",
 			Gaps:      s.Gaps,
@@ -62,6 +63,7 @@ func TestModelsCoverage(t *testing.T) {
 			Decision:           "decision",
 			RejectedAlternates: "none",
 			Consequences:       "none",
+			Narrative:          "narr",
 		},
 	}
 
@@ -108,8 +110,60 @@ func TestModelsCoverage(t *testing.T) {
 		},
 	}
 
+	df := DecisionFork{
+		Component:      "comp",
+		SocraticPrompt: "prompt",
+		Options:        map[string]string{"k": "v"},
+		Impact:         "impact",
+		Recommendation: "rec",
+	}
+
+	cl := ClarificationResponse{
+		Summary: "sum",
+		Data: struct {
+			Narrative string         `json:"narrative"`
+			Forks     []DecisionFork `json:"forks"`
+		}{
+			Narrative: "narr",
+			Forks:     []DecisionFork{df},
+		},
+	}
+
+	tm := ThreatModelResponse{
+		Summary: "sum",
+		Data: struct {
+			Narrative       string        `json:"narrative"`
+			Metrics         STRIDEMetrics `json:"metrics"`
+			Vulnerabilities []string      `json:"vulnerabilities"`
+			Recommendations []string      `json:"recommendations"`
+		}{
+			Narrative: "narr",
+			Metrics: STRIDEMetrics{
+				Spoofing: 1,
+			},
+			Vulnerabilities: []string{"v1"},
+			Recommendations: []string{"r1"},
+		},
+	}
+
+	ar := AporiaReport{
+		RefusalToProceed: true,
+		Resolutions: []AporiaResolution{
+			{Pillar: "p1", Resolution: "ADOPT"},
+		},
+	}
+
+	ctr := CounterThesisReport{
+		Summary: "sum",
+		Verdict: "APPROVE",
+		Pillars: []DialecticPillar{
+			{Name: "p1", Score: 8},
+		},
+		AporiaReport: ar,
+	}
+
 	// Marshalt/Unmarshal to cover JSON tags and struct fields.
-	payloads := []interface{}{s, dr, adr, qm, er, rtc, cr}
+	payloads := []any{s, dr, adr, qm, er, rtc, cr, df, cl, tm, ar, ctr}
 	for _, p := range payloads {
 		data, err := json.Marshal(p)
 		if err != nil {
@@ -118,5 +172,41 @@ func TestModelsCoverage(t *testing.T) {
 		if len(data) == 0 {
 			t.Errorf("empty json for %T", p)
 		}
+	}
+}
+
+func TestSession_GetInt(t *testing.T) {
+	s := &Session{
+		Metadata: map[string]any{
+			"int":     10,
+			"int64":   int64(20),
+			"float64": float64(30.5),
+			"string":  "40",
+		},
+	}
+
+	tests := []struct {
+		key   string
+		want  int
+		found bool
+	}{
+		{"int", 10, true},
+		{"int64", 20, true},
+		{"float64", 30, true}, // Truncated
+		{"string", 0, false},
+		{"missing", 0, false},
+	}
+
+	for _, tt := range tests {
+		got, ok := s.GetInt(tt.key)
+		if ok != tt.found || got != tt.want {
+			t.Errorf("GetInt(%q) = (%v, %v), want (%v, %v)", tt.key, got, ok, tt.want, tt.found)
+		}
+	}
+
+	// Test nil metadata
+	s2 := &Session{}
+	if got, ok := s2.GetInt("any"); ok || got != 0 {
+		t.Errorf("GetInt on nil metadata should fail")
 	}
 }

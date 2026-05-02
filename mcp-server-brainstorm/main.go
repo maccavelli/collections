@@ -186,7 +186,7 @@ func establishStreamingClient(ctx context.Context, eng *engine.Engine) {
 		go func(url string, c context.Context) {
 			// Start() has its own exponential backoff retry loop (1s → 30s).
 			// No boot delay needed — if recall isn't ready, Start() retries.
-			if err := waitForRecallSocketReady(slog.Default()); err != nil {
+			if err := waitForRecallSocketReady(); err != nil {
 				slog.Error("recall socket wait failed", "error", err)
 			}
 			client.Start(c)
@@ -230,7 +230,7 @@ func (a *autoFlusher) Write(p []byte) (n int, err error) {
 	return n, err
 }
 
-func waitForRecallSocketReady(logger *slog.Logger) error {
+func waitForRecallSocketReady() error {
 	val := os.Getenv("MCP_API_URL")
 	if val == "" {
 		// Standalone execution bound; ignore ping.

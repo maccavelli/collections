@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 
+	"mcp-server-brainstorm/internal/staging"
+
 	"github.com/tidwall/buntdb"
 )
 
@@ -37,6 +39,10 @@ func OpenDB(name string) (*buntdb.DB, error) {
 		}
 	} else {
 		slog.Warn("failed to read buntdb cache configuration", "error", err)
+	}
+
+	if err := staging.SetupIndexes(db); err != nil {
+		slog.Warn("failed to setup staging indexes", "error", err)
 	}
 
 	return db, nil

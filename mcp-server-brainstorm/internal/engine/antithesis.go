@@ -17,7 +17,7 @@ func (e *Engine) GenerateCounterThesis(
 	ctx context.Context,
 	thesisText string,
 	standards string,
-	traceMap map[string]interface{},
+	traceMap map[string]any,
 ) (models.CounterThesisReport, error) {
 	select {
 	case <-ctx.Done():
@@ -67,7 +67,7 @@ func (e *Engine) GenerateCounterThesis(
 // --- Pillar 1: Type Safety & Generics (risk perspective) ---
 
 func (e *Engine) skepticTypeSafety(
-	text string, traceMap map[string]interface{},
+	text string, traceMap map[string]any,
 ) models.DialecticPillar {
 	score := 7 // Benefit of the doubt
 	var findings []string
@@ -91,7 +91,7 @@ func (e *Engine) skepticTypeSafety(
 
 	// AST enrichment
 	if traceMap != nil {
-		if interfaces, ok := traceMap["interfaces"].([]interface{}); ok && len(interfaces) > 8 {
+		if interfaces, ok := traceMap["interfaces"].([]any); ok && len(interfaces) > 8 {
 			score -= 1
 			findings = append(findings, "AST: very high interface count — abstraction tax risk")
 		}
@@ -103,7 +103,7 @@ func (e *Engine) skepticTypeSafety(
 // --- Pillar 2: Modernization (risk perspective) ---
 
 func (e *Engine) skepticModernization(
-	ctx context.Context, text string, traceMap map[string]interface{}, isOrchestrator bool,
+	ctx context.Context, text string, traceMap map[string]any, isOrchestrator bool,
 ) models.DialecticPillar {
 	score := 7
 	var findings []string
@@ -141,7 +141,7 @@ func (e *Engine) skepticModernization(
 // --- Pillar 3: Modularization (risk perspective) ---
 
 func (e *Engine) skepticModularization(
-	text string, traceMap map[string]interface{},
+	text string, traceMap map[string]any,
 ) models.DialecticPillar {
 	score := 7
 	var findings []string
@@ -175,7 +175,7 @@ func (e *Engine) skepticModularization(
 // --- Pillar 4: Efficiency (risk perspective) ---
 
 func (e *Engine) skepticEfficiency(
-	text string, traceMap map[string]interface{},
+	text string, traceMap map[string]any,
 ) models.DialecticPillar {
 	score := 7
 	var findings []string
@@ -195,7 +195,7 @@ func (e *Engine) skepticEfficiency(
 
 	// AST enrichment
 	if traceMap != nil {
-		if imports, ok := traceMap["imports"].([]interface{}); ok {
+		if imports, ok := traceMap["imports"].([]any); ok {
 			for _, imp := range imports {
 				if s, ok := imp.(string); ok && strings.Contains(s, "reflect") {
 					score -= 1
@@ -212,7 +212,7 @@ func (e *Engine) skepticEfficiency(
 // --- Pillar 5: Reliability (risk perspective) ---
 
 func (e *Engine) skepticReliability(
-	text string, traceMap map[string]interface{},
+	text string, traceMap map[string]any,
 ) models.DialecticPillar {
 	score := 7
 	var findings []string
@@ -232,7 +232,7 @@ func (e *Engine) skepticReliability(
 
 	// AST enrichment
 	if traceMap != nil {
-		if complexity, ok := traceMap["complexity"].([]interface{}); ok {
+		if complexity, ok := traceMap["complexity"].([]any); ok {
 			for _, c := range complexity {
 				if cv, ok := c.(float64); ok && cv > 12 {
 					score -= 2
@@ -253,7 +253,7 @@ func (e *Engine) skepticReliability(
 // --- Pillar 6: Maintainability (risk perspective) ---
 
 func (e *Engine) skepticMaintainability(
-	ctx context.Context, text string, traceMap map[string]interface{}, isOrchestrator bool,
+	ctx context.Context, text string, traceMap map[string]any, isOrchestrator bool,
 ) models.DialecticPillar {
 	score := 7
 	var findings []string

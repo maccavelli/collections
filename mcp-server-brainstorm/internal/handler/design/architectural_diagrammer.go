@@ -27,7 +27,7 @@ func (t *ArchitecturalDiagrammerTool) Name() string {
 func (t *ArchitecturalDiagrammerTool) Register(s util.SessionProvider) {
 	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
-		Description: "[ROLE: SYNTHESIZER] [PHASE: TERMINAL] ARCHITECTURE TELEMETRY PROVIDER: Extracts structural project metrics and CSSA trace history into a dense JSON payload for downstream Mermaid diagram generation. [Routing Tags: diagram, architecture, mermaid, chart, telemetry-json]",
+		Description: "[ROLE: REPORTING] [PHASE: TERMINAL] ARCHITECTURE TELEMETRY PROVIDER: Extracts structural project metrics and CSSA trace history into a dense JSON payload for downstream Mermaid diagram generation. [Routing Tags: diagram, architecture, mermaid, chart, telemetry-json]",
 	}, t.Handle)
 }
 

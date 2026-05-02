@@ -6,6 +6,7 @@
 package engine
 
 import (
+	"context"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -13,13 +14,19 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/tidwall/buntdb"
-
-	"mcp-server-brainstorm/internal/external"
 )
 
 // maxWalkDepth limits how deep AnalyzeDiscovery recurses
 // into the project tree to prevent runaway traversals.
 const maxWalkDepth = 3
+
+// RecallClient defines the subset of MCPClient methods required by the engine.
+type RecallClient interface {
+	RecallEnabled() bool
+	CallDatabaseTool(ctx context.Context, toolName string, arguments map[string]any) string
+	AggregateSessionFromRecall(ctx context.Context, serverID, projectID string) (map[string]any, error)
+	SaveSession(ctx context.Context, sessionID, projectID string, payload any) error
+}
 
 // skipDirs contains directory names that are always excluded
 // from filesystem analysis.
@@ -36,7 +43,7 @@ var skipDirs = map[string]bool{
 type Engine struct {
 	ProjectRoot    string
 	mu             sync.RWMutex
-	ExternalClient *external.MCPClient
+	ExternalClient RecallClient
 	mcpSession     *mcp.ServerSession
 	DB             *buntdb.DB
 }
@@ -63,8 +70,8 @@ func (e *Engine) DBEntries() int {
 	return n
 }
 
-// SetExternalClient injects the MCPClient for cross-server API tools (e.g. Recall).
-func (e *Engine) SetExternalClient(c *external.MCPClient) {
+// SetExternalClient injects the RecallClient for cross-server API tools (e.g. Recall).
+func (e *Engine) SetExternalClient(c RecallClient) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.ExternalClient = c
