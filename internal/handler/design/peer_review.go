@@ -27,29 +27,7 @@ func (t *PeerReviewTool) Name() string {
 func (t *PeerReviewTool) Register(s util.SessionProvider) {
 	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
-		Description: "[ROLE: CRITIC] PEER REVIEW ENGINE: Performs multi-perspective review of component designs. In standalone mode, uses local CritiqueDesign heuristics. [Routing Tags: peer-review, heuristic-check, design-evaluation]",
-		InputSchema: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"session_id": map[string]any{
-					"type":        "string",
-					"description": "CSSA backend storage pipeline correlation ID.",
-				},
-				"target": map[string]any{
-					"type":        "string",
-					"description": "Absolute path to the project root or package.",
-				},
-				"focus": map[string]any{
-					"type":        "string",
-					"description": "Specialized agent focus area (e.g., 'security', 'architecture', 'performance').",
-				},
-				"component_design": map[string]any{
-					"type":        "string",
-					"description": "The current component design or file contents to review.",
-				},
-			},
-			"required": []string{"target", "focus", "component_design"},
-		},
+		Description: "[ROLE: CRITIC] PEER REVIEW ENGINE: Performs multi-perspective review of component designs, dead code removal candidates, and interface extraction proposals. Validates that structural changes identified by go-refactor won't cause regressions. [REQUIRES: go-refactor:go_dead_code_pruner, go-refactor:go_interface_discovery] [Routing Tags: peer-review, heuristic-check, design-evaluation, validate-removal]",
 	}, t.Handle)
 }
 
@@ -80,7 +58,7 @@ func (t *PeerReviewTool) Handle(ctx context.Context, req *mcp.CallToolRequest, i
 	}
 
 	// TraceMap enrichment.
-	var traceMap map[string]interface{}
+	var traceMap map[string]any
 	if recallAvailable && session.ProjectRoot != "" {
 		if tm, tmErr := t.Engine.ExternalClient.AggregateSessionFromRecall(ctx, "go-refactor", session.ProjectRoot); tmErr == nil && tm != nil {
 			traceMap = tm
@@ -98,7 +76,7 @@ func (t *PeerReviewTool) Handle(ctx context.Context, req *mcp.CallToolRequest, i
 		timeoutCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		defer cancel()
 
-		args := map[string]interface{}{
+		args := map[string]any{
 			"target":           input.Target,
 			"session_id":       input.SessionID,
 			"focus":            input.Focus,

@@ -26,7 +26,7 @@ func (t *ThesisArchitectTool) Name() string {
 func (t *ThesisArchitectTool) Register(s util.SessionProvider) {
 	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
-		Description: "[ROLE: CRITIC] THESIS ARCHITECT: Evaluates Go codebases across 6 modernization dimensions. Proposes maximum Go 1.26.1 feature adoption. [TRIGGERS: brainstorm:antithesis_skeptic] [Routing Tags: thesis, propose, architect, 1.26.1, design]",
+		Description: "[ROLE: CRITIC] THESIS ARCHITECT: Evaluates Go codebases across 6 modernization dimensions. Proposes maximum Go 1.26.1 feature adoption. Synthesizes critique_design, complexity_forecaster, peer_review, and evolution findings into a unified modernization thesis. [REQUIRES: brainstorm:critique_design, brainstorm:brainstorm_complexity_forecaster, brainstorm:peer_review, brainstorm:analyze_evolution] [TRIGGERS: brainstorm:antithesis_skeptic] [Routing Tags: thesis, propose, architect, 1.26.1, design]",
 	}, t.Handle)
 }
 
@@ -67,7 +67,7 @@ func (t *ThesisArchitectTool) Handle(ctx context.Context, req *mcp.CallToolReque
 
 	// Orchestrator-only: fetch live standards from recall.
 	if standards == "" && recallAvailable {
-		standards = t.Engine.EnsureRecallCache(ctx, session, "thesis_architect", "search", map[string]interface{}{"namespace": "ecosystem", "query": "Go 1.26.1 generics omitzero errors.AsType", "domain": "modernization", "limit": 10})
+		standards = t.Engine.EnsureRecallCache(ctx, session, "thesis_architect", "search", map[string]any{"namespace": "ecosystem", "query": "Go 1.26.1 generics omitzero errors.AsType", "domain": "modernization", "limit": 10})
 		if session.Metadata == nil {
 			session.Metadata = make(map[string]any)
 		}
@@ -75,7 +75,7 @@ func (t *ThesisArchitectTool) Handle(ctx context.Context, req *mcp.CallToolReque
 	}
 
 	// Orchestrator-only: load go-refactor AST trace data.
-	var traceMap map[string]interface{}
+	var traceMap map[string]any
 	if recallAvailable && session.ProjectRoot != "" {
 		if tm, err := t.Engine.ExternalClient.AggregateSessionFromRecall(ctx, "go-refactor", session.ProjectRoot); err == nil && tm != nil {
 			traceMap = tm

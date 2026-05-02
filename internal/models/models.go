@@ -45,21 +45,32 @@ func (s *Session) GetInt(key string) (int, bool) {
 // It ensures strict correlation via SessionID, eliminates fragmentation in targeting,
 // and safely routes edge-case parameters via the Flags map.
 type UniversalPipelineInput struct {
-	SessionID string         `json:"session_id" jsonschema:"REQUIRED: CSSA backend correlation ID and HFSC tracking ID."`
-	Target    string         `json:"target" jsonschema:"REQUIRED: Absolute path, package, or workspace URI to analyze."`
-	Context   string         `json:"context,omitempty" jsonschema:"Optional: Contextual text required for this specific stage."`
-	Flags     map[string]any `json:"flags,omitempty" jsonschema:"Optional: Key-value map for stage-specific execution flags."`
+	SessionID    string         `json:"session_id" jsonschema:"REQUIRED: CSSA backend correlation ID and HFSC tracking ID."`
+	Target       string         `json:"target" jsonschema:"REQUIRED: Absolute path, package, or workspace URI to analyze."`
+	ArtifactPath string         `json:"artifact_path,omitempty" jsonschema:"Optional OS absolute path to route the generated output payload, bypassing JSON-RPC overhead."`
+	Context      string         `json:"context,omitempty" jsonschema:"Optional: Contextual text required for this specific stage."`
+	Flags        map[string]any `json:"flags,omitempty" jsonschema:"Optional: Key-value map for stage-specific execution flags."`
+}
+
+// DiscoveryMetadata encapsulates the deep foundation metadata extracted from the project.
+type DiscoveryMetadata struct {
+	Intent          string   `json:"intent,omitempty"`
+	GoVersion       string   `json:"go_version,omitempty"`
+	Dependencies    []string `json:"dependencies,omitempty"`
+	ArchitectureMap []string `json:"architecture_map,omitempty"`
+	DeployMarkers   []string `json:"deploy_markers,omitempty"`
 }
 
 // DiscoveryResponse provides a unified view of project gaps.
 type DiscoveryResponse struct {
 	Summary string `json:"summary"`
 	Data    struct {
-		Narrative string `json:"narrative"`
-		Reasoning string `json:"reasoning,omitempty"`
-		Gaps      []Gap  `json:"gaps"`
-		NextStep  string `json:"next_step"`
-		Standards string `json:"standards,omitempty"`
+		Narrative string            `json:"narrative"`
+		Reasoning string            `json:"reasoning,omitempty"`
+		Gaps      []Gap             `json:"gaps"`
+		NextStep  string            `json:"next_step"`
+		Standards string            `json:"standards,omitempty"`
+		Metadata  DiscoveryMetadata `json:"metadata"`
 	} `json:"data"`
 }
 

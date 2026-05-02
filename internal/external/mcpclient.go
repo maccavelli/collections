@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"maps"
 	"sync"
 	"time"
 
@@ -28,7 +29,7 @@ type MCPClient struct {
 type telemetryEvent struct {
 	sessionID string
 	projectID string
-	payload   interface{}
+	payload   any
 }
 
 // NewMCPClient initializes a new Streamable HTTP MCP client.
@@ -37,7 +38,7 @@ func NewMCPClient(url string) *MCPClient {
 		URL:    url,
 		logger: slog.Default(),
 	}
-	for i := 0; i < 8; i++ {
+	for i := range 8 {
 		client.telemetryShards[i] = make(chan telemetryEvent, 2048)
 		go client.workerFlusher(i)
 	}
@@ -105,10 +106,7 @@ func (c *MCPClient) Start(ctx context.Context) {
 					return
 				case <-time.After(backoff):
 				}
-				backoff = backoff * 2
-				if backoff > maxBackoff {
-					backoff = maxBackoff
-				}
+				backoff = min(backoff*2, maxBackoff)
 				continue
 			}
 
@@ -157,7 +155,7 @@ func (c *MCPClient) Start(ctx context.Context) {
 
 // CallDatabaseTool generically executes remote database tools and marshals their
 // structured data results. Returns empty string if recall is unavailable or no data found.
-func (c *MCPClient) CallDatabaseTool(ctx context.Context, toolName string, arguments map[string]interface{}) string {
+func (c *MCPClient) CallDatabaseTool(ctx context.Context, toolName string, arguments map[string]any) string {
 	if !c.RecallEnabled() {
 		c.logger.Warn("recall_unreachable: circuit breaker is open, recall connection not established",
 			"tool", toolName, "reason", "circuit_breaker_open")
@@ -186,7 +184,7 @@ func (c *MCPClient) CallDatabaseTool(ctx context.Context, toolName string, argum
 
 	// Prefer structured content for machine-to-machine consumption (e.g., recall)
 	if result.StructuredContent != nil {
-		if sc, ok := result.StructuredContent.(map[string]interface{}); ok {
+		if sc, ok := result.StructuredContent.(map[string]any); ok {
 			if data, exists := sc["data"]; exists {
 				j, _ := json.Marshal(data)
 				return string(j)
@@ -211,7 +209,7 @@ func (c *MCPClient) CallDatabaseTool(ctx context.Context, toolName string, argum
 
 // SaveSession persists context state into the remote recall server.
 // projectID is the project-scoped key (e.g., project root path) used for recall's compound key.
-func (c *MCPClient) SaveSession(ctx context.Context, sessionID, projectID string, payload interface{}) error {
+func (c *MCPClient) SaveSession(ctx context.Context, sessionID, projectID string, payload any) error {
 	shardIdx := 0
 	if len(sessionID) > 0 {
 		shardIdx = int(sessionID[0]) % 8
@@ -246,7 +244,7 @@ func (c *MCPClient) workerFlusher(shard int) {
 		if pID == "" {
 			pID = "global"
 		}
-		args := map[string]interface{}{
+		args := map[string]any{
 			"server_id":     "brainstorm",
 			"project_id":    pID,
 			"outcome":       "saved",
@@ -260,7 +258,7 @@ func (c *MCPClient) workerFlusher(shard int) {
 		retries := 15
 		backoff := 100 * time.Millisecond
 
-		for i := 0; i < retries; i++ {
+		for i := range retries {
 			res := c.CallDatabaseTool(bgCtx, "save_sessions", args)
 			if res != "" {
 				break
@@ -284,8 +282,8 @@ func (c *MCPClient) workerFlusher(shard int) {
 
 // GetSession retrieves context state from the remote recall server.
 // The sessionID corresponds to the CSSA pipeline correlation ID (typically the project root).
-func (c *MCPClient) GetSession(ctx context.Context, sessionID string) (map[string]interface{}, error) {
-	args := map[string]interface{}{
+func (c *MCPClient) GetSession(ctx context.Context, sessionID string) (map[string]any, error) {
+	args := map[string]any{
 		"session_id": sessionID,
 	}
 	args["namespace"] = "sessions"
@@ -296,7 +294,7 @@ func (c *MCPClient) GetSession(ctx context.Context, sessionID string) (map[strin
 		}
 		return nil, fmt.Errorf("recall_key_not_found: no session data found for key '%s' — verify the session_id matches an existing recall entry", sessionID)
 	}
-	var data map[string]interface{}
+	var data map[string]any
 	if err := json.Unmarshal([]byte(res), &data); err != nil {
 		return nil, fmt.Errorf("recall_data_corrupt: session '%s' returned unparseable data: %w", sessionID, err)
 	}
@@ -304,13 +302,13 @@ func (c *MCPClient) GetSession(ctx context.Context, sessionID string) (map[strin
 }
 
 // AggregateSessionFromRecall retrieves ALL session records for a given server_id
-// and project_id from recall's list_sessions endpoint, then merges their state_data
+// and project_id from recall's universal list endpoint, then merges their state_data
 // into a unified map. This is the correct aggregation path for generate_final_report
 // which needs to combine data from all pipeline stages.
 //
 // Limits results to the 20 most recent entries and truncates per-stage content
 // at 32KB to prevent orchestrator payload overflow (25MB limit).
-func (c *MCPClient) AggregateSessionFromRecall(ctx context.Context, serverID, projectID string) (map[string]interface{}, error) {
+func (c *MCPClient) AggregateSessionFromRecall(ctx context.Context, serverID, projectID string) (map[string]any, error) {
 	const maxEntries = 20       // Most recent N entries per server_id (brainstorm=9, go-refactor=15)
 	const maxContentLen = 32768 // 32KB per stage cap threshold for pruning
 
@@ -318,7 +316,7 @@ func (c *MCPClient) AggregateSessionFromRecall(ctx context.Context, serverID, pr
 		return nil, fmt.Errorf("recall_unreachable: recall circuit breaker is open, cannot aggregate sessions")
 	}
 
-	args := map[string]interface{}{
+	args := map[string]any{
 		"server_id":        serverID,
 		"project_id":       projectID,
 		"limit":            maxEntries,
@@ -330,23 +328,23 @@ func (c *MCPClient) AggregateSessionFromRecall(ctx context.Context, serverID, pr
 		return nil, fmt.Errorf("recall_key_not_found: no sessions found for server_id='%s' project_id='%s'", serverID, projectID)
 	}
 
-	// Parse the list_sessions response.
+	// Parse the list response.
 	// CallDatabaseTool may return either:
 	//   (a) Unwrapped: {"count":N, "entries":[...]} — when StructuredContent has "data" key
 	//   (b) Wrapped:   {"data":{"count":N, "entries":[...]}} — when TextContent fallback is used
-	var envelope map[string]interface{}
+	var envelope map[string]any
 	if err := json.Unmarshal([]byte(res), &envelope); err != nil {
-		return nil, fmt.Errorf("recall_data_corrupt: list_sessions returned unparseable data: %w", err)
+		return nil, fmt.Errorf("recall_data_corrupt: list returned unparseable data: %w", err)
 	}
 
 	// Handle both unwrapped (entries at top level) and wrapped (entries inside "data").
-	var entries []interface{}
-	if e, ok := envelope["entries"].([]interface{}); ok {
+	var entries []any
+	if e, ok := envelope["entries"].([]any); ok {
 		// Case (a): CallDatabaseTool already unwrapped the "data" field
 		entries = e
-	} else if data, ok := envelope["data"].(map[string]interface{}); ok {
+	} else if data, ok := envelope["data"].(map[string]any); ok {
 		// Case (b): full response envelope with "data" wrapper
-		entries, _ = data["entries"].([]interface{})
+		entries, _ = data["entries"].([]any)
 	}
 	if len(entries) == 0 {
 		return nil, fmt.Errorf("recall_key_not_found: no session entries for server_id='%s' project_id='%s'", serverID, projectID)
@@ -359,18 +357,18 @@ func (c *MCPClient) AggregateSessionFromRecall(ctx context.Context, serverID, pr
 	}
 
 	// Merge all stage state_data into a unified result map.
-	merged := make(map[string]interface{})
+	merged := make(map[string]any)
 	merged["_total_entries"] = totalEntries
 	merged["_stage_count"] = len(entries)
 
-	stages := make([]map[string]interface{}, 0, len(entries))
+	stages := make([]map[string]any, 0, len(entries))
 	for _, entry := range entries {
-		e, ok := entry.(map[string]interface{})
+		e, ok := entry.(map[string]any)
 		if !ok {
 			continue
 		}
 		key, _ := e["key"].(string)
-		record, _ := e["record"].(map[string]interface{})
+		record, _ := e["record"].(map[string]any)
 		if record == nil {
 			continue
 		}
@@ -380,7 +378,7 @@ func (c *MCPClient) AggregateSessionFromRecall(ctx context.Context, serverID, pr
 		}
 
 		// Parse the state_data JSON stored in the content field.
-		var stageData map[string]interface{}
+		var stageData map[string]any
 		if json.Unmarshal([]byte(content), &stageData) == nil {
 			if len(content) > maxContentLen {
 				delete(stageData, "files")
@@ -391,9 +389,7 @@ func (c *MCPClient) AggregateSessionFromRecall(ctx context.Context, serverID, pr
 			}
 			stages = append(stages, stageData)
 			// Merge top-level fields from each stage into the unified map.
-			for k, v := range stageData {
-				merged[k] = v
-			}
+			maps.Copy(merged, stageData)
 		}
 
 		c.logger.Debug("AggregateSessionFromRecall: merged stage", "key", key)
@@ -414,10 +410,34 @@ func (c *MCPClient) AggregateSessionFromRecall(ctx context.Context, serverID, pr
 // Sessions Namespace Convenience API
 // ---------------------------------------------------------------------------
 
+// SearchSessions queries the recall sessions namespace with multi-dimensional
+// BM25/Jaccard search. Filters are optional — pass empty string to skip.
+// Returns empty string if recall is unavailable or no matches found.
+func (c *MCPClient) SearchSessions(ctx context.Context, query, projectID, serverID, outcome, traceContext string, limit int) string {
+	args := map[string]any{"query": query}
+	if limit > 0 {
+		args["limit"] = limit
+	}
+	if projectID != "" {
+		args["project_id"] = projectID
+	}
+	if serverID != "" {
+		args["server_id"] = serverID
+	}
+	if outcome != "" {
+		args["outcome"] = outcome
+	}
+	if traceContext != "" {
+		args["trace_context"] = traceContext
+	}
+	args["namespace"] = "sessions"
+	return c.CallDatabaseTool(ctx, "search", args)
+}
+
 // ListSessionsByFilter retrieves sessions matching specified criteria with
 // truncation enabled to prevent payload overflow. All filters are optional.
 func (c *MCPClient) ListSessionsByFilter(ctx context.Context, projectID, serverID, outcome string, limit int) string {
-	args := map[string]interface{}{"truncate_content": true}
+	args := map[string]any{"truncate_content": true}
 	if limit > 0 {
 		args["limit"] = limit
 	}

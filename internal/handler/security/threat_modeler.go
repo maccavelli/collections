@@ -27,7 +27,7 @@ func (t *ThreatModelerTool) Name() string {
 func (t *ThreatModelerTool) Register(s util.SessionProvider) {
 	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
-		Description: "[ROLE: CRITIC] STRIDE THREAT MODELER: Performs automated STRIDE threat modeling on the system architecture (Spoofing, Tampering, etc.). [TRIGGERS: go-refactor:go_sql_injection_guard] [Routing Tags: threat, stride, spoofing, security-audit, adversarial]",
+		Description: "[ROLE: THREAT] STRIDE THREAT MODELER: Performs automated STRIDE threat modeling on the system architecture (Spoofing, Tampering, etc.). [TRIGGERS: go-refactor:go_sql_injection_guard] [Routing Tags: threat, stride, spoofing, security-audit, adversarial]",
 	}, t.Handle)
 }
 
@@ -49,7 +49,7 @@ func (t *ThreatModelerTool) Handle(ctx context.Context, req *mcp.CallToolRequest
 		slog.Warn("[ORCHESTRATOR] recall unavailable — degrading to standalone", "tool", t.Name())
 	}
 
-	var traceMap map[string]interface{}
+	var traceMap map[string]any
 	if recallAvailable && session.ProjectRoot != "" {
 		if tm, tmErr := t.Engine.ExternalClient.AggregateSessionFromRecall(ctx, "go-refactor", session.ProjectRoot); tmErr == nil && tm != nil {
 			traceMap = tm

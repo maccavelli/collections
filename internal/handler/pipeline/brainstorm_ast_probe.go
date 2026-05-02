@@ -26,21 +26,7 @@ func (t *ASTProbeTool) Name() string {
 func (t *ASTProbeTool) Register(s util.SessionProvider) {
 	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
-		Description: "[ROLE: SYNTHESIZER] [PHASE: PROPOSAL] AST FEASIBILITY ORACLE: Non-mutating structural probe performing dynamic AST dry-run mappings resolving hallucinated logic constraints instantly. Evaluates structural feasibility across overlapping data structures natively before final synthesis. MIDDLE pipeline stage. [PIPELINE CONSTRAINT: Do not invoke autonomously. This endpoint may only be queried as a strict coordinate sequence provided explicitly by the compose pipeline algorithm.] [Routing Tags: probe, ast-scan, dry-run, structure-check, feasibility]",
-		InputSchema: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"session_id": map[string]any{
-					"type":        "string",
-					"description": "CSSA backend storage pipeline correlation ID.",
-				},
-				"target": map[string]any{
-					"type":        "string",
-					"description": "Absolute path to the target .go file to probe.",
-				},
-			},
-			"required": []string{"session_id", "target"},
-		},
+		Description: "[ROLE: ANALYZER] [PHASE: SYNTHESIS] AST FEASIBILITY ORACLE: Non-mutating structural probe performing dynamic AST dry-run mappings to validate that the Socratic resolution (aporia) is structurally feasible before planning begins. Ensures proposed changes don't violate AST constraints. [REQUIRES: brainstorm:aporia_engine] [Routing Tags: probe, ast-scan, dry-run, structure-check, feasibility, validate-aporia]",
 	}, t.Handle)
 }
 

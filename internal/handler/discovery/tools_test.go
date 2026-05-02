@@ -68,3 +68,83 @@ func TestRegister(t *testing.T) {
 	tool := &DiscoverProjectTool{Manager: mgr, Engine: eng}
 	tool.Register(&util.MockSessionProvider{Srv: srv})
 }
+
+type mockRecallClient struct {
+	recallEnabled bool
+}
+
+func (m *mockRecallClient) CallDatabaseTool(ctx context.Context, toolName string, arguments map[string]any) string {
+	return "mock data"
+}
+func (m *mockRecallClient) AggregateSessionFromRecall(ctx context.Context, serverID, projectID string) (map[string]any, error) {
+	return map[string]any{"key": "value"}, nil
+}
+func (m *mockRecallClient) SaveSession(ctx context.Context, sessionID, projectID string, data any) error {
+	return nil
+}
+func (m *mockRecallClient) RecallEnabled() bool {
+	return m.recallEnabled
+}
+
+func TestDiscoverProjectTool_Handle_Recall(t *testing.T) {
+	tmpDir, _ := os.MkdirTemp("", "brainstorm-discovery-recall-*")
+	defer os.RemoveAll(tmpDir)
+	_ = os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte("module test"), 0644)
+
+	mgr := state.NewManager(tmpDir)
+	db, _ := buntdb.Open(":memory:")
+	defer db.Close()
+	eng := engine.NewEngine(tmpDir, db)
+	eng.ExternalClient = &mockRecallClient{recallEnabled: true}
+
+	os.Setenv("MCP_ORCHESTRATOR_OWNED", "true")
+	defer os.Unsetenv("MCP_ORCHESTRATOR_OWNED")
+
+	tool := &DiscoverProjectTool{
+		Manager: mgr,
+		Engine:  eng,
+	}
+
+	ctx := context.Background()
+	input := DiscoverInput{
+		UniversalPipelineInput: models.UniversalPipelineInput{
+			Target:    tmpDir,
+			SessionID: "test-session",
+		},
+	}
+
+	_, resp, err := tool.Handle(ctx, &mcp.CallToolRequest{}, input)
+	if err != nil {
+		t.Errorf("Handle failed: %v", err)
+	}
+	if resp == nil {
+		t.Error("expected non-nil response")
+	}
+}
+
+func TestDiscoverProjectTool_Handle_Errors(t *testing.T) {
+	tmpDir, _ := os.MkdirTemp("", "brainstorm-discovery-err-*")
+	defer os.RemoveAll(tmpDir)
+	mgr := state.NewManager(tmpDir)
+	db, _ := buntdb.Open(":memory:")
+	eng := engine.NewEngine(tmpDir, db)
+	tool := &DiscoverProjectTool{Manager: mgr, Engine: eng}
+
+	// 1. LoadSession error (via canceled context)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	res, _, _ := tool.Handle(ctx, &mcp.CallToolRequest{}, DiscoverInput{})
+	if res.IsError == false {
+		t.Error("expected error on canceled context")
+	}
+
+	// 2. DiscoverProject error
+	ctx2 := context.Background()
+	// DiscoverProject fails if path is missing or invalid
+	res2, _, _ := tool.Handle(ctx2, &mcp.CallToolRequest{}, DiscoverInput{
+		UniversalPipelineInput: models.UniversalPipelineInput{Target: "/non/existent"},
+	})
+	if res2.IsError == false {
+		t.Error("expected error on non-existent target")
+	}
+}

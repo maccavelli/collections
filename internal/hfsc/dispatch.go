@@ -30,10 +30,13 @@ const (
 // generateSessionID returns a cryptographically random hex session ID.
 func generateSessionID() string {
 	b := make([]byte, 16)
-	if _, err := rand.Read(b); err != nil {
-		return fmt.Sprintf("fallback-%d", b[0])
-	}
+	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)
+}
+
+// LogSession defines the subset of mcp.ServerSession required for HFSC streaming.
+type LogSession interface {
+	Log(ctx context.Context, params *mcp.LoggingMessageParams) error
 }
 
 // StreamHeavyPayload executes Tier-2 extreme scaling transfer protocol.
@@ -42,7 +45,7 @@ func generateSessionID() string {
 // Base64 Log chunks, bounding RAM footprint precisely to the chunk size.
 func StreamHeavyPayload(
 	ctx context.Context,
-	session *mcp.ServerSession,
+	session LogSession,
 	filename string,
 	projectID string,
 	model string,
@@ -89,7 +92,7 @@ func StreamHeavyPayload(
 }
 
 // executeContinuousStream chunks the io.Reader locally without buffering the whole struct.
-func executeContinuousStream(ctx context.Context, session *mcp.ServerSession, sessionID string, reader io.Reader) {
+func executeContinuousStream(ctx context.Context, session LogSession, sessionID string, reader io.Reader) {
 	slog.Info("hfsc: extreme payload stream started", "session", sessionID)
 
 	hasher := sha256.New()

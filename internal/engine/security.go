@@ -9,7 +9,7 @@ import (
 )
 
 // AnalyzeThreatModel performs STRIDE analysis on the proposed architectural text.
-func (e *Engine) AnalyzeThreatModel(ctx context.Context, featureDesign string, traceMap map[string]interface{}) (models.ThreatModelResponse, error) {
+func (e *Engine) AnalyzeThreatModel(ctx context.Context, featureDesign string, traceMap map[string]any) (models.ThreatModelResponse, error) {
 	resp := models.ThreatModelResponse{
 		Summary: "Threat model analysis evaluated natively.",
 	}
@@ -21,7 +21,7 @@ func (e *Engine) AnalyzeThreatModel(ctx context.Context, featureDesign string, t
 
 	// Check empirical telemetry (Angle 3)
 	if traceMap != nil {
-		if imports, ok := traceMap["imports"].([]interface{}); ok {
+		if imports, ok := traceMap["imports"].([]any); ok {
 			for _, imp := range imports {
 				pkg, _ := imp.(string)
 

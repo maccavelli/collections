@@ -34,7 +34,7 @@ type SyncWrapper struct {
 
 // EnsureRecallCache coordinates lazy-fetching of role-specific data from Recall,
 // ensuring only one inflight request per session/role.
-func (e *Engine) EnsureRecallCache(ctx context.Context, session *models.Session, role string, toolName string, arguments map[string]interface{}) string {
+func (e *Engine) EnsureRecallCache(ctx context.Context, session *models.Session, role string, toolName string, arguments map[string]any) string {
 	cacheKey := "recall_cache_" + role
 	syncKey := "recall_sync_" + role
 

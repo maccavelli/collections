@@ -25,21 +25,7 @@ func (t *ComplexityForecasterTool) Name() string {
 func (t *ComplexityForecasterTool) Register(s util.SessionProvider) {
 	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
-		Description: "[ROLE: CRITIC] PIPELINE IMPACT PREDICTOR: Mathematical predictive engine calculating proposed cyclomatic complexity overheads and escape analysis penalties dynamically. Enforces static memory limitations natively against theoretical dialectic markdown plans securely. CRITIQUE stage. [PIPELINE CONSTRAINT: Do not invoke autonomously. This endpoint may only be queried as a strict coordinate sequence provided explicitly by the compose pipeline algorithm.] [Routing Tags: predict, cyclomatic, memory-limits, escape-analysis, complexity]",
-		InputSchema: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"session_id": map[string]any{
-					"type":        "string",
-					"description": "CSSA backend storage pipeline correlation ID.",
-				},
-				"context": map[string]any{
-					"type":        "string",
-					"description": "Proposed Go logic to theoretically forecast natively.",
-				},
-			},
-			"required": []string{"session_id", "context"},
-		},
+		Description: "[ROLE: CRITIC] PIPELINE IMPACT PREDICTOR: Mathematical predictive engine calculating proposed cyclomatic complexity overheads and escape analysis penalties dynamically. Evaluates structural findings from go-refactor AST analysis to predict refactoring impact. [REQUIRES: go-refactor:go_ast_suite_analyzer] [Routing Tags: predict, cyclomatic, memory-limits, escape-analysis, complexity, impact-assessment]",
 	}, t.Handle)
 }
 

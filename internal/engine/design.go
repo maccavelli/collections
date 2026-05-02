@@ -95,7 +95,7 @@ var generalChallenges = []string{
 // returns domain-matched challenges; falls back to a
 // single general challenge when nothing matches.
 func (e *Engine) ChallengeAssumption(
-	ctx context.Context, design string, traceMap map[string]interface{},
+	ctx context.Context, design string, traceMap map[string]any,
 ) ([]string, error) {
 	select {
 	case <-ctx.Done():
@@ -130,7 +130,7 @@ func (e *Engine) ChallengeAssumption(
 // modifying existing project logic. Returns a structured
 // result with category, risk level, and recommendation.
 func (e *Engine) AnalyzeEvolution(
-	ctx context.Context, proposal string, standards string, traceMap map[string]interface{},
+	ctx context.Context, proposal string, standards string, traceMap map[string]any,
 ) (models.EvolutionResult, error) {
 	select {
 	case <-ctx.Done():
@@ -336,7 +336,7 @@ var qualityRubrics = []qualityRubric{
 // additive keyword matching. Each matched keyword adds
 // its bonus to the base score, capped at 10.
 func (e *Engine) EvaluateQualityAttributes(
-	ctx context.Context, design string, traceMap map[string]interface{},
+	ctx context.Context, design string, traceMap map[string]any,
 ) ([]models.QualityMetric, error) {
 	select {
 	case <-ctx.Done():
@@ -365,7 +365,7 @@ func (e *Engine) EvaluateQualityAttributes(
 
 		// Empirical Telemetry Override (Angle 6)
 		if traceMap != nil {
-			if imports, ok := traceMap["imports"].([]interface{}); ok {
+			if imports, ok := traceMap["imports"].([]any); ok {
 				for _, imp := range imports {
 					pkg, _ := imp.(string)
 					switch rubric.attribute {
@@ -417,7 +417,7 @@ func (e *Engine) EvaluateQualityAttributes(
 // CritiqueDesign provides a consolidated, multi-dimensional
 // assessment of a design snippet.
 func (e *Engine) CritiqueDesign(
-	ctx context.Context, design string, standards string, traceMap map[string]interface{},
+	ctx context.Context, design string, standards string, traceMap map[string]any,
 ) (models.CritiqueResponse, error) {
 	var (
 		challenges []string

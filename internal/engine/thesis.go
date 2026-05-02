@@ -28,7 +28,7 @@ func (e *Engine) GenerateThesis(
 	ctx context.Context,
 	projectContext string,
 	standards string,
-	traceMap map[string]interface{},
+	traceMap map[string]any,
 ) (models.ThesisDocument, error) {
 	select {
 	case <-ctx.Done():
@@ -69,7 +69,7 @@ func (e *Engine) GenerateThesis(
 // --- Pillar 1: Type Safety & Generics ---
 
 func (e *Engine) thesisTypeSafety(
-	text string, traceMap map[string]interface{},
+	text string, traceMap map[string]any,
 ) models.DialecticPillar {
 	score := 5
 	var findings []string
@@ -93,7 +93,7 @@ func (e *Engine) thesisTypeSafety(
 
 	// AST enrichment
 	if traceMap != nil {
-		if interfaces, ok := traceMap["interfaces"].([]interface{}); ok && len(interfaces) > 5 {
+		if interfaces, ok := traceMap["interfaces"].([]any); ok && len(interfaces) > 5 {
 			score += 1
 			findings = append(findings, "AST: high interface count — generic constraint candidates")
 		}
@@ -109,7 +109,7 @@ func (e *Engine) thesisTypeSafety(
 // --- Pillar 2: Modernization ---
 
 func (e *Engine) thesisModernization(
-	text string, traceMap map[string]interface{},
+	text string, traceMap map[string]any,
 ) models.DialecticPillar {
 	score := 5
 	var findings []string
@@ -141,7 +141,7 @@ func (e *Engine) thesisModernization(
 // --- Pillar 3: Modularization ---
 
 func (e *Engine) thesisModularization(
-	ctx context.Context, text string, traceMap map[string]interface{}, isOrchestrator bool,
+	ctx context.Context, text string, traceMap map[string]any, isOrchestrator bool,
 ) models.DialecticPillar {
 	score := 5
 	var findings []string
@@ -198,7 +198,7 @@ func (e *Engine) thesisModularization(
 // --- Pillar 4: Efficiency ---
 
 func (e *Engine) thesisEfficiency(
-	text string, traceMap map[string]interface{},
+	text string, traceMap map[string]any,
 ) models.DialecticPillar {
 	score := 5
 	var findings []string
@@ -222,7 +222,7 @@ func (e *Engine) thesisEfficiency(
 
 	// AST enrichment
 	if traceMap != nil {
-		if complexity, ok := traceMap["complexity"].([]interface{}); ok {
+		if complexity, ok := traceMap["complexity"].([]any); ok {
 			for _, c := range complexity {
 				if cv, ok := c.(float64); ok && cv > 15 {
 					score += 1
@@ -243,7 +243,7 @@ func (e *Engine) thesisEfficiency(
 // --- Pillar 5: Reliability ---
 
 func (e *Engine) thesisReliability(
-	text string, traceMap map[string]interface{},
+	text string, traceMap map[string]any,
 ) models.DialecticPillar {
 	score := 5
 	var findings []string
@@ -283,7 +283,7 @@ func (e *Engine) thesisReliability(
 // --- Pillar 6: Maintainability ---
 
 func (e *Engine) thesisMaintainability(
-	text string, traceMap map[string]interface{},
+	text string, traceMap map[string]any,
 ) models.DialecticPillar {
 	score := 5
 	var findings []string

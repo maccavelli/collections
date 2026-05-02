@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/invopop/jsonschema"
 	"mcp-server-brainstorm/internal/hfsc"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -40,17 +41,8 @@ func (p *Pagination) Apply(length int) (start, end int) {
 	if limit <= 0 || limit > 1000 {
 		limit = 500
 	}
-	start = p.Offset
-	if start < 0 {
-		start = 0
-	}
-	if start > length {
-		start = length
-	}
-	end = start + limit
-	if end > length {
-		end = length
-	}
+	start = min(max(p.Offset, 0), length)
+	end = min(start+limit, length)
 	return start, end
 }
 
@@ -70,21 +62,20 @@ func HardenedAddTool[In any, Out any](
 	sp SessionProvider,
 	tool *mcp.Tool,
 	handler func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, Out, error),
-) {
-	// Dynamically inject artifact_path mapping universally based on Option A schema ubiquity
-	if tool.InputSchema != nil {
-		if schemaMap, ok := tool.InputSchema.(map[string]any); ok {
-			if props, ok := schemaMap["properties"].(map[string]any); ok {
-				props["artifact_path"] = map[string]any{
-					"type":        "string",
-					"description": "Optional OS absolute path to route the generated output payload, bypassing JSON-RPC overhead.",
-				}
-			}
-		}
+) func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, Out, error) {
+	// Dynamically derive schema if omitted using reflection on the generic input type 'In'
+	if tool.InputSchema == nil {
+		r := new(jsonschema.Reflector)
+		r.ExpandedStruct = true
+		sch := r.Reflect(new(In))
+		b, _ := json.Marshal(sch)
+		var schemaMap map[string]any
+		json.Unmarshal(b, &schemaMap)
+		tool.InputSchema = schemaMap
 	}
 
 	s := sp.MCPServer()
-	mcp.AddTool(s, tool, func(ctx context.Context, req *mcp.CallToolRequest, input In) (res *mcp.CallToolResult, output Out, err error) {
+	wrapper := func(ctx context.Context, req *mcp.CallToolRequest, input In) (res *mcp.CallToolResult, output Out, err error) {
 		defer func() {
 			if r := recover(); r != nil {
 				res = &mcp.CallToolResult{
@@ -111,7 +102,7 @@ func HardenedAddTool[In any, Out any](
 		if isOrchestrated {
 			var artifactPath string
 			if inStr, mErr := json.Marshal(input); mErr == nil {
-				var inMap map[string]interface{}
+				var inMap map[string]any
 				if json.Unmarshal(inStr, &inMap) == nil {
 					if p, ok := inMap["artifact_path"].(string); ok && strings.TrimSpace(p) != "" {
 						artifactPath = strings.TrimSpace(p)
@@ -139,8 +130,12 @@ func HardenedAddTool[In any, Out any](
 		// Option C: Implicit Sub-Server Auto-HFSC
 		if isOrchestrated {
 			if structBytes, marshalErr := json.Marshal(output); marshalErr == nil && len(structBytes) > 2000000 {
+				var logSess hfsc.LogSession
+				if sess := sp.Session(); sess != nil {
+					logSess = sess
+				}
 				buffer := bytes.NewReader(structBytes)
-				hfscRes, hfscErr := hfsc.StreamHeavyPayload(ctx, sp.Session(), "extreme_auto_intercept.json", req.Params.Name, "auto", buffer)
+				hfscRes, hfscErr := hfsc.StreamHeavyPayload(ctx, logSess, "extreme_auto_intercept.json", req.Params.Name, "auto", buffer)
 				if hfscErr == nil {
 					slog.Info("auto-hfsc: natively intercepted extreme payload", "size", len(structBytes))
 					return hfscRes, *new(Out), nil // return zero value for Output so SDK serialization is bypassed
@@ -176,7 +171,7 @@ func HardenedAddTool[In any, Out any](
 				Category:      tool.Name,
 			}
 
-			sigBytes, _ := json.Marshal(map[string]interface{}{"__orchestrator_signal": signal})
+			sigBytes, _ := json.Marshal(map[string]any{"__orchestrator_signal": signal})
 			res.Content = append(res.Content, &mcp.TextContent{
 				Text: string(sigBytes),
 			})
@@ -193,5 +188,7 @@ func HardenedAddTool[In any, Out any](
 		}
 
 		return res, output, err
-	})
+	}
+	mcp.AddTool(s, tool, wrapper)
+	return wrapper
 }
