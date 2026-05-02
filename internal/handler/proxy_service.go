@@ -70,7 +70,7 @@ func (ps *ProxyService) ValidateArguments(ctx context.Context, urn string, recor
 				slog.Info("gateway: auto-coerced missing schema properties natively from Record Profile", "urn", urn)
 				return nil
 			}
-			return fmt.Errorf("[VALIDATION_ERROR]: Arguments do not match schema constraints: %v", err)
+			return ps.formatValidationError(err, hash)
 		}
 		return nil
 	}
@@ -103,11 +103,19 @@ func (ps *ProxyService) ValidateArguments(ctx context.Context, urn string, recor
 			slog.Info("gateway: auto-coerced missing schema properties natively on cache miss", "urn", urn)
 			return nil
 		}
-		return fmt.Errorf("[VALIDATION_ERROR]: Arguments do not match schema constraints: %v", err)
+		return ps.formatValidationError(err, hash)
 	}
 	return nil
 }
 
+func (ps *ProxyService) formatValidationError(baseErr error, hash string) error {
+	schemaMap, err := ps.Handler.Store.GetSchema(hash)
+	if err != nil || len(schemaMap) == 0 {
+		return fmt.Errorf("[VALIDATION_ERROR]: Arguments do not match schema constraints: %v", baseErr)
+	}
+	schemaBytes, _ := json.MarshalIndent(schemaMap, "", "  ")
+	return fmt.Errorf("[VALIDATION_ERROR]: Arguments do not match schema constraints: %v\n\nExpected Schema:\n```json\n%s\n```", baseErr, string(schemaBytes))
+}
 // ResolveURN parses and validates a tool URN, performing auto-resolution
 // if the initial URN doesn't match a known tool.
 // Returns the canonical server name, tool name, resolved URN, and the ToolRecord (if found).
@@ -134,7 +142,7 @@ func (ps *ProxyService) ResolveURN(ctx context.Context, inputURN string) (server
 	record, getErr := ps.Handler.Store.GetTool(urn)
 	if getErr != nil {
 		// Auto-resolution: search explicitly by name globally
-		suggestions, searchErr := ps.Handler.Store.SearchTools(tool, "", "", 0.0)
+		suggestions, searchErr := ps.Handler.Store.SearchTools(ctx, tool, "", "", 0.0, ps.Handler.Config.ScoreFusionAlpha)
 		if searchErr != nil && searchErr.Error() != "No certain match" {
 			slog.Log(ctx, util.LevelTrace, "gateway: auto-resolve search logic partial error", "error", searchErr)
 		}
@@ -146,7 +154,7 @@ func (ps *ProxyService) ResolveURN(ctx context.Context, inputURN string) (server
 				}
 			}
 			// Attempt server-specific suggestion
-			serverSpecific, serverErr := ps.Handler.Store.SearchTools(tool, "", server, 0.0)
+			serverSpecific, serverErr := ps.Handler.Store.SearchTools(ctx, tool, "", server, 0.0, ps.Handler.Config.ScoreFusionAlpha)
 			if serverErr == nil && len(serverSpecific) > 0 {
 				return "", "", "", nil, fmt.Errorf("tool URN %q not found. Did you mean %q?", inputURN, serverSpecific[0].URN)
 			}

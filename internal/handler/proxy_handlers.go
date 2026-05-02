@@ -1,15 +1,19 @@
 package handler
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"path/filepath"
+	"sort"
+
 	"strings"
 	"time"
 
 	"mcp-server-magictools/internal/db"
+	"mcp-server-magictools/internal/intelligence"
 	"mcp-server-magictools/internal/telemetry"
 	"mcp-server-magictools/internal/util"
 
@@ -78,6 +82,15 @@ func (h *OrchestratorHandler) AlignTools(ctx context.Context, req *mcp.CallToolR
 	if err := json.Unmarshal(req.Params.Arguments, &args); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal arguments: %w", err)
 	}
+
+	if args.ServerName == "" && args.Query != "" {
+		preferredServers := h.Store.AnalyzeIntent(ctx, args.Query)
+		if len(preferredServers) > 0 {
+			args.ServerName = preferredServers[0]
+			slog.Log(ctx, util.LevelTrace, "[HANDLER] align_tools intent pre-filter", "injected_server", args.ServerName)
+		}
+	}
+
 	slog.Log(ctx, util.LevelTrace, "[HANDLER] align_tools entry", "query", args.Query, "server_name", args.ServerName, "category", args.Category)
 
 	var results []*db.ToolRecord
@@ -88,19 +101,46 @@ func (h *OrchestratorHandler) AlignTools(ctx context.Context, req *mcp.CallToolR
 	// 🛡️ LRU FAST PATH
 	cacheKey := fmt.Sprintf("%s|%s|%s", args.Query, args.Category, args.ServerName)
 	if cached, ok := h.AlignCache.Get(cacheKey); ok {
+		telemetry.SearchMetrics.AlignCacheHits.Add(1)
 		results = cached
 	} else {
+		telemetry.SearchMetrics.AlignCacheMisses.Add(1)
 		// 🛡️ URN PREFIX FAST PATH
-		if strings.Contains(args.Query, ":") {
-			if tr, hErr := h.Store.GetTool(args.Query); hErr == nil && tr != nil {
+		searchQuery := args.Query
+		if !strings.Contains(searchQuery, ":") && args.ServerName != "" && searchQuery != "" {
+			searchQuery = args.ServerName + ":" + searchQuery
+		}
+		if strings.Contains(searchQuery, ":") {
+			if tr, hErr := h.Store.GetTool(searchQuery); hErr == nil && tr != nil {
 				// If it's a perfect URN match, bypass search entirely natively.
 				results = append(results, tr)
 			}
 		}
 
+		// 🛡️ ORCHESTRATOR EXACT-MATCH FAST PATH
+		h.toolsMu.RLock()
+		var exactInternalMatch *db.ToolRecord
+		for _, it := range h.InternalTools {
+			if strings.EqualFold(it.Name, args.Query) || strings.EqualFold("magictools:"+it.Name, args.Query) {
+				exactInternalMatch = &db.ToolRecord{
+					URN:                    "magictools:" + it.Name,
+					Name:                   it.Name,
+					Server:                 "magictools",
+					Category:               it.Category,
+					HighlightedDescription: it.Description,
+					IsNative:               true,
+				}
+				break
+			}
+		}
+		h.toolsMu.RUnlock()
+
+		if exactInternalMatch != nil {
+			results = append(results, exactInternalMatch)
+		}
+
 		if len(results) == 0 {
-			// FALLBACK: Bleve Native string search is the EXCLUSIVE search engine
-			// for align_tools to ensure resilient general discovery offline.
+			// Bleve Native string search is the primary search engine for align_tools.
 			telemetry.SearchMetrics.LexicalSearches.Add(1)
 
 			var threshold float64
@@ -113,7 +153,28 @@ func (h *OrchestratorHandler) AlignTools(ctx context.Context, req *mcp.CallToolR
 				threshold = h.Config.ScoreThreshold
 			}
 
-			results, err = h.Store.SearchTools(args.Query, args.Category, args.ServerName, threshold)
+			results, err = h.Store.SearchTools(ctx, args.Query, args.Category, args.ServerName, threshold, h.Config.ScoreFusionAlpha)
+
+			// ── Option 5: Pseudo-Relevance Feedback (PRF) ──
+			// If we got results, extract discriminative terms from top hits and
+			// re-expand the query. Discard expansion if topic drift is detected.
+			if err == nil && len(results) > 0 && args.Query != "" {
+				prfTerms := intelligence.ExtractPRFTerms(results, args.Query, 5)
+				if len(prfTerms) > 0 {
+					expandedQuery := args.Query + " " + strings.Join(prfTerms, " ")
+					expandedResults, expandErr := h.Store.SearchTools(ctx, expandedQuery, args.Category, args.ServerName, threshold, h.Config.ScoreFusionAlpha)
+					if expandErr == nil && len(expandedResults) > 0 {
+						// Topic drift detection: if overlap drops below 50%, discard expansion.
+						overlap := intelligence.ComputeResultOverlap(results, expandedResults)
+						if overlap >= 0.50 {
+							results = expandedResults
+							slog.Debug("align_tools: PRF expansion accepted", "terms", prfTerms, "overlap", overlap)
+						} else {
+							slog.Debug("align_tools: PRF expansion rejected (topic drift)", "overlap", overlap)
+						}
+					}
+				}
+			}
 		}
 
 		if err == nil || err.Error() == "No certain match" {
@@ -130,6 +191,18 @@ func (h *OrchestratorHandler) AlignTools(ctx context.Context, req *mcp.CallToolR
 	for _, it := range h.InternalTools {
 		// Filter by ServerName early boundary
 		if args.ServerName != "" && !strings.EqualFold("magictools", args.ServerName) {
+			continue
+		}
+
+		// Skip if exactly matched to prevent duplication
+		alreadyIncluded := false
+		for _, r := range results {
+			if r.Name == it.Name && r.Server == "magictools" {
+				alreadyIncluded = true
+				break
+			}
+		}
+		if alreadyIncluded {
 			continue
 		}
 
@@ -152,69 +225,130 @@ func (h *OrchestratorHandler) AlignTools(ctx context.Context, req *mcp.CallToolR
 
 	results = append(results, internalMatches...)
 
+	// ── Option 6: Contrastive Failure Proximity Filtering ──
+	// Reorder results by applying failure anchor proximity penalties.
+	// Tools with known failure patterns for this intent get demoted.
+	if args.Query != "" && len(results) > 1 {
+		type scored struct {
+			tool    *db.ToolRecord
+			penalty float64
+		}
+		var scoredResults []scored
+		for _, r := range results {
+			p := intelligence.CheckFailureProximity(ctx, h.Store, args.Query, r.URN)
+			scoredResults = append(scoredResults, scored{tool: r, penalty: p})
+		}
+		// Sort: higher penalty (1.0 = no failure) first, lower penalty last.
+		sort.SliceStable(scoredResults, func(i, j int) bool {
+			return scoredResults[i].penalty > scoredResults[j].penalty
+		})
+		results = make([]*db.ToolRecord, len(scoredResults))
+		for i, sr := range scoredResults {
+			results[i] = sr.tool
+		}
+	}
+
 	if len(results) == 0 {
 		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "No specific tool found."}}}, nil
 	}
 
 	var text strings.Builder
-	text.WriteString(fmt.Sprintf("Found %d tools matching intent:\n\n", len(results)))
+	lruUpdated := false
+
+	envelope := struct {
+		Metadata map[string]any      `json:"metadata"`
+		Tools    []map[string]string `json:"tools"`
+	}{
+		Metadata: make(map[string]any),
+		Tools:    make([]map[string]string, 0),
+	}
 
 	for i, r := range results {
-		if i >= 15 {
+		if i >= 5 {
 			break
 		}
-		if i < 5 {
-			var schema map[string]any
-			if r.IsNative {
-				h.toolsMu.RLock()
-				for _, it := range h.InternalTools {
-					if it.Name == r.Name {
-						schema = h.toSchemaMap(it.InputSchema)
-					}
-				}
-				h.toolsMu.RUnlock()
-			} else {
-				var schemaErr error
-				schema, schemaErr = h.Store.GetSchema(r.SchemaHash)
-				if schemaErr != nil {
-					slog.Warn("gateway: failed to retrieve schema", "hash", r.SchemaHash, "error", schemaErr)
+
+		var schema map[string]any
+		if r.IsNative {
+			h.toolsMu.RLock()
+			for _, it := range h.InternalTools {
+				if it.Name == r.Name {
+					schema = h.toSchemaMap(it.InputSchema)
 				}
 			}
-
-			if args.FullSchema {
-				schemaJSON, jsonErr := json.MarshalIndent(schema, "", "  ")
-				if jsonErr != nil {
-					slog.Warn("gateway: failed to marshal schema", "error", jsonErr)
-				}
-				text.WriteString(fmt.Sprintf("URN: %s\nTool: %s\nServer: %s\nCategory: %s\nDescription: %s\nInputSchema:\n%s\n\n",
-					r.URN, r.Name, r.Server, r.Category, r.Description, string(schemaJSON)))
-			} else {
-				schemaJSON, err := json.Marshal(schema)
-				if err == nil {
-					var clonedSchema map[string]any
-					if json.Unmarshal(schemaJSON, &clonedSchema) == nil {
-						truncateSchemaDescriptions(clonedSchema)
-						schemaStr, _ := json.MarshalIndent(clonedSchema, "", "  ")
-
-						summary := r.Description
-						if r.LiteSummary != "" {
-							summary = r.LiteSummary
-						} else if len(summary) > 200 {
-							summary = summary[:197] + "..."
-						}
-
-						text.WriteString(fmt.Sprintf("[URN: %s | Server: %s | Category: %s]\nDescription: %s\nInputSchema:\n```json\n%s\n```\n\n",
-							r.URN, r.Server, r.Category, summary, string(schemaStr)))
-					}
-				}
-			}
+			h.toolsMu.RUnlock()
 		} else {
-			text.WriteString(fmt.Sprintf("- URN: %s | Server: %s | Category: %s\n  Description: %s\n", r.URN, r.Server, r.Category, r.Name))
+			var schemaErr error
+			schema, schemaErr = h.Store.GetSchema(r.SchemaHash)
+			if schemaErr != nil {
+				slog.Warn("gateway: failed to retrieve schema", "hash", r.SchemaHash, "error", schemaErr)
+			} else {
+				// 🛡️ LRU BOUNDING: Add sub-server tools to the dynamic LRU cache for the System Prompt.
+				// This ensures the agent has zero-friction access to the full JSON schema natively.
+				t := &mcp.Tool{
+					Name:        r.URN,
+					Description: r.Description,
+					InputSchema: schema,
+				}
+				if !strings.Contains(t.Name, ":") {
+					t.Name = fmt.Sprintf("%s:%s", r.Server, r.Name)
+				}
+				t = util.SanitizeToolSchema(t)
+				h.ActiveToolsLRU.Add(r.URN, t)
+				lruUpdated = true
+			}
+		}
+
+		schemaStatus := "Loaded directly into System Prompt"
+		if args.FullSchema {
+			schemaStatus = "Included in Description payload below"
+		}
+
+		envelope.Tools = append(envelope.Tools, map[string]string{
+			"urn":           r.URN,
+			"server":        r.Server,
+			"category":      r.Category,
+			"schema_status": schemaStatus,
+		})
+
+		// 🛡️ CHAT HISTORY OPTIMIZATION: Always output the full unminified Description so the agent
+		// has immediate context, but OMIT the massive InputSchema JSON because it is being loaded
+		// directly into the System Prompt via list_changed.
+		if args.FullSchema {
+			// If explicitly requested, we still dump the whole schema.
+			schemaJSON, _ := json.MarshalIndent(schema, "", "  ")
+			text.WriteString(fmt.Sprintf("**[%s]**\nDescription: %s\nInputSchema:\n```json\n%s\n```\n\n",
+				r.URN, r.Description, string(schemaJSON)))
+		} else {
+			text.WriteString(fmt.Sprintf("**[%s]**\nDescription: %s\n\n",
+				r.URN, r.Description))
 		}
 	}
 
+	envelope.Metadata["intent_match_count"] = len(results)
+	envelope.Metadata["system_prompt_updated"] = lruUpdated
+
+	// 🛡️ ZERO-LATENCY SYNC: If we added any tools to the LRU, notify the IDE immediately.
+	// The IDE will call tools/list and pull the bounded LRU set + base tools.
+	// We use AddTool/RemoveTools to trigger the list_changed notification natively via SDK.
+	if lruUpdated && h.Server != nil {
+		slog.Log(ctx, util.LevelTrace, "align_tools: triggering tools/list_changed notification")
+		dummy := &mcp.Tool{
+			Name:        "__magic_lru_sync__",
+			Description: "Internal synchronization signal",
+			InputSchema: map[string]any{"type": "object"},
+		}
+		h.Server.AddTool(dummy, func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return nil, nil
+		})
+		h.Server.RemoveTools("__magic_lru_sync__")
+	}
+
+	envJSON, _ := json.MarshalIndent(envelope, "", "  ")
+	finalText := fmt.Sprintf("```json\n%s\n```\n\n### Descriptions\n\n%s", string(envJSON), text.String())
+
 	return &mcp.CallToolResult{
-		Content: []mcp.Content{&mcp.TextContent{Text: text.String()}},
+		Content: []mcp.Content{&mcp.TextContent{Text: finalText}},
 	}, nil
 }
 
@@ -275,13 +409,31 @@ func (h *OrchestratorHandler) executeProxyPipeline(ctx context.Context, ps *Prox
 		if handler, ok := h.loopbackHandlers[name]; ok {
 			slog.Info("gateway: loopback dispatch", "tool", name)
 
+			// 🛡️ TELEMETRY: Mark the node as actively executing in the DAG.
+			telemetry.GlobalDAGTracker.UpdateActiveNode(urn, 0, 0, 0, "MISS", "")
+
 			// 🛡️ ENVELOPE STRIPPING: Remarshal unwrapped sub-arguments and shallow copy the master request.
 			unwrappedBytes, _ := json.Marshal(arguments)
 			nativeReq := *req
 			nativeReq.Params.Name = name
 			nativeReq.Params.Arguments = unwrappedBytes
 
-			return handler(ctx, &nativeReq)
+			res, err := handler(ctx, &nativeReq)
+
+			var resSize int64
+			if res != nil {
+				resSize = measureResponseSize(res)
+			}
+
+			if err == nil && (res == nil || !res.IsError) {
+				telemetry.GlobalDAGTracker.UpdateActiveNode(urn, 0, resSize, resSize, "HIT", "")
+				telemetry.GlobalDAGTracker.CompleteNode(urn, true)
+			} else {
+				telemetry.GlobalDAGTracker.RecordFault(urn, "halt", 1, 1, "")
+				telemetry.GlobalDAGTracker.CompleteNode(urn, false)
+			}
+
+			return res, err
 		}
 		return nil, fmt.Errorf("unknown internal tool: %s", name)
 	}
@@ -290,6 +442,8 @@ func (h *OrchestratorHandler) executeProxyPipeline(ctx context.Context, ps *Prox
 		cacheKey := h.getCacheKey(urn, arguments)
 		if cached, ok := h.Responses.Get(cacheKey); ok {
 			h.Telemetry.AddLatency(server, 0)
+			telemetry.GlobalDAGTracker.UpdateActiveNode(urn, 0, 0, 0, "HIT", cacheKey)
+			telemetry.GlobalDAGTracker.CompleteNode(urn, true)
 			return cached, nil
 		}
 	}
@@ -311,6 +465,7 @@ func (h *OrchestratorHandler) executeProxyPipeline(ctx context.Context, ps *Prox
 	slog.Info("tool dispatch", "component", "backplane", "server", server, "tool", name, "urn", urn, "corr_id", corrID)
 
 	parentID := telemetry.GetActiveCascadeParent()
+	sourceServer := telemetry.GetActiveCascadeSource()
 	if telemetry.GlobalRingBuffer != nil {
 		spanJSON := fmt.Sprintf(`{"type":"SPAN_START","trace_id":%q,"parent_id":%q,"server":%q,"tool":%q,"start_time":%d}`, corrID, parentID, server, name, time.Now().UnixMilli())
 		telemetry.GlobalRingBuffer.WriteRecord([]byte(spanJSON))
@@ -332,6 +487,9 @@ func (h *OrchestratorHandler) executeProxyPipeline(ctx context.Context, ps *Prox
 		}, nil
 	}
 
+	// 🛡️ TELEMETRY: Mark the node as actively executing in the DAG.
+	telemetry.GlobalDAGTracker.UpdateActiveNode(urn, 0, 0, 0, "MISS", "")
+
 	res, err := ps.ExecuteProxy(ctx, server, name, arguments, timeout)
 	toolLatency := time.Since(hotStart).Milliseconds()
 	if telemetry.GlobalRingBuffer != nil {
@@ -342,11 +500,15 @@ func (h *OrchestratorHandler) executeProxyPipeline(ctx context.Context, ps *Prox
 		telemetry.ErrorTaxonomy.Classify(err)
 		telemetry.RecentErrors.Record(server, corrID, err.Error())
 		telemetry.GlobalToolTracker.Record(urn, toolLatency, true)
+		telemetry.GlobalRouteTracker.RecordRoute(sourceServer, server, true)
 		slog.Error("tool complete", "component", "backplane", "server", server, "tool", name, "urn", urn, "latency_ms", toolLatency, "status", "error", "error", err, "corr_id", corrID)
+		telemetry.GlobalDAGTracker.RecordFault(urn, "halt", 1, 1, "")
+		telemetry.GlobalDAGTracker.CompleteNode(urn, false)
 		return nil, fmt.Errorf("invoke proxy error (%s): %w", urn, err)
 	}
 	slog.Info("tool complete", "component", "backplane", "server", server, "tool", name, "urn", urn, "latency_ms", toolLatency, "status", "ok", "corr_id", corrID)
 	telemetry.GlobalToolTracker.Record(urn, toolLatency, false)
+	telemetry.GlobalRouteTracker.RecordRoute(sourceServer, server, false)
 
 	// 🛡️ TIER-2 HFSC: Detect extreme stream handshake from sub-servers.
 	if tier2Res := h.interceptTier2HFSC(ctx, res, server); tier2Res != nil {
@@ -528,6 +690,65 @@ func (h *OrchestratorHandler) executeProxyPipeline(ctx context.Context, ps *Prox
 		"minified":      !bypassMinification,
 	}
 
+	// 🛡️ O(1) Fast Byte Scanning to detect structural mutation mandates
+	if !bypassMinification && rawSize > 0 {
+		mutationTriggered := false
+		if res.StructuredContent != nil {
+			if structBytes, err := json.Marshal(res.StructuredContent); err == nil {
+				if bytes.Contains(structBytes, []byte(`"mutation_required":true`)) || bytes.Contains(structBytes, []byte(`"mutation_required": true`)) {
+					mutationTriggered = true
+				}
+			}
+		}
+		if !mutationTriggered {
+			for _, c := range res.Content {
+				if tc, ok := c.(*mcp.TextContent); ok {
+					if strings.Contains(tc.Text, `"mutation_required":true`) || strings.Contains(tc.Text, `"mutation_required": true`) {
+						mutationTriggered = true
+						break
+					}
+				}
+			}
+		}
+
+		if mutationTriggered {
+			depth := telemetry.GlobalDAGTracker.IncrementMutationDepth()
+			if depth <= 3 {
+				slog.Warn("gateway: mid-pipeline mutation mandate detected natively. Synthesizing structural evolution.", "depth", depth)
+				socraticNodes := []string{
+					"brainstorm:brainstorm_complexity_forecaster",
+					"brainstorm:antithesis_skeptic",
+					"brainstorm:architectural_diagrammer",
+					"go-refactor:generate_implementation_plan",
+				}
+				telemetry.GlobalDAGTracker.SpliceNodes(urn, socraticNodes)
+
+				snapshot := telemetry.GlobalDAGTracker.Snapshot()
+				if sid, ok := snapshot["session_id"].(string); ok && sid != "" {
+					go func(sessionID string, state map[string]any) {
+						bgCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+						defer cancel()
+						args := map[string]any{
+							"domain": "session.meta",
+							"key":    sessionID,
+							"value":  state,
+						}
+						_, err := ps.ExecuteProxy(bgCtx, "recall", "upsert_session", args, 10*time.Second)
+						if err != nil {
+							slog.Error("gateway: failed to async commit DAG mutation to CSSA backplane", "error", err)
+						}
+					}(sid, snapshot)
+				}
+			} else {
+				slog.Error("gateway: Topological Evolution bound exceeded (max 3), breaking infinite DAG loop")
+			}
+		}
+	}
+
+	// 🛡️ TELEMETRY: Update active node with final payload metrics and mark as DONE.
+	telemetry.GlobalDAGTracker.UpdateActiveNode(urn, telemetry.GetTotalTokens(), rawSize, postSize, "MISS", "")
+	telemetry.GlobalDAGTracker.CompleteNode(urn, true)
+
 	telemetry.MetaLatencies.CallProxyHot.Record(time.Since(hotStart).Milliseconds())
 	return res, nil
 }
@@ -594,7 +815,7 @@ func transformToHybrid(rawJSON []byte, tokenLimit int) string {
 		dataJSON, dataErr := json.MarshalIndent(m, "", "  ")
 		if dataErr != nil {
 			slog.Warn("gateway: transformToHybrid failed to marshal subset", "error", dataErr)
-			dataJSON = []byte(fmt.Sprintf(`{"error": "failed to encode: %v"}`, dataErr))
+			dataJSON = fmt.Appendf(nil, `{"error": "failed to encode: %v"}`, dataErr)
 		}
 
 		if len(dataJSON) > charLimit {

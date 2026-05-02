@@ -1,5 +1,3 @@
-//go:build !windows
-
 package vector
 
 import (
@@ -65,11 +63,20 @@ func createHNSWGraph() *hnsw.Graph[string] {
 func InitGlobalEngine(dbDir string, cfg *config.Config) error {
 	var err error
 	initOnce.Do(func() {
+		if !cfg.Intelligence.VectorEnabled {
+			slog.Info("vector engine boot: disabled via config (vector_enabled=false). falling back to BM25.", "component", "vector")
+			GlobalEngine = &Engine{
+				initialized: true,
+				embedder:    nil,
+			}
+			return
+		}
+
 		slog.Info("vector engine boot: STAGE 1 — resolving embedding configuration",
 			"component", "vector",
 			"embedding_provider", cfg.Intelligence.EmbeddingProvider,
 			"embedding_model", cfg.Intelligence.EmbeddingModel,
-			"embedded_dimensionality", cfg.Intelligence.EmbeddedDimensionality)
+			"embedded_dimensionality", cfg.Intelligence.EmbeddingDimensionality)
 
 		embedder := NewEmbedderFromConfig(cfg)
 
@@ -91,7 +98,7 @@ func InitGlobalEngine(dbDir string, cfg *config.Config) error {
 			currentHash := computeSentinelHash(
 				cfg.Intelligence.EmbeddingProvider,
 				cfg.Intelligence.EmbeddingModel,
-				cfg.Intelligence.EmbeddedDimensionality,
+				cfg.Intelligence.EmbeddingDimensionality,
 				cfg.Intelligence.EmbeddingAPIURL,
 			)
 
@@ -110,7 +117,7 @@ func InitGlobalEngine(dbDir string, cfg *config.Config) error {
 						"old_model", stored.Model,
 						"new_model", cfg.Intelligence.EmbeddingModel,
 						"old_dims", stored.Dims,
-						"new_dims", cfg.Intelligence.EmbeddedDimensionality)
+						"new_dims", cfg.Intelligence.EmbeddingDimensionality)
 					needsRebuild = true
 					_ = os.Remove(dbPath)
 				} else if stored.Hash == currentHash {
@@ -132,7 +139,7 @@ func InitGlobalEngine(dbDir string, cfg *config.Config) error {
 			sentinel := dimensionSentinel{
 				Provider: cfg.Intelligence.EmbeddingProvider,
 				Model:    cfg.Intelligence.EmbeddingModel,
-				Dims:     cfg.Intelligence.EmbeddedDimensionality,
+				Dims:     cfg.Intelligence.EmbeddingDimensionality,
 				APIURL:   cfg.Intelligence.EmbeddingAPIURL,
 				Hash:     currentHash,
 			}
@@ -208,7 +215,7 @@ func InitGlobalEngine(dbDir string, cfg *config.Config) error {
 				"component", "vector",
 				"provider", embedder.Provider(),
 				"model", cfg.Intelligence.EmbeddingModel,
-				"dims", cfg.Intelligence.EmbeddedDimensionality,
+				"dims", cfg.Intelligence.EmbeddingDimensionality,
 				"needs_hydration", needsRebuild)
 		} else {
 			slog.Info("vector engine boot: STAGE 5 — READY ✓ semantic search OFFLINE (BM25 fallback active)",

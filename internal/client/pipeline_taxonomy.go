@@ -25,6 +25,8 @@ const (
 	RoleSynthesizer = "SYNTHESIZER"
 	RoleDiagnostic  = "DIAGNOSTIC"
 	RolePlanner     = "PLANNER"
+	RoleThreat      = "THREAT"
+	RoleReporting   = "REPORTING"
 
 	PhaseBootstrap   = 0
 	PhaseAnalysis    = 1
@@ -57,6 +59,8 @@ var validRoles = map[string]bool{
 	RoleCritic:      true,
 	RoleSynthesizer: true,
 	RolePlanner:     true,
+	RoleThreat:      true,
+	RoleReporting:   true,
 }
 
 // defaultPhaseForRole maps a role to its default execution phase.
@@ -67,6 +71,8 @@ var defaultPhaseForRole = map[string]int{
 	RoleSynthesizer: PhaseSynthesis,
 	RoleMutator:     PhaseMutator,
 	RolePlanner:     PhaseSynthesis,
+	RoleThreat:      PhaseAdversarial,
+	RoleReporting:   PhaseTerminal,
 }
 
 // hydrateRoleAndPhase assigns Role and Phase to a ToolRecord by parsing
@@ -135,14 +141,14 @@ func hydrateRoleAndPhase(record *db.ToolRecord) {
 // hydrateDependencies parses [REQUIRES:] and [TRIGGERS:] tags from descriptions.
 func hydrateDependencies(record *db.ToolRecord) {
 	if reqMatch := requiresRegex.FindStringSubmatch(record.Description); len(reqMatch) > 1 {
-		urns := strings.Split(reqMatch[1], ",")
-		for _, u := range urns {
+		urns := strings.SplitSeq(reqMatch[1], ",")
+		for u := range urns {
 			record.Requires = append(record.Requires, strings.TrimSpace(u))
 		}
 	}
 	if trigMatch := triggersRegex.FindStringSubmatch(record.Description); len(trigMatch) > 1 {
-		urns := strings.Split(trigMatch[1], ",")
-		for _, u := range urns {
+		urns := strings.SplitSeq(trigMatch[1], ",")
+		for u := range urns {
 			record.Triggers = append(record.Triggers, strings.TrimSpace(u))
 		}
 	}

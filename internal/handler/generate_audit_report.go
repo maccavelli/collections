@@ -10,6 +10,8 @@ import (
 	"os/exec"
 	"strings"
 
+	"mcp-server-magictools/internal/telemetry"
+
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -34,7 +36,17 @@ func (h *OrchestratorHandler) handleGenerateAuditReport(ctx context.Context, req
 	}
 
 	// Format formal CSSA 3-Stage Formal Artifact standard
+	envelope := map[string]any{
+		"metadata": map[string]any{
+			"target":     args.Target,
+			"session_id": args.SessionID,
+			"status":     "COMPLETED",
+		},
+	}
+	envJSON, _ := json.MarshalIndent(envelope, "", "  ")
+
 	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("```json\n%s\n```\n\n", string(envJSON)))
 	sb.WriteString("# 🛡️ Executive Header: CSSA Formal Audit\n\n")
 	sb.WriteString(fmt.Sprintf("**Target Path**: `%s`\n", args.Target))
 	sb.WriteString(fmt.Sprintf("**CSSA Session ID**: `%s`\n\n", args.SessionID))
@@ -110,8 +122,8 @@ func (h *OrchestratorHandler) handleGenerateAuditReport(ctx context.Context, req
 						if tags, ok := record["tags"].([]any); ok {
 							for _, tag := range tags {
 								tagStr, _ := tag.(string)
-								if strings.HasPrefix(tagStr, "trace:") {
-									candidate := strings.TrimPrefix(tagStr, "trace:")
+								if after, ok0 := strings.CutPrefix(tagStr, "trace:"); ok0 {
+									candidate := after
 									if candidate != "auto_publish" && candidate != "async_push" {
 										stageName = candidate
 									}
@@ -125,8 +137,8 @@ func (h *OrchestratorHandler) handleGenerateAuditReport(ctx context.Context, req
 					if tags, ok := record["tags"].([]any); ok {
 						for _, tag := range tags {
 							tagStr, _ := tag.(string)
-							if strings.HasPrefix(tagStr, "outcome:") {
-								o := strings.TrimPrefix(tagStr, "outcome:")
+							if after, ok0 := strings.CutPrefix(tagStr, "outcome:"); ok0 {
+								o := after
 								switch o {
 								case "idle", "injection_scanned", "saved":
 									outcome = "COMPLETED"
@@ -139,7 +151,7 @@ func (h *OrchestratorHandler) handleGenerateAuditReport(ctx context.Context, req
 						}
 					}
 
-					if stageName == "" || stageName == "generate_audit_report" || stageName == "compose_pipeline" || stageName == "auto_publish" || stageName == "async_push" {
+					if stageName == "" || stageName == "generate_audit_report" || stageName == "execute_pipeline" || stageName == "auto_publish" || stageName == "async_push" {
 						continue
 					}
 					if summary == "" {
@@ -199,7 +211,7 @@ func (h *OrchestratorHandler) handleGenerateAuditReport(ctx context.Context, req
 					}
 
 					if payload != nil {
-						if stageName == "compose_pipeline" {
+						if stageName == "execute_pipeline" {
 							if iVal, ok := payload["intent"].(string); ok {
 								sessionIntent = iVal
 							} else if dVal, ok := payload["description"].(string); ok {
@@ -207,7 +219,7 @@ func (h *OrchestratorHandler) handleGenerateAuditReport(ctx context.Context, req
 							}
 						}
 
-						if stageName != "" && stageName != "generate_audit_report" && stageName != "compose_pipeline" {
+						if stageName != "" && stageName != "generate_audit_report" && stageName != "execute_pipeline" {
 							dagURNs = append(dagURNs, stageName)
 						}
 
@@ -271,6 +283,9 @@ func (h *OrchestratorHandler) handleGenerateAuditReport(ctx context.Context, req
 			"phase":   "reporting",
 		})
 	}
+
+	// 🛡️ DAG TERMINAL SWEEP: Forcefully close out the pipeline state to clear UI "waiting" nodes
+	telemetry.GlobalDAGTracker.ClosePipeline("COMPLETED")
 
 	slog.Info("Formal audit report synthesized successfully", "target", args.Target, "size", len(reportContent))
 

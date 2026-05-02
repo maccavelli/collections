@@ -30,7 +30,7 @@ func TestStoreTools(t *testing.T) {
 	}
 
 	// 2. Search
-	results, err := store.SearchTools("test", "", "", 0.0)
+	results, err := store.SearchTools(context.Background(), "test", "", "", 0.0, 0.5)
 	if err != nil {
 		t.Fatalf("SearchTools failed: %v", err)
 	}
@@ -42,7 +42,7 @@ func TestStoreTools(t *testing.T) {
 	if err := store.PurgeServerTools("test"); err != nil {
 		t.Fatalf("PurgeServerTools failed: %v", err)
 	}
-	results, _ = store.SearchTools("test", "", "", 0.0)
+	results, _ = store.SearchTools(context.Background(), "test", "", "", 0.0, 0.5)
 	if len(results) != 0 {
 		t.Errorf("expected 0 results after purge, got %d", len(results))
 	}
@@ -178,7 +178,7 @@ func TestWipeAll(t *testing.T) {
 	}
 
 	// 5. Verify index is empty (re-initialized)
-	results, _ := store.SearchTools("tool1", "", "", 0.0)
+	results, _ := store.SearchTools(context.Background(), "tool1", "", "", 0.0, 0.5)
 	if len(results) != 0 {
 		t.Errorf("expected 0 search results after wipe, got %d", len(results))
 	}

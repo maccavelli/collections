@@ -268,30 +268,51 @@ var InternalToolsInventoryJSON = []byte(`
     }
   },
   {
-    "name": "compose_pipeline",
-    "description": "[DIRECTIVE: Priming Gate] Generate a DAG execution plan for brainstorm and go-refactor analysis. Strictly required before invoking complex intelligence like brainstorm or go-refactor. Required entry point for all code analysis pipelines. Keywords: go-refactor brainstorm construct dag pipeline evaluate step analyze go evaluate format plan logic map execute",
+    "name": "execute_pipeline",
+    "description": "[DIRECTIVE: Autonomous DAG Executor] Composes and executes a full pipeline DAG end-to-end with automatic output chaining, Socratic Trifecta gate enforcement, and Option-A AST-based MUTATOR transformation. Pass 'target' (project path) and 'intent'. The executor runs ALL steps sequentially, chains outputs as context inputs, blocks MUTATOR steps until Socratic approval passes, and applies automated AST fixes (missing godoc, struct tag compliance) through apply_vetted_edit. Keywords: execute run autonomous pipeline dag sequential chain mutator ast transform",
     "category": "orchestrator",
     "inputSchema": {
       "type": "object",
       "properties": {
-        "project_path": {
+        "session_id": {
           "type": "string",
-          "description": "Absolute path to the project root or package."
+          "description": "Optional CSSA session correlation ID. Auto-generated if omitted. For CONTINUATION MODE: pass session_id WITHOUT target/intent to resume a paused pipeline after human approval."
+        },
+        "target": {
+          "type": "string",
+          "description": "Absolute path to the project root or package to analyze and refactor."
         },
         "intent": {
           "type": "string",
-          "description": "What the user wants to accomplish (e.g., 'refactor handler package', 'add new feature')."
+          "description": "What the pipeline should accomplish (e.g., 'evaluate and refactor for enterprise compliance')."
+        },
+        "plan_hash": {
+          "type": "string",
+          "description": "Optional SHA-256 hash of an approved implementation plan for MUTATOR integrity verification."
+        },
+        "dry_run": {
+          "type": "boolean",
+          "description": "When true, return the DAG plan as markdown without executing. Equivalent to the old compose_pipeline preview."
+        },
+        "target_roles": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Optional role filter (e.g. ['ANALYZER', 'CRITIC']). Only tools matching these roles enter the DAG."
+        },
+        "reject": {
+          "type": "boolean",
+          "description": "Set to true when continuing a paused pipeline to reject the plan and abort without mutations."
         }
       },
       "required": [
-        "project_path",
+        "target",
         "intent"
       ]
     }
   },
   {
     "name": "validate_pipeline_step",
-    "description": "[DIRECTIVE: Validation Node] Mathematical pipeline constraint verifier evaluating diagnostic completion guarantees natively off CSSA backplanes. Extracts execution matrices cross-referencing completion logic natively. Pass 'step_name' bounds, 'step_output' dumps, and 'project_path'. Keywords: constraint execution verifier extract structural hashes math verify matrix ensure output code evaluate pipeline node",
+    "description": "[ROLE: VALIDATOR] [PHASE: 4] [DIRECTIVE: Validation Node] Mathematical pipeline constraint verifier evaluating diagnostic completion guarantees natively off CSSA backplanes. Extracts execution matrices cross-referencing completion logic natively. Pass 'step_name' bounds, 'step_output' dumps, and 'project_path'. [REQUIRES: go-refactor:suggest_fixes] Keywords: constraint execution verifier extract structural hashes math verify matrix ensure output code evaluate pipeline node refactor go idioms pause compliance",
     "category": "orchestrator",
     "inputSchema": {
       "type": "object",
@@ -317,7 +338,7 @@ var InternalToolsInventoryJSON = []byte(`
   },
   {
     "name": "cross_server_quality_gate",
-    "description": "[DIRECTIVE: Safety Firmware] Mandatory evaluation firewall evaluating synced session states prior to filesystem executions natively. Define 'project_path' mappings and 'plan_hash'. [PIPELINE CONSTRAINT: Blocks terminal execution endpoints until all safety limits are verified structurally.] Keywords: evaluate boundary block firmware firewall safe sync execution state mapping matrix",
+    "description": "[ROLE: FIREWALL] [PHASE: 6] [DIRECTIVE: Safety Firmware] Mandatory evaluation firewall evaluating synced session states prior to filesystem executions natively. Define 'project_path' mappings and 'plan_hash'. [PIPELINE CONSTRAINT: Blocks terminal execution endpoints until all safety limits are verified structurally.] [REQUIRES: go-refactor:generate_implementation_plan] Keywords: evaluate boundary block firmware firewall safe sync execution state mapping matrix refactor go idioms pause compliance",
     "category": "orchestrator",
     "inputSchema": {
       "type": "object",
@@ -339,7 +360,7 @@ var InternalToolsInventoryJSON = []byte(`
   },
   {
     "name": "generate_audit_report",
-    "description": "[DIRECTIVE: Compliance Gate] Mandatory finalization node to compute absolute git diff telemetry onto disk natively. Pass 'target' and global 'session_id'. Closes the orchestration loop. Produces absolute pipeline execution matrices complying with CSSA protocols. Keywords: commit file push telemetry finalize write save diff logic array report publish",
+    "description": "[ROLE: SYNTHESIZER] [PHASE: 10] [DIRECTIVE: Compliance Gate] Mandatory finalization node to compute absolute git diff telemetry onto disk natively. Pass 'target' and global 'session_id'. Closes the orchestration loop. Produces absolute pipeline execution matrices complying with CSSA protocols. Keywords: commit file push telemetry finalize write save diff logic array report publish",
     "category": "orchestrator",
     "inputSchema": {
       "type": "object",

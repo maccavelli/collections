@@ -34,10 +34,7 @@ func TailFile(path string, linesToScan int) ([]string, error) {
 	pos := size
 
 	for pos > 0 && len(candidateLines) < linesToScan {
-		chunkSize := int64(len(buffer))
-		if pos < chunkSize {
-			chunkSize = pos
-		}
+		chunkSize := min(pos, int64(len(buffer)))
 		pos -= chunkSize
 
 		if _, err := f.Seek(pos, io.SeekStart); err != nil {

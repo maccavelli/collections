@@ -6,7 +6,7 @@ import (
 )
 
 // Version is the current version of the MagicTools MCP server.
-var Version = "v4.2.9"
+var Version = "v4.2.10"
 
 func printVersion() {
 	fmt.Fprintf(os.Stderr, "mcp-server-magictools version %s\n", Version)

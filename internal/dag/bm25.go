@@ -1,19 +1,23 @@
 package dag
 
 import (
+	"maps"
 	"math"
 	"mcp-server-magictools/internal/db"
 	"regexp"
+	"sort"
 	"strings"
 )
 
 // roleTagStripper removes [ROLE: X] prefixes from descriptions before BM25 tokenization.
 var roleTagStripper = regexp.MustCompile(`(?i)\[ROLE:\s*\w+\]\s*`)
 
-// Document represents an indexed tool.
+// Document represents an indexed tool with its enriched token corpus and
+// empirical reliability score for post-BM25 confidence weighting.
 type Document struct {
-	URN    string
-	Tokens []string
+	URN              string
+	Tokens           []string
+	ProxyReliability float64 // Historical success rate [0,1] from ToolIntelligence
 }
 
 // BM25Scorer calculates semantic relevance using BM25.
@@ -25,7 +29,10 @@ type BM25Scorer struct {
 	docFreq map[string]int
 }
 
-// NewBM25Scorer initializes the scoring matrix.
+// NewBM25Scorer initializes the scoring matrix from pipeline-eligible tools.
+// The token corpus is now enriched with intelligence fields (SyntheticIntents,
+// LexicalTokens, Intent) that were previously ignored, giving the scorer access
+// to the same semantic signal that makes the Bleve index effective.
 func NewBM25Scorer(tools []*db.ToolRecord) *BM25Scorer {
 	scorer := &BM25Scorer{
 		k1:      1.2,
@@ -71,9 +78,47 @@ func NewBM25Scorer(tools []*db.ToolRecord) *BM25Scorer {
 			}
 		}
 
+		// ── Intelligence Enrichment ──
+		// SyntheticIntents: LLM-generated intent phrases (2x weight — high semantic signal).
+		for _, si := range t.SyntheticIntents {
+			siTokens := tokenizer.FindAllString(strings.ToLower(si), -1)
+			for _, tok := range siTokens {
+				if !stopWords[tok] {
+					rawTokens = append(rawTokens, tok, tok) // 2x
+				}
+			}
+		}
+
+		// LexicalTokens: Curated exact-match keywords (3x weight — precision signal).
+		for _, lt := range t.LexicalTokens {
+			ltTokens := tokenizer.FindAllString(strings.ToLower(lt), -1)
+			for _, tok := range ltTokens {
+				if !stopWords[tok] {
+					rawTokens = append(rawTokens, tok, tok, tok) // 3x
+				}
+			}
+		}
+
+		// Intent field: Pre-computed intent summary (2x weight).
+		if t.Intent != "" {
+			intentTokens := tokenizer.FindAllString(strings.ToLower(t.Intent), -1)
+			for _, tok := range intentTokens {
+				if !stopWords[tok] {
+					rawTokens = append(rawTokens, tok, tok) // 2x
+				}
+			}
+		}
+
+		// Extract ProxyReliability for post-score weighting.
+		reliability := 1.0
+		if t.Metrics.ProxyReliability > 0 {
+			reliability = t.Metrics.ProxyReliability
+		}
+
 		doc := Document{
-			URN:    t.URN,
-			Tokens: rawTokens,
+			URN:              t.URN,
+			Tokens:           rawTokens,
+			ProxyReliability: reliability,
 		}
 		scorer.docs = append(scorer.docs, doc)
 		totalLength += len(rawTokens)
@@ -96,7 +141,8 @@ func NewBM25Scorer(tools []*db.ToolRecord) *BM25Scorer {
 }
 
 // Score calculates the BM25 score for each document against the query,
-// then applies min-max normalization to compress results to [0,1].
+// applies a ProxyReliability multiplier to weight empirical trust, then
+// normalizes via sigmoid saturation to preserve natural score distribution.
 func (s *BM25Scorer) Score(query string) map[string]float64 {
 	scores := make(map[string]float64)
 	queryTokens := strings.Fields(strings.ToLower(query))
@@ -128,33 +174,92 @@ func (s *BM25Scorer) Score(query string) map[string]float64 {
 
 			docScore += idf * (tfNum / tfDen)
 		}
-		scores[doc.URN] = docScore
+
+		// ── ProxyReliability Multiplier ──
+		// Scale raw BM25 score by the tool's historical success rate.
+		// Tools that consistently succeed get a confidence lift; tools with
+		// low reliability are dampened. Default reliability is 1.0 (neutral).
+		scores[doc.URN] = docScore * doc.ProxyReliability
 	}
 
-	// Min-Max Normalization: Compress raw BM25 scores to [0,1]
-	// This ensures mathematical consistency with the vector engine's cosine similarity range.
-	var minScore, maxScore float64
-	first := true
-	for _, v := range scores {
-		if first || v < minScore {
-			minScore = v
-		}
-		if first || v > maxScore {
-			maxScore = v
-		}
-		first = false
-	}
-	spread := maxScore - minScore
-	if spread > 0 {
-		for k, v := range scores {
-			scores[k] = (v - minScore) / spread
-		}
-	} else if maxScore > 0 {
-		// All scores identical and positive: normalize to 1.0
-		for k := range scores {
-			scores[k] = 1.0
-		}
-	}
+	// ── Sigmoid Saturation Normalization ──
+	// Replaces min-max normalization to preserve natural BM25 score distribution.
+	// Truly irrelevant tools cluster near 0, truly relevant tools near 1, and
+	// moderate tools spread across the middle — the median anchors the curve
+	// to the actual corpus, not to the min/max extremes.
+	sigmoidNormalize(scores)
 
 	return scores
+}
+
+// sigmoidNormalize applies sigmoid saturation: 1 / (1 + exp(-k * (score - median))).
+// This preserves score magnitude — a tool that barely matched doesn't get artificially
+// inflated to 1.0 just because it's the best of a weak set.
+func sigmoidNormalize(scores map[string]float64) {
+	if len(scores) == 0 {
+		return
+	}
+
+	// Collect raw scores for median computation.
+	vals := make([]float64, 0, len(scores))
+	for _, v := range scores {
+		vals = append(vals, v)
+	}
+	sort.Float64s(vals)
+
+	// Compute median.
+	median := vals[len(vals)/2]
+	if len(vals)%2 == 0 && len(vals) >= 2 {
+		median = (vals[len(vals)/2-1] + vals[len(vals)/2]) / 2.0
+	}
+
+	// Steepness factor. Higher k = sharper separation between relevant/irrelevant.
+	// k=4.0 works well for typical 15-30 tool candidate pools.
+	k := 4.0
+
+	for urn, raw := range scores {
+		scores[urn] = 1.0 / (1.0 + math.Exp(-k*(raw-median)))
+	}
+}
+
+// ScoreGroupedByServer runs BM25 independently within each server group, then
+// sigmoid-normalizes within each group before merging. This prevents
+// keyword-dense brainstorm descriptions from systematically outscoring
+// technical go-refactor descriptions due to cross-server IDF contamination.
+//
+// Each server gets its own IDF table and avgdl, so a go-refactor tool
+// matching 3 out of 5 query terms within a 15-tool go-refactor pool scores
+// fairly against a brainstorm tool matching 4 out of 5 within a 15-tool
+// brainstorm pool.
+func ScoreGroupedByServer(query string, tools []*db.ToolRecord) map[string]float64 {
+	// Group tools by server.
+	groups := make(map[string][]*db.ToolRecord)
+	for _, t := range tools {
+		if t == nil {
+			continue
+		}
+		groups[t.Server] = append(groups[t.Server], t)
+	}
+
+	merged := make(map[string]float64)
+
+	for _, serverTools := range groups {
+		if len(serverTools) == 0 {
+			continue
+		}
+
+		// Build and score a per-server BM25 scorer. Each server group gets
+		// its own IDF table and average document length, ensuring that
+		// keyword density differences between servers don't cross-contaminate.
+		scorer := NewBM25Scorer(serverTools)
+		serverScores := scorer.Score(query)
+
+		// Merge per-server scores into the global result.
+		// Scores are already sigmoid-normalized within each server group
+		// (Score() calls sigmoidNormalize internally), so they're on a
+		// comparable [0,1] scale.
+		maps.Copy(merged, serverScores)
+	}
+
+	return merged
 }

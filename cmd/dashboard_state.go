@@ -1,5 +1,9 @@
 package cmd
 
+import "maps"
+
+import "slices"
+
 import "sync"
 
 // InternalUIState governs the strict concurrent boundaries required
@@ -29,13 +33,7 @@ func (s *InternalUIState) UpdateNodes(nodes []string) {
 	defer s.mu.Unlock()
 	s.currentNodes = nodes
 
-	found := false
-	for _, n := range nodes {
-		if n == s.SpansSelect {
-			found = true
-			break
-		}
-	}
+	found := slices.Contains(nodes, s.SpansSelect)
 	if !found && len(nodes) > 0 {
 		s.SpansSelect = nodes[0]
 	}
@@ -80,9 +78,7 @@ func (s *InternalUIState) GetSnapshot() (string, map[string]bool, bool) {
 	defer s.mu.Unlock()
 
 	cpy := make(map[string]bool)
-	for k, v := range s.SpansExpand {
-		cpy[k] = v
-	}
+	maps.Copy(cpy, s.SpansExpand)
 	return s.SpansSelect, cpy, s.SpansFocus
 }
 

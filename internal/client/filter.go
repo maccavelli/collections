@@ -106,7 +106,7 @@ func (j *jsonFilterReader) scanNextFrame() ([]byte, error) {
 
 func (j *jsonFilterReader) processCarryOver() ([]byte, error) {
 	data := j.carryOver.Bytes()
-	for i := 0; i < len(data); i++ {
+	for i := range data {
 		c := data[i]
 
 		if !j.foundStart {

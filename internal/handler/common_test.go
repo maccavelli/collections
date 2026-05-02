@@ -30,6 +30,10 @@ func newTestHandler(t *testing.T) (*OrchestratorHandler, *db.Store, *client.Warm
 		ManagedServers: []config.ServerConfig{
 			{Name: "test-server", Command: "true"},
 		},
+		SynthesisBiasVector:  0.4,
+		SynthesisBiasSynergy: 0.3,
+		SynthesisBiasRole:    0.3,
+		ScoreFusionAlpha:     0.5,
 	}
 	reg := client.NewWarmRegistry(pidsDir, store, cfg)
 	h := NewHandler(store, reg, cfg)

@@ -80,10 +80,7 @@ func (m *WarmRegistry) SyncEcosystem(ctx context.Context) (*SyncResult, error) {
 
 	// All servers sync concurrently — no ordering needed.
 
-	maxConcurrency := runtime.NumCPU() * 2
-	if maxConcurrency > 10 {
-		maxConcurrency = 10
-	}
+	maxConcurrency := min(runtime.NumCPU()*2, 10)
 	sem := make(chan struct{}, maxConcurrency)
 	var wg sync.WaitGroup
 
@@ -383,7 +380,7 @@ func (m *WarmRegistry) parseAndSaveTools(sc config.ServerConfig, srv *SubServer,
 
 			// 🛡️ HNSW DELEGATION: Vector embedding is now handled exclusively by
 			// the hydrator daemon post-sweep to prevent thundering herd of LLM API
-			// calls during sync. Previously, this fired HydrateBrainstormAndGoRefactorGraph
+			// calls during sync. Previously, this fired HydrateToolGraph
 			// inline, creating 14+ concurrent embedding requests that stalled boot.
 
 			for _, rec := range records {
@@ -462,9 +459,9 @@ func (m *WarmRegistry) parseAndSaveTools(sc config.ServerConfig, srv *SubServer,
 	return indexed, nil
 }
 
-// HydrateBrainstormAndGoRefactorGraph asynchronously embeds tools from brainstorm and go-refactor
-// into the HNSW vector database core to ensure DAG pipeline intelligence queries match successfully.
-func (m *WarmRegistry) HydrateBrainstormAndGoRefactorGraph(records []*db.ToolRecord) {
+// HydrateToolGraph asynchronously embeds all sub-server tools into the HNSW vector
+// database core to enable semantic search across the entire tool ecosystem.
+func (m *WarmRegistry) HydrateToolGraph(records []*db.ToolRecord) {
 	e := vector.GetEngine()
 	if e == nil || !e.VectorEnabled() {
 		return
@@ -478,15 +475,13 @@ func (m *WarmRegistry) HydrateBrainstormAndGoRefactorGraph(records []*db.ToolRec
 		if rec == nil {
 			continue
 		}
-		if rec.Server == "brainstorm" || rec.Server == "go-refactor" {
-			if err := e.AddDocument(ctx, rec.URN, rec.Description); err != nil {
-				slog.Warn("sync: background graph hydration failed", "urn", rec.URN, "error", err)
-			} else {
-				count++
-			}
+		if err := e.AddDocument(ctx, rec.URN, rec.Description); err != nil {
+			slog.Warn("sync: background graph hydration failed", "urn", rec.URN, "error", err)
+		} else {
+			count++
 		}
 	}
 	if count > 0 {
-		slog.Info("sync: semantic mapped vectors natively hydrated", "server", records[0].Server, "tools", count)
+		slog.Info("sync: semantic mapped vectors natively hydrated", "tools", count)
 	}
 }

@@ -13,6 +13,7 @@ import (
 	"mcp-server-magictools/internal/db"
 	"mcp-server-magictools/internal/telemetry"
 	"mcp-server-magictools/internal/util"
+	"mcp-server-magictools/internal/vector"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"mcp-server-magictools/internal/config"
@@ -461,8 +462,10 @@ func (m *WarmRegistry) WriteSnapshot(flush bool, dashboardScores map[string]any,
 			"backpressure_pending": telemetry.LifecycleEvents.BackpressurePending.Load(),
 			"backpressure_reject":  telemetry.LifecycleEvents.BackpressureReject.Load(),
 		},
-		"recent_errors": telemetry.RecentErrors.GetAll(),
-		"collisions":    telemetry.Collisions.Snapshot(),
+		"recent_errors":       telemetry.RecentErrors.GetAll(),
+		"collisions":          telemetry.Collisions.Snapshot(),
+		"dag_status":          telemetry.GlobalDAGTracker.Snapshot(),
+		"cross_server_routes": telemetry.GlobalRouteTracker.Snapshot(),
 	}
 
 	// 🛡️ CONFIG SNAPSHOT: Expose active configuration for the Config dashboard tab
@@ -520,11 +523,87 @@ func (m *WarmRegistry) WriteSnapshot(flush bool, dashboardScores map[string]any,
 		"headroom_pct":    rtSnap.HeadroomPct,
 	}
 
+	// 🛡️ DYNAMIC TELEMETRY SYNTHESIS: Generate requested dashboards from available metrics
+	scoringFactors := []map[string]any{}
+	volatilityIndex := []map[string]any{}
+	
+	for _, cardAny := range scoresPayload {
+		if card, ok := cardAny.(map[string]any); ok {
+			urn, _ := card["URN"].(string)
+			
+			numF := func(k string) float64 {
+				if v, ok := card[k]; ok {
+					switch n := v.(type) {
+					case float64: return n
+					case int: return float64(n)
+					case int64: return float64(n)
+					}
+				}
+				return 0.0
+			}
+			
+			faults := numF("Faults")
+			deltaAll := numF("DeltaAll")
+			calls := numF("Calls")
+			
+			if faults > 0 {
+				scoringFactors = append(scoringFactors, map[string]any{
+					"category": "Fault Recovery",
+					"count": int64(faults),
+					"impact_type": "Penalty",
+				})
+				
+				volScore := faults*0.5 + calls*0.1
+				if volScore > 1.0 {
+					volatilityIndex = append(volatilityIndex, map[string]any{
+						"score": volScore,
+						"URN": urn,
+					})
+				}
+			}
+			if deltaAll > 0 {
+				scoringFactors = append(scoringFactors, map[string]any{
+					"category": "Trending Alignment",
+					"count": int64(1),
+					"impact_type": "Reward",
+				})
+			}
+		}
+	}
+
+	snapshot["scoring_factors"] = scoringFactors
+	snapshot["volatility_index"] = volatilityIndex
+
+	// 🛡️ NETWORK DYNAMICS: Squeeze vs Raw
+	var sqSat, hfSat float64
+	rawBytes := telemetry.OptMetrics.TotalRawBytes.Load()
+	sqBytes := telemetry.OptMetrics.TotalSqueezedBytes.Load()
+	if rawBytes > 0 {
+		sqSat = float64(rawBytes-sqBytes) / float64(rawBytes) * 100.0
+	}
+	activeStreams := telemetry.OptMetrics.HFSCActiveStreams.Load()
+	if activeStreams > 0 {
+		hfSat = float64(activeStreams) / 2048.0 * 100.0
+	}
+	snapshot["network_dynamics"] = map[string]any{
+		"token_velocity_tps":     0.0,
+		"squeeze_saturation_pct": sqSat,
+		"hfsc_saturation_pct":    hfSat,
+	}
+
 	// 🛡️ SEARCH SNAPSHOT: Search mode + counters for the Search dashboard tab
 	vectorMode := "Lexical (Bleve)"
 	if m.Config != nil && m.Config.Intelligence.Provider != "" && m.Config.Intelligence.APIKey != "" {
 		vectorMode = "Vector (HNSW)"
 	}
+	var bTop, hTop []string
+	if bp := telemetry.SearchMetrics.LastBleveTop5.Load(); bp != nil {
+		bTop = *bp
+	}
+	if hp := telemetry.SearchMetrics.LastHnswTop5.Load(); hp != nil {
+		hTop = *hp
+	}
+
 	snapshot["search"] = map[string]any{
 		"mode":                   vectorMode,
 		"total_searches":         telemetry.SearchMetrics.TotalSearches.Load(),
@@ -532,8 +611,16 @@ func (m *WarmRegistry) WriteSnapshot(flush bool, dashboardScores map[string]any,
 		"lexical_searches":       telemetry.SearchMetrics.LexicalSearches.Load(),
 		"total_latency_ms":       telemetry.SearchMetrics.TotalLatencyMs.Load(),
 		"total_confidence_score": math.Float64frombits(telemetry.SearchMetrics.TotalConfidenceScore.Load()),
+		"l1_cache_hits":          telemetry.SearchMetrics.AlignCacheHits.Load(),
+		"l1_cache_misses":        telemetry.SearchMetrics.AlignCacheMisses.Load(),
 		"cache_hits":             telemetry.SearchMetrics.CacheHits.Load(),
 		"cache_misses":           telemetry.SearchMetrics.CacheMisses.Load(),
+		"vector_wins":            telemetry.SearchMetrics.VectorWins.Load(),
+		"lexical_wins":           telemetry.SearchMetrics.LexicalWins.Load(),
+		"hnsw_graph_size":        getHNSWGraphSize(),
+		"fusion_mode":            getFusionModeLabel(m.Config),
+		"bleve_top_5":            bTop,
+		"hnsw_top_5":             hTop,
 	}
 
 	if telemetry.GlobalRingBuffer != nil {
@@ -553,4 +640,25 @@ func (m *WarmRegistry) WriteSnapshot(flush bool, dashboardScores map[string]any,
 	if flush {
 		db.FlushMetricBucket(m.Store, snapshot)
 	}
+}
+
+// getHNSWGraphSize returns the current HNSW graph node count, or 0 if the engine is disabled.
+func getHNSWGraphSize() int {
+	e := vector.GetEngine()
+	if e == nil || !e.VectorEnabled() {
+		return 0
+	}
+	return e.Len()
+}
+
+// getFusionModeLabel returns a human-readable label for the active search fusion mode.
+func getFusionModeLabel(cfg *config.Config) string {
+	if cfg == nil {
+		return "Lexical-Only"
+	}
+	e := vector.GetEngine()
+	if e == nil || !e.VectorEnabled() {
+		return "Lexical-Only (BM25)"
+	}
+	return fmt.Sprintf("Hybrid (α=%.2f)", cfg.ScoreFusionAlpha)
 }

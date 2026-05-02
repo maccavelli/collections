@@ -200,7 +200,7 @@ func NewOrchestratorApp(ctx context.Context, cancel context.CancelFunc, configPa
 			Enabled:         e.VectorEnabled(),
 			Provider:        cfg.Intelligence.EmbeddingProvider,
 			Model:           cfg.Intelligence.EmbeddingModel,
-			Dims:            cfg.Intelligence.EmbeddedDimensionality,
+			Dims:            cfg.Intelligence.EmbeddingDimensionality,
 			GraphNodes:      e.Len(),
 			NeedsHydration:  e.RequiresHydration(),
 			VectorWins:      telemetry.SearchMetrics.VectorWins.Load(),
@@ -298,7 +298,7 @@ func (app *OrchestratorApp) Start() error {
 	)
 
 	h.Register(app.server)
-	h.RegisterPipelineTools(app.server) // 🛡️ PM TOOLS: compose_pipeline, validate_pipeline_step, cross_server_quality_gate
+	h.RegisterPipelineTools(app.server) // 🛡️ PM TOOLS: execute_pipeline, validate_pipeline_step, cross_server_quality_gate
 
 	// 🛡️ [BOILERPLATE] Standard Transport Wrapper
 	eofReader := &util.EofDetector{R: realStdin, Cancel: app.cancel}
@@ -510,9 +510,7 @@ func (app *OrchestratorApp) executeBootSequence() {
 		// but is NOT needed for server handshakes — only for align_tools queries.
 		// Fire-and-forget so it doesn't block the boot sequence.
 		var successCount, offlineCount atomic.Int64
-		asyncTimelineWg.Add(1)
-		go func() {
-			defer asyncTimelineWg.Done()
+		asyncTimelineWg.Go(func() {
 			defer func() {
 				if r := recover(); r != nil {
 					slog.Error("warm boot panicked", "panic", r)
@@ -523,7 +521,7 @@ func (app *OrchestratorApp) executeBootSequence() {
 			} else {
 				slog.Info("Warm boot successful: search index cached in-memory", "component", "registry")
 			}
-		}()
+		})
 
 		// 🛡️ CONCURRENT BOOT: All critical servers (including recall) boot in parallel.
 		// Sub-servers with recall dependencies handle connectivity independently
@@ -549,7 +547,6 @@ func (app *OrchestratorApp) executeBootSequence() {
 
 		// 🛡️ CONCURRENT BOOT: All critical servers spawn and sync in parallel.
 		for _, sc := range critical {
-			sc := sc // Capture loop variable
 			eg.Go(func() error {
 				// Worker isolated recover()
 				defer func() {
@@ -629,24 +626,17 @@ func (app *OrchestratorApp) executeBootSequence() {
 		// 🛡️ GC RESTORE: Re-enable GC loops now that the mass allocation sequence is securely flushed
 		debug.SetGCPercent(100)
 
-		asyncTimelineWg.Add(1)
-		go func() {
-			defer asyncTimelineWg.Done()
+		asyncTimelineWg.Go(func() {
 			app.reg.PruneOrphans() // Non-urgent cleanup, runs in background
-		}()
+		})
 
 		// 🛡️ DEFERRED BOOT: Non-critical servers (git, github, glab) boot in
 		// background after the main boot completes. They don't block IDE readiness.
 		if len(deferred) > 0 {
-			asyncTimelineWg.Add(1)
-			go func() {
-				defer asyncTimelineWg.Done()
+			asyncTimelineWg.Go(func() {
 				var defWg sync.WaitGroup
 				for _, sc := range deferred {
-					sc := sc
-					defWg.Add(1)
-					go func() {
-						defer defWg.Done()
+					defWg.Go(func() {
 						defer func() {
 							if r := recover(); r != nil {
 								slog.Error("deferred server lifecycle panicked", "server", sc.Name, "panic", r)
@@ -662,10 +652,10 @@ func (app *OrchestratorApp) executeBootSequence() {
 						} else {
 							slog.Info("BootSequence: deferred server ready", "name", sc.Name)
 						}
-					}()
+					})
 				}
 				defWg.Wait() // Wait for all deferred servers in this batch
-			}()
+			})
 		}
 
 		slog.Info("BootSequence phase complete.",
@@ -772,11 +762,9 @@ func primeFromRecall(ctx context.Context, rc *external.MCPClient, cfg *config.Co
 	// Only override if the current value is at the default (1,500,000).
 	const defaultTokenThresh = 1500000
 	if profile.AvgTokenSpend > 0 && cfg.TokenSpendThresh == defaultTokenThresh {
-		calibrated := int(profile.AvgTokenSpend * 1.2)
-		// Clamp to reasonable bounds [500_000, 5_000_000]
-		if calibrated < 500000 {
-			calibrated = 500000
-		}
+		calibrated := max(
+			// Clamp to reasonable bounds [500_000, 5_000_000]
+			int(profile.AvgTokenSpend*1.2), 500000)
 		if calibrated > 5000000 {
 			calibrated = 5000000
 		}

@@ -61,7 +61,7 @@ func TestCircuitBreaker(t *testing.T) {
 	m.Servers[name] = m.initSubServer(name)
 	m.mu.Unlock()
 
-	for i := 0; i < CircuitBreakerThreshold; i++ {
+	for range CircuitBreakerThreshold {
 		m.markFailure(name)
 	}
 

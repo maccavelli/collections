@@ -13,6 +13,12 @@ type SearchMetricsRegistry struct {
 	CacheMisses          atomic.Int64  // Reserved for future vector cache layer
 	VectorWins           atomic.Int64  // RRF: vector score dominated the fusion
 	LexicalWins          atomic.Int64  // RRF: lexical score dominated the fusion
+	AlignCacheHits       atomic.Int64  // L1 Intent Cache Hits
+	AlignCacheMisses     atomic.Int64  // L1 Intent Cache Misses
+
+	// Top 5 Index Decision Matrix Pointers (for dashboard tracking)
+	LastBleveTop5 atomic.Pointer[[]string]
+	LastHnswTop5  atomic.Pointer[[]string]
 }
 
 // SearchMetrics is the global instance of search metrics.

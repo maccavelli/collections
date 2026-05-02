@@ -28,7 +28,7 @@ func NewEmbedderFromConfig(cfg *config.Config) Embedder {
 	provider := cfg.Intelligence.EmbeddingProvider
 	model := cfg.Intelligence.EmbeddingModel
 	apiKey := cfg.Intelligence.EmbeddingAPIKey
-	dims := cfg.Intelligence.EmbeddedDimensionality
+	dims := cfg.Intelligence.EmbeddingDimensionality
 
 	if provider == "" || (apiKey == "" && provider != "ollama") {
 		slog.Warn("embedding engine DISABLED: missing embedding_provider or embedding_api_key",

@@ -44,7 +44,7 @@ func TestListToolsConcurrency(t *testing.T) {
 	numCalls := 100
 	wg.Add(numCalls * 2)
 
-	for i := 0; i < numCalls; i++ {
+	for i := range numCalls {
 		go func() {
 			defer wg.Done()
 			_, err := wrapped(ctx, "tools/list", req)

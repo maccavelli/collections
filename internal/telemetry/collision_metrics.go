@@ -114,7 +114,7 @@ func (ct *CollisionTracker) trendLocked() string {
 	// Compare average gap of first half vs second half of recent events
 	mid := n / 2
 	var firstHalf, secondHalf float64
-	for i := 0; i < mid; i++ {
+	for i := range mid {
 		firstHalf += ct.events[i].Gap
 	}
 	for i := mid; i < n; i++ {

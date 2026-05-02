@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"maps"
 	"sync"
 	"time"
 
@@ -37,7 +38,7 @@ func NewMCPClient(url string) *MCPClient {
 		URL:    url,
 		logger: slog.Default(),
 	}
-	for i := 0; i < 8; i++ {
+	for i := range 8 {
 		client.telemetryShards[i] = make(chan telemetryEvent, 2048)
 		go client.workerFlusher(i)
 	}
@@ -111,10 +112,7 @@ func (c *MCPClient) Start(ctx context.Context) {
 					return
 				case <-time.After(backoff):
 				}
-				backoff = backoff * 2
-				if backoff > maxBackoff {
-					backoff = maxBackoff
-				}
+				backoff = min(backoff*2, maxBackoff)
 				continue
 			}
 
@@ -266,7 +264,7 @@ func (c *MCPClient) workerFlusher(shard int) {
 		retries := 15
 		backoff := 100 * time.Millisecond
 
-		for i := 0; i < retries; i++ {
+		for i := range retries {
 			res := c.CallDatabaseTool(bgCtx, "save_sessions", args)
 			if res != "" {
 				break
@@ -310,7 +308,7 @@ func (c *MCPClient) GetSession(ctx context.Context, sessionID string) (map[strin
 }
 
 // AggregateSessionFromRecall retrieves ALL session records for a given server_id
-// and project_id from recall's list_sessions endpoint, then merges their state_data
+// and project_id from recall's universal list endpoint, then merges their state_data
 // into a unified map. This is the correct aggregation path for cross-pipeline
 // context merging.
 //
@@ -336,13 +334,13 @@ func (c *MCPClient) AggregateSessionFromRecall(ctx context.Context, serverID, pr
 		return nil, fmt.Errorf("recall_key_not_found: no sessions found for server_id='%s' project_id='%s'", serverID, projectID)
 	}
 
-	// Parse the list_sessions response.
+	// Parse the list response.
 	// CallDatabaseTool may return either:
 	//   (a) Unwrapped: {"count":N, "entries":[...]} — when StructuredContent has "data" key
 	//   (b) Wrapped:   {"data":{"count":N, "entries":[...]}} — when TextContent fallback is used
 	var envelope map[string]any
 	if err := json.Unmarshal([]byte(res), &envelope); err != nil {
-		return nil, fmt.Errorf("recall_data_corrupt: list_sessions returned unparseable data: %w", err)
+		return nil, fmt.Errorf("recall_data_corrupt: list returned unparseable data: %w", err)
 	}
 
 	// Handle both unwrapped (entries at top level) and wrapped (entries inside "data").
@@ -394,9 +392,7 @@ func (c *MCPClient) AggregateSessionFromRecall(ctx context.Context, serverID, pr
 				stageData["_pruned"] = true
 			}
 			stages = append(stages, stageData)
-			for k, v := range stageData {
-				merged[k] = v
-			}
+			maps.Copy(merged, stageData)
 		}
 
 		c.logger.Debug("AggregateSessionFromRecall: merged stage", "key", key)
@@ -455,6 +451,30 @@ func (c *MCPClient) GetStandard(ctx context.Context, key string) string {
 // ---------------------------------------------------------------------------
 // Sessions Namespace Convenience API
 // ---------------------------------------------------------------------------
+
+// SearchSessions queries the recall sessions namespace with multi-dimensional
+// BM25/Jaccard search. Filters are optional — pass empty string to skip.
+// Returns empty string if recall is unavailable or no matches found.
+func (c *MCPClient) SearchSessions(ctx context.Context, query, projectID, serverID, outcome, traceContext string, limit int) string {
+	args := map[string]any{"query": query}
+	if limit > 0 {
+		args["limit"] = limit
+	}
+	if projectID != "" {
+		args["project_id"] = projectID
+	}
+	if serverID != "" {
+		args["server_id"] = serverID
+	}
+	if outcome != "" {
+		args["outcome"] = outcome
+	}
+	if traceContext != "" {
+		args["trace_context"] = traceContext
+	}
+	args["namespace"] = "sessions"
+	return c.CallDatabaseTool(ctx, "search", args)
+}
 
 // ListSessionsByFilter retrieves sessions matching specified criteria with
 // truncation enabled to prevent payload overflow. All filters are optional.

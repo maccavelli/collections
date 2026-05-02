@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"testing"
 	"time"
 )
@@ -45,7 +46,7 @@ func TestDBSimpleCoverage(t *testing.T) {
 	}
 	_ = store.SaveTool(record)
 	_, _ = store.GetTool("fake:urn")
-	_, _ = store.SearchTools("fake", "cat", "", 0.0)
+	_, _ = store.SearchTools(context.Background(), "fake", "cat", "", 0.0, 0.5)
 
 	// 6. Schema logic
 	schema := map[string]any{}

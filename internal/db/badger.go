@@ -22,6 +22,7 @@ import (
 
 	"mcp-server-magictools/internal/telemetry"
 	"mcp-server-magictools/internal/util"
+	"mcp-server-magictools/internal/vector"
 )
 
 type CacheMetrics struct {
@@ -415,7 +416,7 @@ func (s *Store) UpdateWithRetry(fn func(txn *badger.Txn) error) error {
 	backoff := 10 * time.Millisecond
 
 	var err error
-	for i := 0; i < maxRetries; i++ {
+	for range maxRetries {
 		err = s.DB.Update(fn)
 		if err == nil {
 			return nil
@@ -488,7 +489,7 @@ func (s *Store) BatchSaveTools(records []*ToolRecord, schemas map[string]map[str
 	// 3. Post-transaction updates (Search Index and Micro-Cache)
 	s.Cache.SetCategories(nil)
 	for hash, schema := range schemas {
-		s.Cache.Set("schema:"+hash, schema, 1*time.Hour)
+		s.Cache.Set("schema:"+hash, schema, 2*time.Hour)
 	}
 
 	// 🛡️ BATCH INTELLIGENCE HYDRATION
@@ -518,7 +519,7 @@ func (s *Store) BatchSaveTools(records []*ToolRecord, schemas map[string]map[str
 			record.Metrics = intel.Metrics
 		}
 		bleveBatch = append(bleveBatch, ToBleveDoc(record))
-		s.Cache.Set("tool:"+record.URN, record, 1*time.Hour)
+		s.Cache.Set("tool:"+record.URN, record, 2*time.Hour)
 	}
 
 	if len(bleveBatch) > 0 {
@@ -575,7 +576,7 @@ func (s *Store) SaveTool(record *ToolRecord) error {
 	}
 
 	// CACHE update: Lower I/O for subsequent Definition/Schema lookups.
-	s.Cache.Set("tool:"+record.URN, record, 1*time.Hour)
+	s.Cache.Set("tool:"+record.URN, record, 2*time.Hour)
 	// Invalidate category cache (new category could have been added)
 	s.Cache.SetCategories(nil)
 	return nil
@@ -731,13 +732,16 @@ func (s *Store) SaveSchema(hash string, schema map[string]any) error {
 		return txn.Set([]byte("schema:"+hash), compressed)
 	})
 	if err == nil {
-		s.Cache.Set("schema:"+hash, schema, 1*time.Hour)
+		s.Cache.Set("schema:"+hash, schema, 2*time.Hour)
 	}
 	return err
 }
 
 // GetSchema retrieves a tool schema by hash, using the Micro-Cache to avoid Badger/ZSTD overhead.
 func (s *Store) GetSchema(hash string) (map[string]any, error) {
+	if hash == "" {
+		return nil, badger.ErrKeyNotFound
+	}
 	// 1. Cache Check
 	if val, ok := s.Cache.Get("schema:" + hash); ok {
 		if m, ok := val.(map[string]any); ok {
@@ -760,7 +764,7 @@ func (s *Store) GetSchema(hash string) (map[string]any, error) {
 		})
 	})
 	if err == nil {
-		s.Cache.Set("schema:"+hash, m, 1*time.Hour)
+		s.Cache.Set("schema:"+hash, m, 2*time.Hour)
 	}
 	return m, err
 }
@@ -803,7 +807,7 @@ func (s *Store) GetTool(urn string) (*ToolRecord, error) {
 	}
 
 	// Pop the cache for next time
-	s.Cache.Set("tool:"+urn, &record, 1*time.Hour)
+	s.Cache.Set("tool:"+urn, &record, 2*time.Hour)
 	return &record, nil
 }
 
@@ -873,7 +877,7 @@ func ComputeZeroValues(schema map[string]any) map[string]any {
 
 // SearchTools performs Keyword search on tool names and descriptions using Bleve index with optional category domain filtering.
 // Results are re-ranked by blending BM25 relevance with usage frequency.
-func (s *Store) SearchTools(query string, category string, serverConstraint string, scoreThreshold float64) ([]*ToolRecord, error) {
+func (s *Store) SearchTools(ctx context.Context, query string, category string, serverConstraint string, scoreThreshold float64, alpha float64) ([]*ToolRecord, error) {
 	if query == "" {
 		var results []*ToolRecord
 		err := s.DB.View(func(txn *badger.Txn) error {
@@ -917,39 +921,203 @@ func (s *Store) SearchTools(query string, category string, serverConstraint stri
 		return nil, err
 	}
 
-	if len(searchResult.Hits) == 0 {
+	// 🧠 HYBRID VECTOR OVERLAY: Fuse HNSW cosine similarity scores with Bleve BM25
+	var vecResults []vector.ScoredResult
+	if e := vector.GetEngine(); e != nil && e.VectorEnabled() && !strings.Contains(query, ":") {
+		var vecErr error
+		vecResults, vecErr = e.SearchWithScores(ctx, query, 20)
+		if vecErr != nil {
+			slog.Log(ctx, util.LevelTrace, "db: vector search unavailable, using pure BM25", "error", vecErr)
+		}
+	}
+
+	if len(searchResult.Hits) == 0 && len(vecResults) == 0 {
 		return s.SearchToolsFallback(query, category, serverConstraint)
 	}
 
-	if scoreThreshold > 0 && searchResult.Hits[0].Score < scoreThreshold {
+	// Build unified hit list with blended scores
+	type localHit struct {
+		ID    string
+		Score float64
+	}
+	var uniqueHits []localHit
+
+	bm25Scores := make(map[string]float64)
+	for _, hit := range searchResult.Hits {
+		bm25Scores[hit.ID] = hit.Score
+	}
+
+	vectorScores := make(map[string]float64)
+	for _, vr := range vecResults {
+		// Domain isolation: Strip brainstorm and go-refactor unless explicitly targeted
+		if serverConstraint == "" {
+			if strings.HasPrefix(vr.Key, "brainstorm:") || strings.HasPrefix(vr.Key, "go-refactor:") {
+				continue
+			}
+		} else {
+			if !strings.HasPrefix(vr.Key, serverConstraint+":") && vr.Key != serverConstraint {
+				continue
+			}
+		}
+		vectorScores[vr.Key] = vr.Score
+	}
+
+	// Populate Top 5 Matrix for dashboard telemetry
+	var bTop, hTop []string
+	type scorePair struct {
+		urn   string
+		score float64
+	}
+	var bPairs []scorePair
+	for u, s := range bm25Scores {
+		bPairs = append(bPairs, scorePair{u, s})
+	}
+	for i := 1; i < len(bPairs); i++ {
+		for j := i; j > 0 && bPairs[j].score > bPairs[j-1].score; j-- {
+			bPairs[j], bPairs[j-1] = bPairs[j-1], bPairs[j]
+		}
+	}
+	for i := 0; i < len(bPairs) && i < 5; i++ {
+		bTop = append(bTop, bPairs[i].urn)
+	}
+
+	var hPairs []scorePair
+	for u, s := range vectorScores {
+		hPairs = append(hPairs, scorePair{u, s})
+	}
+	for i := 1; i < len(hPairs); i++ {
+		for j := i; j > 0 && hPairs[j].score > hPairs[j-1].score; j-- {
+			hPairs[j], hPairs[j-1] = hPairs[j-1], hPairs[j]
+		}
+	}
+	for i := 0; i < len(hPairs) && i < 5; i++ {
+		hTop = append(hTop, hPairs[i].urn)
+	}
+
+	telemetry.SearchMetrics.LastBleveTop5.Store(&bTop)
+	telemetry.SearchMetrics.LastHnswTop5.Store(&hTop)
+
+	allURNs := make(map[string]struct{})
+	for urn := range bm25Scores {
+		allURNs[urn] = struct{}{}
+	}
+	for urn := range vectorScores {
+		allURNs[urn] = struct{}{}
+	}
+
+	bRank := make(map[string]int)
+	for i, pair := range bPairs {
+		bRank[pair.urn] = i + 1
+	}
+
+	hRank := make(map[string]int)
+	for i, pair := range hPairs {
+		hRank[pair.urn] = i + 1
+	}
+
+	fusedScores := make(map[string]float64)
+	if len(hPairs) > 0 {
+		// Hybrid Search RRF
+		const k = 60.0
+		for urn := range allURNs {
+			var fused float64
+			hasVec := false
+			hasBM25 := false
+
+			if r, ok := hRank[urn]; ok {
+				fused += 1.0 / (k + float64(r))
+				hasVec = true
+			}
+			if r, ok := bRank[urn]; ok {
+				fused += 1.0 / (k + float64(r))
+				hasBM25 = true
+			}
+
+			if hasVec && hasBM25 {
+				if vectorScores[urn] > bm25Scores[urn] {
+					telemetry.SearchMetrics.VectorWins.Add(1)
+				} else {
+					telemetry.SearchMetrics.LexicalWins.Add(1)
+				}
+			}
+			// Scale up to approximate typical 0.0 - 1.0 range
+			fusedScores[urn] = fused * 31.0
+		}
+	} else {
+		// Pure BM25, no vectors
+		for urn := range allURNs {
+			if score, ok := bm25Scores[urn]; ok {
+				fusedScores[urn] = score
+			}
+		}
+	}
+
+	// Determine the highest unified score to evaluate the threshold
+	maxFusedScore := 0.0
+	for _, score := range fusedScores {
+		if score > maxFusedScore {
+			maxFusedScore = score
+		}
+	}
+
+	if scoreThreshold > 0 && maxFusedScore < scoreThreshold {
 		fallback, err := s.SearchToolsFallback(query, category, serverConstraint)
 		if err == nil && len(fallback) > 0 {
 			return fallback, nil
 		}
-		// Log debug and let the top hits through, relying on top-k diversity
-		slog.Debug("Bleve high confidence threshold missed and fallback failed", "query", query)
+		slog.Debug("High confidence threshold missed and fallback failed", "query", query)
 	}
 
 	var results []*ToolRecord
-	for _, hit := range searchResult.Hits {
-		record, err := s.GetTool(hit.ID)
+	seenNames := make(map[string]bool)
+
+	for urn, fusedScore := range fusedScores {
+		// 🛡️ STRICT CULLING: Drop tools that fall below the adjusted scoreThreshold individually.
+		if scoreThreshold > 0 && fusedScore < (scoreThreshold*0.4) {
+			continue
+		}
+
+		record, err := s.GetTool(urn)
 		if err == nil {
-			record.ConfidenceScore = hit.Score
-			record.HighlightedDescription = record.Description
-			if frags, ok := hit.Fragments["description"]; ok && len(frags) > 0 {
-				desc := frags[0]
-				desc = strings.ReplaceAll(desc, "<mark>", "**")
-				desc = strings.ReplaceAll(desc, "</mark>", "**")
-				record.HighlightedDescription = desc
+			if serverConstraint == "" && seenNames[record.Name] {
+				continue
 			}
+			if serverConstraint != "" && !strings.EqualFold(record.Server, serverConstraint) {
+				continue
+			}
+			seenNames[record.Name] = true
+
+			record.ConfidenceScore = fusedScore
+			record.HighlightedDescription = record.Description
+
+			// Try to recover fragment highlights from Bleve if available
+			for _, hit := range searchResult.Hits {
+				if hit.ID == urn {
+					if frags, ok := hit.Fragments["description"]; ok && len(frags) > 0 {
+						desc := frags[0]
+						desc = strings.ReplaceAll(desc, "<mark>", "**")
+						desc = strings.ReplaceAll(desc, "</mark>", "**")
+						record.HighlightedDescription = desc
+					}
+					break
+				}
+			}
+
 			results = append(results, record)
+			uniqueHits = append(uniqueHits, localHit{ID: urn, Score: fusedScore})
 		}
 	}
 
 	// Record confidence gap for collision dashboard
-	if len(searchResult.Hits) >= 2 {
-		s1 := searchResult.Hits[0]
-		s2 := searchResult.Hits[1]
+	if len(uniqueHits) >= 2 {
+		// Sort just uniqueHits to find top 2 scores
+		for i := 1; i < len(uniqueHits); i++ {
+			for j := i; j > 0 && uniqueHits[j].Score > uniqueHits[j-1].Score; j-- {
+				uniqueHits[j], uniqueHits[j-1] = uniqueHits[j-1], uniqueHits[j]
+			}
+		}
+		s1 := uniqueHits[0]
+		s2 := uniqueHits[1]
 		gap := s1.Score - s2.Score
 		telemetry.Collisions.Record(telemetry.CollisionEvent{
 			Timestamp: time.Now().UnixNano(),
@@ -963,11 +1131,8 @@ func (s *Store) SearchTools(query string, category string, serverConstraint stri
 		})
 	}
 
-	// Usage-weighted re-ranking: blend BM25 position with usage frequency.
-	// Bleve returns results already sorted by BM25 score. We apply a secondary
-	// boost based on UsageCount to promote frequently-used tools.
+	// Usage-weighted re-ranking: blend Base position with usage frequency.
 	if len(results) > 1 {
-		// Find max usage for normalization
 		var maxUsage int64
 		for _, r := range results {
 			if r.UsageCount > maxUsage {
@@ -982,28 +1147,25 @@ func (s *Store) SearchTools(query string, category string, serverConstraint stri
 			}
 			scored_results := make([]scored, len(results))
 			for i, r := range results {
-				// Normalized usage: Logarithmic scaling max bounded
 				usageScore := 0.0
 				if maxUsage > 0 {
 					usageScore = math.Log10(float64(r.UsageCount)+1.0) / math.Log10(float64(maxUsage)+1.0)
 				}
-				// Blend: 70% relevance (using actual ConfidenceScore), 30% usage
 				baseScore := r.ConfidenceScore*0.7 + usageScore*0.3
 
-				// Apply Incremental Reliability Scoring multiplier
+				// 🛡️ Apply Incremental Reliability Scoring multiplier uniformly to Vector & BM25 hits
 				rel := r.Metrics.ProxyReliability
 				if rel == 0 {
 					rel = 1.0
 				}
 				blended := baseScore * rel
 
-				// 🛡️ Apply Semantic Negative Triggers Penalty
-				// If the user's prompt matches a defined negative trigger, heavily penalize the match.
+				// 🛡️ Apply Semantic Negative Triggers Penalty uniformly
 				if len(r.NegativeTriggers) > 0 {
 					queryLower := strings.ToLower(query)
 					for _, neg := range r.NegativeTriggers {
 						if strings.Contains(queryLower, strings.ToLower(neg)) {
-							blended = blended * 0.1 // 90% artificial confidence penalty
+							blended = blended * 0.1
 							break
 						}
 					}
@@ -1013,7 +1175,7 @@ func (s *Store) SearchTools(query string, category string, serverConstraint stri
 				scored_results[i] = scored{record: r, score: blended}
 			}
 
-			// Sort by blended score descending (simple insertion sort for small sets)
+			// Sort by blended score descending
 			for i := 1; i < len(scored_results); i++ {
 				for j := i; j > 0 && scored_results[j].score > scored_results[j-1].score; j-- {
 					scored_results[j], scored_results[j-1] = scored_results[j-1], scored_results[j]
@@ -1023,13 +1185,39 @@ func (s *Store) SearchTools(query string, category string, serverConstraint stri
 			results = make([]*ToolRecord, 0, len(scored_results))
 			serverCounts := make(map[string]int)
 			for _, s := range scored_results {
-				// 🛡️ Ensure top-k diversity mathematically to prevent single-server semantic flooding, unless explicitly constrained
+				if serverConstraint != "" && !strings.EqualFold(s.record.Server, serverConstraint) {
+					continue
+				}
 				if serverConstraint != "" || serverCounts[s.record.Server] < 3 {
 					results = append(results, s.record)
 					serverCounts[s.record.Server]++
 				}
 			}
+		} else {
+			// If no max usage, just sort by ConfidenceScore descending natively
+			for i := 1; i < len(results); i++ {
+				for j := i; j > 0 && results[j].ConfidenceScore > results[j-1].ConfidenceScore; j-- {
+					results[j], results[j-1] = results[j-1], results[j]
+				}
+			}
 		}
+	} else if len(results) == 1 {
+		r := results[0]
+		rel := r.Metrics.ProxyReliability
+		if rel == 0 {
+			rel = 1.0
+		}
+		blended := r.ConfidenceScore * rel
+		if len(r.NegativeTriggers) > 0 {
+			queryLower := strings.ToLower(query)
+			for _, neg := range r.NegativeTriggers {
+				if strings.Contains(queryLower, strings.ToLower(neg)) {
+					blended = blended * 0.1
+					break
+				}
+			}
+		}
+		r.ConfidenceScore = blended
 	}
 
 	return results, nil
@@ -1177,6 +1365,7 @@ func (s *Store) GetRawResource(id string) ([]byte, error) {
 	}
 	return util.Decompress(compressed)
 }
+
 
 // UpdateToolUsage increments the usage counter for a tool
 func (s *Store) UpdateToolUsage(urn string) {
@@ -1614,7 +1803,7 @@ func (s *Store) GetServerToolCount(serverName string) int {
 func (s *Store) SaveLog(entry []byte, ttl time.Duration) error {
 	// Use UnixNano for chronological sorting (ascending by default in Badger)
 	timestamp := time.Now().UnixNano()
-	key := []byte(fmt.Sprintf("log:%020d", timestamp))
+	key := fmt.Appendf(nil, "log:%020d", timestamp)
 	return s.DB.Update(func(txn *badger.Txn) error {
 		e := badger.NewEntry(key, entry).WithTTL(ttl)
 		return txn.SetEntry(e)
@@ -1909,7 +2098,7 @@ func (s *Store) GetTopToolsForServer(server string, max int) ([]mcp.Tool, error)
 
 func sortRecords(records []*ToolRecord) {
 	// Simple bubble sort for usage count descending since result sets are small (per-server tools)
-	for i := 0; i < len(records); i++ {
+	for i := range records {
 		for j := i + 1; j < len(records); j++ {
 			if records[i].UsageCount < records[j].UsageCount {
 				records[i], records[j] = records[j], records[i]

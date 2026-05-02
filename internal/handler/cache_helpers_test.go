@@ -2,10 +2,12 @@ package handler
 
 import (
 	"testing"
+
+	"mcp-server-magictools/internal/config"
 )
 
 func TestIsSafeToCache(t *testing.T) {
-	h := &OrchestratorHandler{}
+	h := &OrchestratorHandler{Config: &config.Config{ScoreFusionAlpha: 0.5}}
 
 	// Safe words
 	if !h.isSafeToCache("server:get_status") {
@@ -28,7 +30,7 @@ func TestIsSafeToCache(t *testing.T) {
 }
 
 func TestGetCacheKey(t *testing.T) {
-	h := &OrchestratorHandler{}
+	h := &OrchestratorHandler{Config: &config.Config{ScoreFusionAlpha: 0.5}}
 
 	args := map[string]any{"foo": "bar"}
 	key1 := h.getCacheKey("test_urn", args)

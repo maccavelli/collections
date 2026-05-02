@@ -59,8 +59,8 @@ func ReadDashboardSnapshot() (map[string]any, []string, error) {
 	}
 
 	var logs []string
-	lines := strings.Split(string(logBytes), "\n")
-	for _, l := range lines {
+	lines := strings.SplitSeq(string(logBytes), "\n")
+	for l := range lines {
 		// Strip null bytes natively
 		l = strings.ReplaceAll(l, "\x00", "")
 		l = strings.TrimSpace(l)

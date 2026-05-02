@@ -13,7 +13,7 @@ import (
 const loadingText = "⏳ Loading telemetry data..."
 
 // DashboardTabs natively defines the active array of menu items, allowing dashboard.go to dynamically scale keyboard constraints avoiding boundary panics explicitly.
-var DashboardTabs = []string{"Overview", "Tool-Registry", "Intelligence", "Orchestration", "DAG-Status", "Storage", "Gateway", "Diagnostics", "Quit"}
+var DashboardTabs = []string{"Overview", "Tool-Registry", "Intelligence", "Orchestration", "DAG-Status", "Storage", "Gateway", "Diagnostics", "Search-Analytics", "Quit"}
 
 func mergeVertical(boxes ...string) string {
 	var layout [][]pterm.Panel
@@ -51,18 +51,20 @@ func renderPtermDashboard(snapshot map[string]any, logs []string, uiState *Inter
 	case 2:
 		contentBox = mergeVertical(renderTools(snapshot), renderScores(snapshot))
 	case 3:
-		contentBox = mergeVertical(renderSearch(snapshot), renderRAG(snapshot))
+		contentBox = mergeVertical(renderRAG(snapshot), renderSearch(snapshot))
 	case 4:
 		contentBox = mergeVertical(renderPipeline(snapshot), renderSpans(logs, uiState))
 	case 5:
 		contentBox = renderDAGStatus(snapshot)
 	case 6:
-		contentBox = mergeVertical(renderDatabases(snapshot), renderCollisions(snapshot))
+		contentBox = renderDatabases(snapshot)
 	case 7:
 		contentBox = mergeVertical(renderProxy(snapshot), renderTokenValue(snapshot), renderComms(snapshot))
 	case 8:
 		contentBox = mergeVertical(renderErrors(snapshot), renderRuntime(snapshot))
 	case 9:
+		contentBox = mergeVertical(renderFusionAnalytics(snapshot), renderCollisions(snapshot))
+	case 10:
 		contentBox = pterm.DefaultBox.WithTitle("Quit").Sprint("Press ENTER to exit the dashboard.")
 	default:
 		contentBox = mergeVertical(renderOverview(snapshot, logs), renderFleet(snapshot))
@@ -437,7 +439,7 @@ func renderTools(snapshot map[string]any) string {
 				target := str(m, "target")
 				calls := numI64(m, "calls")
 				faults := numI64(m, "faults")
-				
+
 				status := pterm.Green("● HEALTHY")
 				if faults > 0 && calls > 0 {
 					if float64(faults)/float64(calls) > 0.1 {
@@ -583,7 +585,7 @@ func renderErrors(snapshot map[string]any) string {
 			// Word-wrap the message
 			wrapped := wordWrap(msg, wrapWidth-2)
 			lines = append(lines, pterm.Red("● ")+pterm.Bold.Sprint(header))
-			for _, wl := range strings.Split(wrapped, "\n") {
+			for wl := range strings.SplitSeq(wrapped, "\n") {
 				lines = append(lines, "  "+pterm.Red(wl))
 			}
 			lines = append(lines, "")
@@ -694,8 +696,6 @@ func wordWrap(text string, maxWidth int) string {
 	return strings.Join(lines, "\n")
 }
 
-
-
 // ── Tab 12: Proxy ───────────────────────────────────────────────────────────
 
 func renderProxy(snapshot map[string]any) string {
@@ -775,13 +775,25 @@ func renderProxy(snapshot map[string]any) string {
 		vel := numF64(netRaw, "token_velocity_tps")
 		sqSat := numF64(netRaw, "squeeze_saturation_pct")
 		hfSat := numF64(netRaw, "hfsc_saturation_pct")
-		
+
 		velStr := fmt.Sprintf("%.1f", vel)
 		sqStr := fmt.Sprintf("%.1f%%", sqSat)
 		hfStr := fmt.Sprintf("%.1f%%", hfSat)
-		
-		if sqSat > 80 { sqStr = pterm.Red(sqStr) } else if sqSat > 50 { sqStr = pterm.Yellow(sqStr) } else { sqStr = pterm.Green(sqStr) }
-		if hfSat > 80 { hfStr = pterm.Red(hfStr) } else if hfSat > 50 { hfStr = pterm.Yellow(hfStr) } else { hfStr = pterm.Green(hfStr) }
+
+		if sqSat > 80 {
+			sqStr = pterm.Red(sqStr)
+		} else if sqSat > 50 {
+			sqStr = pterm.Yellow(sqStr)
+		} else {
+			sqStr = pterm.Green(sqStr)
+		}
+		if hfSat > 80 {
+			hfStr = pterm.Red(hfStr)
+		} else if hfSat > 50 {
+			hfStr = pterm.Yellow(hfStr)
+		} else {
+			hfStr = pterm.Green(hfStr)
+		}
 
 		netRows := [][]string{
 			{"Metric", "Value"},
@@ -884,8 +896,10 @@ func renderSearch(snapshot map[string]any) string {
 		{"Lexical (Bleve)", fmt.Sprint(lexicalSearches)},
 		{"Vector Ratio", vectorRatioStr},
 		{"Search Latency (total ms)", fmt.Sprint(numI64(searchRaw, "total_latency_ms"))},
-		{"Cache Hits", fmt.Sprint(numI64(searchRaw, "cache_hits"))},
-		{"Cache Misses", fmt.Sprint(numI64(searchRaw, "cache_misses"))},
+		{"L1 Intent Cache Hits", fmt.Sprint(numI64(searchRaw, "l1_cache_hits"))},
+		{"L1 Intent Cache Misses", fmt.Sprint(numI64(searchRaw, "l1_cache_misses"))},
+		{"L2 Registry Cache Hits", fmt.Sprint(numI64(searchRaw, "cache_hits"))},
+		{"L2 Registry Cache Misses", fmt.Sprint(numI64(searchRaw, "cache_misses"))},
 		{"Learning Weight", fmt.Sprintf("%.4f", numF64(searchRaw, "learning_weight"))},
 	}
 
@@ -900,7 +914,7 @@ func renderSearch(snapshot map[string]any) string {
 		compRows := [][]string{
 			{"Rank", "Bleve (BM25) Baseline", "Vector (HNSW) Routing"},
 		}
-		for i := 0; i < 5; i++ {
+		for i := range 5 {
 			bStr, hStr := "-", "-"
 			if i < len(bleveTop) {
 				if s, ok := bleveTop[i].(string); ok {
@@ -928,6 +942,97 @@ func renderSearch(snapshot map[string]any) string {
 	}).Srender()
 
 	return panels
+}
+
+// ── Tab 9: Search-Analytics — Fusion Analytics ──────────────────────────────
+
+func renderFusionAnalytics(snapshot map[string]any) string {
+	searchRaw, ok := snapshot["search"].(map[string]any)
+	if !ok || len(searchRaw) == 0 {
+		return pterm.DefaultBox.WithTitle("Fusion Analytics").Sprint("Waiting for search telemetry...")
+	}
+
+	fusionMode := str(searchRaw, "fusion_mode")
+	if fusionMode == "" {
+		fusionMode = "Unknown"
+	}
+	fusionModeDisplay := pterm.Yellow("● " + fusionMode)
+	if strings.Contains(fusionMode, "Hybrid") {
+		fusionModeDisplay = pterm.Green("● " + fusionMode)
+	}
+
+	vectorWins := numI64(searchRaw, "vector_wins")
+	lexicalWins := numI64(searchRaw, "lexical_wins")
+	graphSize := numI64(searchRaw, "hnsw_graph_size")
+	avgConfidence := numF64(searchRaw, "total_confidence_score")
+	cacheHits := numI64(searchRaw, "cache_hits")
+	cacheMisses := numI64(searchRaw, "cache_misses")
+	l1CacheHits := numI64(searchRaw, "l1_cache_hits")
+	l1CacheMisses := numI64(searchRaw, "l1_cache_misses")
+
+	// Engine dominance ratio
+	dominanceStr := "N/A"
+	totalDecisions := vectorWins + lexicalWins
+	if totalDecisions > 0 {
+		ratio := float64(vectorWins) / float64(totalDecisions) * 100
+		dominanceStr = fmt.Sprintf("%.1f%% Vector / %.1f%% Lexical", ratio, 100-ratio)
+		if ratio >= 60 {
+			dominanceStr = pterm.Green(dominanceStr)
+		} else if ratio >= 40 {
+			dominanceStr = pterm.Yellow(dominanceStr)
+		}
+	}
+
+	// L1 Cache efficiency (Absorption Rate)
+	l1RateStr := "N/A"
+	totalL1 := l1CacheHits + l1CacheMisses
+	if totalL1 > 0 {
+		rate := float64(l1CacheHits) / float64(totalL1) * 100
+		l1RateStr = fmt.Sprintf("%.1f%%", rate)
+		if rate >= 70 {
+			l1RateStr = pterm.Green(l1RateStr)
+		} else if rate >= 40 {
+			l1RateStr = pterm.Yellow(l1RateStr)
+		}
+	}
+
+	// L2 Cache efficiency (Registry Hit Rate)
+	l2RateStr := "N/A"
+	totalL2 := cacheHits + cacheMisses
+	if totalL2 > 0 {
+		rate := float64(cacheHits) / float64(totalL2) * 100
+		l2RateStr = fmt.Sprintf("%.1f%%", rate)
+		if rate >= 70 {
+			l2RateStr = pterm.Green(l2RateStr)
+		} else if rate >= 40 {
+			l2RateStr = pterm.Yellow(l2RateStr)
+		}
+	}
+
+	// Graph size indicator
+	graphSizeStr := fmt.Sprint(graphSize)
+	if graphSize > 100 {
+		graphSizeStr = pterm.Green(graphSizeStr + " tools")
+	} else if graphSize > 0 {
+		graphSizeStr = pterm.Yellow(graphSizeStr + " tools")
+	} else {
+		graphSizeStr = pterm.Red("0 (disabled)")
+	}
+
+	rows := [][]string{
+		{"Metric", "Value"},
+		{"Fusion Mode", fusionModeDisplay},
+		{"Vector Wins", fmt.Sprint(vectorWins)},
+		{"Lexical Wins", fmt.Sprint(lexicalWins)},
+		{"Engine Dominance", dominanceStr},
+		{"HNSW Graph Size", graphSizeStr},
+		{"Avg Confidence (EMA)", fmt.Sprintf("%.4f", avgConfidence)},
+		{"L1 Absorption Rate", l1RateStr},
+		{"L2 Cache Hit Rate", l2RateStr},
+	}
+
+	table, _ := pterm.DefaultTable.WithHasHeader().WithData(rows).Srender()
+	return pterm.DefaultBox.WithTitle("Fusion Analytics").Sprint(table)
 }
 
 // ── Tab 15: Comms ───────────────────────────────────────────────────────────
@@ -1176,6 +1281,10 @@ func renderSpans(logs []string, uiState *InternalUIState) string {
 		return rootNodes[i].StartTime < rootNodes[j].StartTime
 	})
 
+	if len(rootNodes) > 10 {
+		rootNodes = rootNodes[len(rootNodes)-10:]
+	}
+
 	var visibleNodes []string
 	selTraceID, spansExpand, spansFocus := uiState.GetSnapshot()
 
@@ -1355,7 +1464,7 @@ func renderDAGStatus(snapshot map[string]any) string {
 	totalNodes := numI64(dagRaw, "total_nodes")
 	currentNode := numI64(dagRaw, "current_node_index")
 	globalLatency := str(dagRaw, "global_latency")
-	
+
 	statusColor := pterm.NewStyle(pterm.FgBlack, pterm.BgCyan)
 	if status == "EXECUTING" {
 		statusColor = pterm.NewStyle(pterm.FgBlack, pterm.BgYellow)
@@ -1387,7 +1496,7 @@ func renderDAGStatus(snapshot map[string]any) string {
 			case "FAILED":
 				stateStr = pterm.Red("✖ " + state)
 			}
-			
+
 			rows = append(rows, []string{
 				fmt.Sprintf("%d", i+1),
 				str(node, "name"),

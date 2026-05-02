@@ -126,11 +126,12 @@ type IntelligenceEngine struct {
 	TimeoutSeconds int      `json:"timeout_seconds,omitzero" mapstructure:"timeout_seconds" yaml:"timeout_seconds,omitempty"`
 
 	// Embedding Engine settings (decoupled from generative hydrator)
-	EmbeddingProvider      string `json:"embedding_provider,omitzero" mapstructure:"embedding_provider" yaml:"embedding_provider,omitempty"`
-	EmbeddingModel         string `json:"embedding_model,omitzero" mapstructure:"embedding_model" yaml:"embedding_model,omitempty"`
-	EmbeddingAPIKey        string `json:"embedding_api_key,omitzero" mapstructure:"embedding_api_key" yaml:"embedding_api_key,omitempty"`
-	EmbeddingAPIURL        string `json:"embedding_api_url,omitzero" mapstructure:"embedding_api_url" yaml:"embedding_api_url,omitempty"`
-	EmbeddedDimensionality int    `json:"embedded_dimensionality,omitzero" mapstructure:"embedded_dimensionality" yaml:"embedded_dimensionality,omitempty"`
+	EmbeddingProvider       string `json:"embedding_provider,omitzero" mapstructure:"embedding_provider" yaml:"embedding_provider,omitempty"`
+	EmbeddingModel          string `json:"embedding_model,omitzero" mapstructure:"embedding_model" yaml:"embedding_model,omitempty"`
+	EmbeddingAPIKey         string `json:"embedding_api_key,omitzero" mapstructure:"embedding_api_key" yaml:"embedding_api_key,omitempty"`
+	EmbeddingAPIURL         string `json:"embedding_api_url,omitzero" mapstructure:"embedding_api_url" yaml:"embedding_api_url,omitempty"`
+	EmbeddingDimensionality int    `json:"embedding_dimensionality,omitzero" mapstructure:"embedding_dimensionality" yaml:"embedding_dimensionality,omitempty"`
+	VectorEnabled           bool   `json:"vector_enabled,omitzero" mapstructure:"vector_enabled" yaml:"vector_enabled,omitempty"`
 }
 
 // ConfigurationBlock is undocumented but satisfies standard structural requirements.
@@ -227,6 +228,7 @@ type Config struct {
 	SynthesisBiasSynergy float64            // Synergy (ghost index) weight in tri-factor scoring
 	SynthesisBiasRole    float64            // Role boost weight in tri-factor scoring
 	ScoreFusionAlpha     float64            // Vector weight in direct score fusion (0.0=pure BM25, 1.0=pure vector)
+	VectorEnabled        bool               // Global toggle for HNSW Vector Engine
 	Intelligence         IntelligenceEngine // Native HTTP configuration for the Hydrator daemon
 	v                    *viper.Viper
 }
@@ -368,7 +370,99 @@ func New(version, flagPath string) (*Config, error) {
 		v.SetDefault("configuration.ringBufferTargets", []string{})
 		v.SetDefault("configuration.pinnedServers", []string{})
 
-		if err := os.WriteFile(configPath, []byte("configuration:\n  squeezeLevel: 3\n  logLevel: DEBUG\n  mcpLogLevel: INFO\n  logFormat: json\n  validateProxyCalls: true\n  scoreThreshold: 0.3\n  tokenSpendThresh: 1500000\n  lruLimit: 2048\n  synthesisBiasVector: 0.7\n  synthesisBiasSynergy: 0.3\n  synthesisBiasRole: 0.0\n  scoreFusionAlpha: 0.5\n  squeezeBypass: []\n  ringBufferTargets: []\n  pinnedServers: []\n"), 0644); err != nil {
+		if err := os.WriteFile(configPath, []byte(`configuration:
+  # -------------------------------------------------------------------------
+  # Core Orchestrator Constraints & System Limits
+  # -------------------------------------------------------------------------
+
+  # The maximum concurrent pipeline operations allowed during Socratic generation.
+  # Values > 3 will aggressively parallelize but may overwhelm the LLM context.
+  squeezeLevel: 3
+
+  # The maximum token budget per operation cycle before protective throttling engages.
+  tokenSpendThresh: 1500000
+
+  # Size limit for the orchestrator's internal Least Recently Used (LRU) caches.
+  lruLimit: 2048
+
+  # If true, proxy endpoints strictly validate payloads against discovered schemas.
+  validateProxyCalls: true
+
+
+  # -------------------------------------------------------------------------
+  # Observability & Logging Parameters
+  # -------------------------------------------------------------------------
+
+  # The orchestrator's internal system debug logging level. (DEBUG, INFO, WARN, ERROR)
+  logLevel: DEBUG
+
+  # The logging verbosity for standard MCP protocol communications.
+  mcpLogLevel: INFO
+
+  # Log output format (json or text).
+  logFormat: json
+
+
+  # -------------------------------------------------------------------------
+  # Search & Intent Matching Weights (HNSW & Bleve)
+  # -------------------------------------------------------------------------
+
+  # The Cosine Similarity confidence threshold required for a valid vector match (0.0 to 1.0).
+  scoreThreshold: 0.3
+
+  # Direct score fusion weight (0.0 = pure BM25 lexical, 1.0 = pure vector semantic).
+  scoreFusionAlpha: 0.5
+
+  # Tri-factor scoring weights for intent matching. (Must sum to 1.0)
+  synthesisBiasVector: 0.7  # Baseline vector semantic similarity weight.
+  synthesisBiasSynergy: 0.3 # Synergy (ghost index) structural weight.
+  synthesisBiasRole: 0.0    # Role boost weight for deterministic overrides.
+
+
+  # -------------------------------------------------------------------------
+  # Advanced Ecosystem Tuning
+  # -------------------------------------------------------------------------
+
+  # Servers bypassed by the squeeze parallelism limits.
+  squeezeBypass: []
+
+  # Diagnostic endpoints tracked tightly by the telemetry ring buffers.
+  ringBufferTargets: []
+
+  # Critical servers guaranteed to load synchronously at boot.
+  pinnedServers: []
+
+
+  # -------------------------------------------------------------------------
+  # Intelligence Engines (Generative & Vector)
+  # -------------------------------------------------------------------------
+  intelligence:
+
+    # 1. Generative Hydrator Settings (LLM Context & Task Resolution)
+    # Supported providers: ollama, gemini, openai, claude
+    provider: ""
+    model: ""
+    api_key: ""
+    fallback_models: []
+    retry_count: 2
+    retry_delay_seconds: 5
+    timeout_seconds: 120
+
+    # 2. Vector Search Engine Settings (HNSW Spatial Embeddings)
+    # Enable the semantic HNSW search. Must be true to use vector operations.
+    vector_enabled: false
+
+    # Supported embedding providers: ollama, gemini, openai, voyage
+    embedding_provider: ""
+    embedding_model: ""
+    embedding_api_key: ""
+    
+    # Custom endpoint for local models (defaults to http://localhost:11434 for Ollama)
+    embedding_api_url: ""
+
+    # Dimensional footprint (e.g. 384, 768, 1536). Critical for static HNSW graph sizing.
+    embedding_dimensionality: 0
+`), 0644); err != nil {
 			return nil, fmt.Errorf("failed to create default config: %w", err)
 		}
 		// Retry read after create
@@ -510,12 +604,14 @@ func (c *Config) SaveConfiguration() error {
 		if c.Intelligence.EmbeddingAPIKey != "" {
 			intelBlock["embedding_api_key"] = c.Intelligence.EmbeddingAPIKey
 		}
-		if c.Intelligence.EmbeddedDimensionality > 0 {
-			intelBlock["embedded_dimensionality"] = c.Intelligence.EmbeddedDimensionality
+		if c.Intelligence.EmbeddingDimensionality > 0 {
+			intelBlock["embedding_dimensionality"] = c.Intelligence.EmbeddingDimensionality
 		}
 		if c.Intelligence.EmbeddingAPIURL != "" {
 			intelBlock["embedding_api_url"] = c.Intelligence.EmbeddingAPIURL
 		}
+
+		intelBlock["vector_enabled"] = c.Intelligence.VectorEnabled
 
 		cfgBlock["intelligence"] = intelBlock
 	}
@@ -602,6 +698,16 @@ func (c *Config) UpdateConfigValue(key, value string) (oldValue string, err erro
 		}
 		oldValue = strconv.FormatFloat(c.ScoreThreshold, 'f', -1, 64)
 		c.ScoreThreshold = val
+	case "vector_enabled":
+		oldValue = strconv.FormatBool(c.Intelligence.VectorEnabled)
+		switch strings.ToLower(value) {
+		case "true", "1", "yes", "on":
+			c.Intelligence.VectorEnabled = true
+		case "false", "0", "no", "off":
+			c.Intelligence.VectorEnabled = false
+		default:
+			return "", fmt.Errorf("vector_enabled must be true/false, got: %s", value)
+		}
 	case "validateProxyCalls":
 		oldValue = strconv.FormatBool(c.ValidateProxyCalls)
 		switch strings.ToLower(value) {
@@ -651,7 +757,7 @@ func (c *Config) UpdateConfigValue(key, value string) (oldValue string, err erro
 		oldValue = strconv.Itoa(c.LRULimit)
 		c.LRULimit = val
 	default:
-		return "", fmt.Errorf("unsupported config key: %s (supported: logLevel, squeezeLevel, scoreThreshold, validateProxyCalls, pinnedServers, squeezeBypass, ringBufferTargets, tokenSpendThresh, lruLimit)", key)
+		return "", fmt.Errorf("unsupported config key: %s (supported: logLevel, squeezeLevel, scoreThreshold, vector_enabled, validateProxyCalls, pinnedServers, squeezeBypass, ringBufferTargets, tokenSpendThresh, lruLimit)", key)
 	}
 	return oldValue, nil
 }
@@ -726,8 +832,8 @@ func LoadFromViper(v *viper.Viper) (*Config, error) {
 				Disabled:      true,
 			},
 			{
-				Name:          "filesystem",
-				Command:       filepath.Join(binPath, "mcp-server-filesystem"),
+				Name:    "filesystem",
+				Command: filepath.Join(binPath, "mcp-server-filesystem"),
 				Args: []string{
 					filepath.Join(homeDir, "gitrepos"),
 					filepath.Join(homeDir, ".local"),
@@ -746,9 +852,9 @@ func LoadFromViper(v *viper.Viper) (*Config, error) {
 				Disabled:      true,
 			},
 			{
-				Name:          "go-refactor",
-				Command:       filepath.Join(binPath, "mcp-server-go-refactor"),
-				Args:          []string{},
+				Name:    "go-refactor",
+				Command: filepath.Join(binPath, "mcp-server-go-refactor"),
+				Args:    []string{},
 				Env: map[string]string{
 					"HOME":        homeDir,
 					"MCP_API_URL": "http://localhost:7000/mcp",
@@ -807,7 +913,7 @@ func LoadFromViper(v *viper.Viper) (*Config, error) {
 					if name == SelfName {
 						continue // strictly never migrate the magictools orchestrator
 					}
-					
+
 					exists := false
 					for _, m := range managed {
 						if m.Name == name {
@@ -815,7 +921,7 @@ func LoadFromViper(v *viper.Viper) (*Config, error) {
 							break
 						}
 					}
-					
+
 					if !exists {
 						managed = append(managed, ServerConfig{
 							Name:          name,
@@ -921,15 +1027,15 @@ func LoadFromViper(v *viper.Viper) (*Config, error) {
 			}
 		}
 	}
-	if cfg.Intelligence.EmbeddedDimensionality <= 0 {
+	if cfg.Intelligence.EmbeddingDimensionality <= 0 {
 		switch cfg.Intelligence.EmbeddingProvider {
 		case "gemini", "openai", "voyage":
-			cfg.Intelligence.EmbeddedDimensionality = 768
+			cfg.Intelligence.EmbeddingDimensionality = 768
 		default:
 			// Ollama and all future local/self-hosted providers default to 384.
 			// Users may override to 768 for larger models (e.g., granite-embedding:278m)
-			// by setting embedded_dimensionality explicitly in config.yaml.
-			cfg.Intelligence.EmbeddedDimensionality = 384
+			// by setting embedding_dimensionality explicitly in config.yaml.
+			cfg.Intelligence.EmbeddingDimensionality = 384
 		}
 	}
 	if cfg.Intelligence.EmbeddingAPIURL == "" && cfg.Intelligence.EmbeddingProvider == "ollama" {
@@ -1057,7 +1163,6 @@ func (c *Config) GetManagedServerNames() map[string]bool {
 	return names
 }
 
-
 // serversYAML is the on-disk format for the native server registry.
 type serversYAML struct {
 	Servers []serverEntry `yaml:"servers"`
@@ -1154,7 +1259,7 @@ func SaveManagedServers(servers []ServerConfig) error {
 	yamlStr := string(data)
 	// Inject filesystem arguments comment natively before writing
 	yamlStr = strings.Replace(yamlStr, "      args:\n        - ", "      args:\n        # List of allowed filesystem paths\n        - ", 1)
-	
+
 	// Inject gomemlimit_mb comment for go servers
 	re := regexp.MustCompile(`( +)gomemlimit_mb: ([0-9]+)`)
 	yamlStr = re.ReplaceAllString(yamlStr, "${1}# This setting only applies to go mcp servers\n${1}gomemlimit_mb: ${2}")

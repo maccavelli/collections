@@ -83,13 +83,22 @@ func (h *OrchestratorHandler) QueryStandards(ctx context.Context, req *mcp.CallT
 	if e == nil || !e.VectorEnabled() {
 		if h.RecallClient != nil && h.RecallClient.RecallEnabled() {
 			standardsText := h.RecallClient.SearchStandards(ctx, input.Query, "", "", 5)
+			
+			envelope := map[string]any{
+				"metadata": map[string]any{
+					"query":  input.Query,
+					"source": "recall_fallback_bm25",
+				},
+			}
+			envJSON, _ := json.MarshalIndent(envelope, "", "  ")
+
 			if standardsText == "" {
-				return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "No specific standards matching the query were found via offline BM25 fallback natively."}}}, nil
+				return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("```json\n%s\n```\n\nNo specific standards matching the query were found via offline BM25 fallback natively.", string(envJSON))}}}, nil
 			}
 			return &mcp.CallToolResult{
 				Content: []mcp.Content{
 					&mcp.TextContent{
-						Text: fmt.Sprintf("✨ Offline Standards Memory Bank Response:\n%s\n\n(Note: Generated natively via offline Recall fallback bypassing Vector dependencies.)", standardsText),
+						Text: fmt.Sprintf("```json\n%s\n```\n\n✨ Offline Standards Memory Bank Response:\n%s\n\n(Note: Generated natively via offline Recall fallback bypassing Vector dependencies.)", string(envJSON), standardsText),
 					},
 				},
 			}, nil
@@ -105,15 +114,25 @@ func (h *OrchestratorHandler) QueryStandards(ctx context.Context, req *mcp.CallT
 		return nil, fmt.Errorf("failed semantic index bounding search: %w", err)
 	}
 
+	envelope := map[string]any{
+		"metadata": map[string]any{
+			"query":       input.Query,
+			"source":      "vector_rag",
+			"match_count": len(urns),
+			"matches":     urns,
+		},
+	}
+	envJSON, _ := json.MarshalIndent(envelope, "", "  ")
+
 	if len(urns) == 0 {
-		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "No specific standards matching the query were physically extracted dynamically natively."}}}, nil
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("```json\n%s\n```\n\nNo specific standards matching the query were physically extracted dynamically natively.", string(envJSON))}}}, nil
 	}
 
 	// Simulate document parsing logically
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{
 			&mcp.TextContent{
-				Text: fmt.Sprintf("✨ RAG Standards Memory Bank Response:\nFound %d relevant context bounds exactly matching concept structurally.\nMatched Identifiers natively: %v\n\n(Note: Full document fetching from these identifiers requires recall or direct filesystem interaction.)", len(urns), urns),
+				Text: fmt.Sprintf("```json\n%s\n```\n\n✨ RAG Standards Memory Bank Response:\nFound %d relevant context bounds exactly matching concept structurally.\nMatched Identifiers natively: %v\n\n(Note: Full document fetching from these identifiers requires recall or direct filesystem interaction.)", string(envJSON), len(urns), urns),
 			},
 		},
 	}, nil
@@ -222,9 +241,19 @@ func (h *OrchestratorHandler) AnalyzeSystemLogs(ctx context.Context, req *mcp.Ca
 	}
 
 	// Format output as Markdown code block
-	responseText := "```\n" + strings.Join(filtered, "\n") + "\n```"
+	envelope := map[string]any{
+		"metadata": map[string]any{
+			"server_id":     input.ServerID,
+			"severity":      input.Severity,
+			"lines_scanned": linesToScan,
+			"total_matches": len(filtered),
+		},
+	}
+	envJSON, _ := json.MarshalIndent(envelope, "", "  ")
+
+	responseText := fmt.Sprintf("```json\n%s\n```\n\n```\n%s\n```", string(envJSON), strings.Join(filtered, "\n"))
 	if len(filtered) == 0 {
-		responseText = "*No matching log entries found.*"
+		responseText = fmt.Sprintf("```json\n%s\n```\n\n*No matching log entries found.*", string(envJSON))
 	}
 
 	return &mcp.CallToolResult{
@@ -306,6 +335,11 @@ func (h *OrchestratorHandler) SelfCheck(ctx context.Context, req *mcp.CallToolRe
 			"boot_latency":           telemetry.MetaLatencies.BootLatency,
 		},
 		"cache": map[string]any{
+			"align_cache": map[string]any{
+				"hits":   telemetry.SearchMetrics.AlignCacheHits.Load(),
+				"misses": telemetry.SearchMetrics.AlignCacheMisses.Load(),
+				"items":  h.AlignCache.Len(),
+			},
 			"registry_cache": map[string]any{
 				"hits":   rHits,
 				"misses": rMisses,

@@ -213,15 +213,33 @@ func (si *SearchIndex) Search(queryStr string, category string, serverConstraint
 	// 1. Exact Match (TermQuery on Keyword fields) - High Boost
 	exactUrnQuery := bleve.NewTermQuery(queryStr)
 	exactUrnQuery.SetField("urn")
-	exactUrnQuery.SetBoost(10.0)
+	exactUrnQuery.SetBoost(100.0)
 
 	exactNameQuery := bleve.NewTermQuery(queryStr)
 	exactNameQuery.SetField("name")
-	exactNameQuery.SetBoost(5.0)
+	exactNameQuery.SetBoost(50.0)
 
-	// 2. Fuzzy/Match Search (BM25) — fuzziness=2 for better typo tolerance
-	matchQuery := bleve.NewMatchQuery(queryStr)
-	matchQuery.SetFuzziness(2)
+	// 2. Fuzzy/Match Search (BM25) — Dynamic fuzziness scaling for short tokens
+	matchQuery := bleve.NewBooleanQuery()
+	tokens := strings.FieldsFunc(queryStr, func(c rune) bool {
+		return !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9'))
+	})
+
+	if len(tokens) == 0 {
+		mq := bleve.NewMatchQuery(queryStr)
+		mq.SetFuzziness(1)
+		matchQuery.AddShould(mq)
+	} else {
+		for _, token := range tokens {
+			mq := bleve.NewMatchQuery(token)
+			if len(token) <= 3 {
+				mq.SetFuzziness(0)
+			} else {
+				mq.SetFuzziness(2)
+			}
+			matchQuery.AddShould(mq)
+		}
+	}
 	matchQuery.SetBoost(1.0)
 
 	// 2.5 Explicit Description Match Query
@@ -281,7 +299,7 @@ func (si *SearchIndex) Search(queryStr string, category string, serverConstraint
 	// 🚀 Server Boost: Add a Should query to boost the "magictools" server organically
 	magictoolsBoost := bleve.NewTermQuery("magictools")
 	magictoolsBoost.SetField("server")
-	magictoolsBoost.SetBoost(2.0)
+	magictoolsBoost.SetBoost(1.25)
 
 	// 🚀 Proxy Reliability Skew: Boost results mathematically functionally robust
 	highTrustMin := 0.90

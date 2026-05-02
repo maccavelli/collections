@@ -10,8 +10,8 @@ import (
 // MatchEnviron checks if a specific target entry exists in the null-terminated environment block.
 func MatchEnviron(data []byte, target string) bool {
 	// /proc/*/environ is null-byte separated
-	entries := bytes.Split(data, []byte{0})
-	for _, entry := range entries {
+	entries := bytes.SplitSeq(data, []byte{0})
+	for entry := range entries {
 		if string(entry) == target {
 			return true
 		}
@@ -21,8 +21,8 @@ func MatchEnviron(data []byte, target string) bool {
 
 // MatchEnvironPrefix checks if any entry in the null-terminated environment block starts with the given prefix.
 func MatchEnvironPrefix(data []byte, prefix string) bool {
-	entries := bytes.Split(data, []byte{0})
-	for _, entry := range entries {
+	entries := bytes.SplitSeq(data, []byte{0})
+	for entry := range entries {
 		if strings.HasPrefix(string(entry), prefix) {
 			return true
 		}

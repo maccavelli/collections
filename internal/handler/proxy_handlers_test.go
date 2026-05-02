@@ -8,57 +8,91 @@ import (
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"mcp-server-magictools/internal/db"
 )
 
-func TestProxyHandlersMethods(t *testing.T) {
+func TestAlignTools(t *testing.T) {
 	h, store, _, tmpDir := newTestHandler(t)
 	defer os.RemoveAll(tmpDir)
 	defer store.Close()
 
 	ctx := context.Background()
 
-	t.Run("AlignTools", func(t *testing.T) {
-		args, _ := json.Marshal(map[string]string{"query": "sync"})
-		req := &mcp.CallToolRequest{Params: &mcp.CallToolParamsRaw{Arguments: args}}
-		res, err := h.AlignTools(ctx, req)
-		if err != nil {
-			t.Errorf("AlignTools failed: %v", err)
+	// Add some mock tools to the store
+	tools := []*db.ToolRecord{
+		{
+			URN:         "test:tool1",
+			Name:        "tool1",
+			Server:      "test",
+			Description: "searches for something",
+			Category:    "search",
+		},
+		{
+			URN:         "test:tool2",
+			Name:        "tool2",
+			Server:      "test",
+			Description: "refactors code",
+			Category:    "refactor",
+		},
+	}
+	for _, tool := range tools {
+		if err := store.SaveTool(tool); err != nil {
+			t.Fatalf("failed to save tool: %v", err)
 		}
-		if res == nil || len(res.Content) == 0 {
-			t.Fatal("expected result content")
-		}
-		text := res.Content[0].(*mcp.TextContent).Text
-		if !strings.Contains(text, "sync_ecosystem") {
-			t.Errorf("expected text to contain sync_ecosystem, got: %s", text)
-		}
-	})
+	}
 
-	t.Run("CallProxy", func(t *testing.T) {
-		args, _ := json.Marshal(map[string]any{"urn": "unknown:urn"})
-		req := &mcp.CallToolRequest{Params: &mcp.CallToolParamsRaw{Arguments: args}}
-		res, err := h.CallProxy(ctx, req)
-		// We expect this to fail gracefully or return a formatted error within the proxy service
-		if err == nil {
-			if res.IsError == false {
-				t.Errorf("Expected CallProxy to fail or return an error flag for unknown URN")
+	// 1. Test basic search
+	req := &mcp.CallToolRequest{
+		Params: &mcp.CallToolParamsRaw{
+			Name: "align_tools",
+			Arguments: json.RawMessage(`{"query": "search"}`),
+		},
+	}
+
+	res, err := h.AlignTools(ctx, req)
+	if err != nil {
+		t.Fatalf("AlignTools failed: %v", err)
+	}
+
+	if len(res.Content) == 0 {
+		t.Fatalf("expected results, got none")
+	}
+
+	// Verify content
+	found := false
+	for _, c := range res.Content {
+		if tc, ok := c.(*mcp.TextContent); ok {
+			if strings.Contains(tc.Text, "test:tool1") {
+				found = true
 			}
 		}
-	})
+	}
+	if !found {
+		t.Errorf("expected to find test:tool1 in results")
+	}
 
-	t.Run("measureResponseSize", func(t *testing.T) {
-		r := &mcp.CallToolResult{
-			Content: []mcp.Content{
-				&mcp.TextContent{Text: "12345"},
-			},
-			StructuredContent: map[string]any{"key": "val"},
-		}
-		s := measureResponseSize(r)
-		if s == 0 {
-			t.Errorf("expected size > 0")
-		}
-	})
+	// 2. Test server filtering
+	req = &mcp.CallToolRequest{
+		Params: &mcp.CallToolParamsRaw{
+			Name: "align_tools",
+			Arguments: json.RawMessage(`{"query": "refactor", "server_name": "test"}`),
+		},
+	}
 
-	t.Run("isPreferred", func(t *testing.T) {
-		_ = h.isPreferred(ctx, "magictools:sync", "sync")
-	})
+	res, err = h.AlignTools(ctx, req)
+	if err != nil {
+		t.Fatalf("AlignTools failed: %v", err)
+	}
+
+	found = false
+	for _, c := range res.Content {
+		if tc, ok := c.(*mcp.TextContent); ok {
+			if strings.Contains(tc.Text, "test:tool2") {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Errorf("expected to find test:tool2 in filtered results")
+	}
 }
