@@ -2,6 +2,7 @@ package models
 
 import (
 	"fmt"
+	"strings"
 )
 
 // SearchResult represents a single search result from DuckDuckGo or mirrors.
@@ -38,16 +39,17 @@ type SearchResponse struct {
 }
 
 func (r SearchResponse) ToMarkdown() string {
-	res := fmt.Sprintf("# %s Search Results for '%s'\n\n", r.Data.Type, r.Data.Metadata.Query)
+	var res strings.Builder
+	res.WriteString(fmt.Sprintf("# %s Search Results for '%s'\n\n", r.Data.Type, r.Data.Metadata.Query))
 	for i, item := range r.Data.Results {
-		res += fmt.Sprintf("### %d. [%s](%s)\n", i+1, item.Title, item.URL)
+		res.WriteString(fmt.Sprintf("### %d. [%s](%s)\n", i+1, item.Title, item.URL))
 		if item.Description != "" {
-			res += fmt.Sprintf("> %s\n\n", item.Description)
+			res.WriteString(fmt.Sprintf("> %s\n\n", item.Description))
 		} else {
-			res += "\n"
+			res.WriteString("\n")
 		}
 	}
-	return res
+	return res.String()
 }
 
 // SearchResponse20 represents the Structured JSON 2.0 format for media results.
@@ -62,15 +64,16 @@ type SearchResponse20 struct {
 }
 
 func (r SearchResponse20) ToMarkdown() string {
-	res := fmt.Sprintf("# %s Media Results for '%s'\n\n", r.Data.Metadata.SearchType, r.Data.Metadata.Query)
+	var res strings.Builder
+	res.WriteString(fmt.Sprintf("# %s Media Results for '%s'\n\n", r.Data.Metadata.SearchType, r.Data.Metadata.Query))
 	for i, item := range r.Data.Results {
-		res += fmt.Sprintf("### %d. %s\n", i+1, item.Title)
+		res.WriteString(fmt.Sprintf("### %d. %s\n", i+1, item.Title))
 		if item.MediaURL != "" {
-			res += fmt.Sprintf("![%s](%s)\n", item.Title, item.MediaURL)
+			res.WriteString(fmt.Sprintf("![%s](%s)\n", item.Title, item.MediaURL))
 		}
-		res += fmt.Sprintf("[View Page](%s)\n\n", item.PageURL)
+		res.WriteString(fmt.Sprintf("[View Page](%s)\n\n", item.PageURL))
 	}
-	return res
+	return res.String()
 }
 
 // MediaResult20 represents a single result in the Structured JSON 2.0 format.
@@ -83,4 +86,3 @@ type MediaResult20 struct {
 	Publisher    string `json:"publisher,omitempty"`
 	Source       string `json:"source,omitempty"`
 }
-
