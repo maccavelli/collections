@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -124,13 +125,7 @@ func (p *GeminiProvider) DiscoverModels(ctx context.Context) ([]string, error) {
 			continue
 		}
 
-		canGenerate := false
-		for _, method := range m.SupportedGenerationMethods {
-			if method == "generateContent" {
-				canGenerate = true
-				break
-			}
-		}
+		canGenerate := slices.Contains(m.SupportedGenerationMethods, "generateContent")
 		if canGenerate {
 			candidates = append(candidates, id)
 		}
@@ -201,10 +196,7 @@ func (p *GeminiProvider) DiscoverModels(ctx context.Context) ([]string, error) {
 	}
 
 	// 2. Get up to 2 Flash
-	fLimit := 2
-	if len(finalFlash) < fLimit {
-		fLimit = len(finalFlash)
-	}
+	fLimit := min(len(finalFlash), 2)
 	output = append(output, finalFlash[:fLimit]...)
 	if len(finalFlash) > fLimit {
 		finalFlash = finalFlash[fLimit:]

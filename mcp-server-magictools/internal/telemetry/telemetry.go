@@ -28,7 +28,7 @@ var (
 // InitCSSADispatcher dynamically springs an 8-shard local background multiplexer safely mapping boundaries without UI jitter globally natively.
 func InitCSSADispatcher() {
 	onceDispatcher.Do(func() {
-		for i := 0; i < 8; i++ {
+		for i := range 8 {
 			dispatcherMap[i] = make(chan CSSAPacket, 2048) // Deep buffers handling Signal Storm limits locally cleanly.
 			go cssaWorker(i, dispatcherMap[i])
 		}
@@ -36,7 +36,7 @@ func InitCSSADispatcher() {
 }
 
 // cssaWorker dynamically streams exact states natively preventing pipeline jitter organically mapping logs natively locally.
-func cssaWorker(shardID int, ch <-chan CSSAPacket) {
+func cssaWorker(_ int, ch <-chan CSSAPacket) {
 	for packet := range ch {
 		// Base dispatcher ready for mutator hook ingestion formally via ToolID headers synchronously.
 		_ = packet

@@ -33,3 +33,13 @@ func GetActiveCascadeParent() string {
 	}
 	return ""
 }
+
+// GetActiveCascadeSource loops the active maps to find the server currently holding the execution lock natively.
+func GetActiveCascadeSource() string {
+	activeSpansMu.RLock()
+	defer activeSpansMu.RUnlock()
+	for server := range activeSpans {
+		return server
+	}
+	return "client"
+}

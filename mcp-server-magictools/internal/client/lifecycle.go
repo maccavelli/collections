@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -196,9 +197,7 @@ func (m *WarmRegistry) performConnect(ctx context.Context, s *SubServer) error {
 	command := s.Command
 	args := s.Args
 	env := make(map[string]string)
-	for k, v := range s.Env {
-		env[k] = v
-	}
+	maps.Copy(env, s.Env)
 	configHash := s.ConfigHash
 	memoryLimitMB := s.MemoryLimitMB
 	goMemLimitMB := s.GoMemLimitMB
@@ -404,10 +403,7 @@ func (m *WarmRegistry) shouldReconcile(name string) bool {
 	}
 
 	// Exponential backoff: 2^errors * 2 seconds
-	backoff := time.Duration(1<<uint(errors)) * 2 * time.Second
-	if backoff > 5*time.Minute {
-		backoff = 5 * time.Minute
-	}
+	backoff := min(time.Duration(1<<uint(errors))*2*time.Second, 5*time.Minute)
 
 	return time.Since(lastCompleted) > backoff
 }
@@ -442,10 +438,7 @@ func (m *WarmRegistry) startGuardian(ctx context.Context, srv *SubServer) {
 func (m *WarmRegistry) recoverServer(srv *SubServer) {
 	m.mu.Lock()
 	srv.BackoffLevel++
-	level := srv.BackoffLevel
-	if level > 5 {
-		level = 5
-	}
+	level := min(srv.BackoffLevel, 5)
 	delay := time.Duration(1<<level) * time.Second
 	m.mu.Unlock()
 
@@ -669,6 +662,40 @@ func (m *WarmRegistry) prepareProcessEnvironment(name string, env map[string]str
 	cmdEnv := os.Environ()
 	for k, v := range env {
 		cmdEnv = append(cmdEnv, fmt.Sprintf("%s=%s", k, v))
+	}
+
+	// Dynamically ensure GOROOT/bin and GOPATH/bin are in PATH if those variables exist
+	// in the environment. This avoids hardcoding paths and respects the user's setup.
+	var goroot, gopath string
+	pathIdx := -1
+	pathVal := ""
+
+	for i, e := range cmdEnv {
+		if strings.HasPrefix(e, "GOROOT=") {
+			goroot = strings.TrimPrefix(e, "GOROOT=")
+		} else if strings.HasPrefix(e, "GOPATH=") {
+			gopath = strings.TrimPrefix(e, "GOPATH=")
+		} else if strings.HasPrefix(e, "PATH=") {
+			pathIdx = i
+			pathVal = strings.TrimPrefix(e, "PATH=")
+		}
+	}
+
+	var pathAdditions []string
+	if goroot != "" {
+		pathAdditions = append(pathAdditions, filepath.Join(goroot, "bin"))
+	}
+	if gopath != "" {
+		pathAdditions = append(pathAdditions, filepath.Join(gopath, "bin"))
+	}
+
+	if len(pathAdditions) > 0 {
+		addStr := strings.Join(pathAdditions, string(os.PathListSeparator))
+		if pathIdx != -1 {
+			cmdEnv[pathIdx] = "PATH=" + pathVal + string(os.PathListSeparator) + addStr
+		} else {
+			cmdEnv = append(cmdEnv, "PATH="+addStr)
+		}
 	}
 
 	peerID := util.GenerateSessionID()

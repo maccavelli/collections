@@ -1,7 +1,6 @@
 package db
 
 import (
-	"context"
 	"testing"
 	"time"
 
@@ -23,8 +22,7 @@ func TestRegistryCacheMetricsAndCleaner(t *testing.T) {
 		t.Errorf("metrics mismatch: %d %d %d", hits, misses, cnt)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go c.StartCleaner(ctx, 10*time.Millisecond)
 
@@ -40,7 +38,7 @@ func TestRegistryCacheMetricsAndCleaner(t *testing.T) {
 func TestRegistryCacheEvictionGuard(t *testing.T) {
 	c := NewRegistryCache()
 	// Fill up to 2048 to trigger LRU/Size limit
-	for i := 0; i < 2049; i++ {
+	for i := range 2049 {
 		c.Set(string(rune(i)), "val", 1*time.Minute)
 	}
 
@@ -74,8 +72,7 @@ func TestResponseCache(t *testing.T) {
 		t.Errorf("metrics mismatch: %d %d %d", hits, misses, cnt)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go c.StartCleaner(ctx, 10*time.Millisecond)
 
@@ -90,7 +87,7 @@ func TestResponseCache(t *testing.T) {
 func TestResponseCacheEvictionGuard(t *testing.T) {
 	c := NewResponseCache()
 	// Fill up to 2048 to trigger LRU/Size limit
-	for i := 0; i < 2049; i++ {
+	for i := range 2049 {
 		c.Set(string(rune(i)), &mcp.CallToolResult{}, 1*time.Minute)
 	}
 

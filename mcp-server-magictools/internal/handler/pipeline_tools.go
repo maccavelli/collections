@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"mcp-server-magictools/internal/dag"
 	"mcp-server-magictools/internal/db"
+	"mcp-server-magictools/internal/intelligence"
 	"mcp-server-magictools/internal/telemetry"
 	"mcp-server-magictools/internal/vector"
 )
@@ -38,7 +40,7 @@ func (h *OrchestratorHandler) pipelineGate() (*mcp.CallToolResult, bool) {
 
 // RegisterPipelineTools registers the PM tools on the MCP server.
 func (h *OrchestratorHandler) RegisterPipelineTools(s *mcp.Server) {
-	h.addTool(s, &mcp.Tool{Name: "compose_pipeline"}, h.handleComposePipeline)
+	h.addTool(s, &mcp.Tool{Name: "execute_pipeline"}, h.handleExecutePipeline)
 	h.addTool(s, &mcp.Tool{Name: "validate_pipeline_step"}, h.handleValidatePipelineStep)
 	h.addTool(s, &mcp.Tool{Name: "cross_server_quality_gate"}, h.handleQualityGate)
 	h.addTool(s, &mcp.Tool{Name: "generate_audit_report"}, h.handleGenerateAuditReport)
@@ -46,105 +48,8 @@ func (h *OrchestratorHandler) RegisterPipelineTools(s *mcp.Server) {
 	slog.Info("pipeline tools registered", "component", "pipeline", "count", 4)
 }
 
-// ---------------------------------------------------------------------------
-// compose_pipeline handler
-// ---------------------------------------------------------------------------
-
-func (h *OrchestratorHandler) handleComposePipeline(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	if res, ok := h.pipelineGate(); !ok {
-		return res, nil
-	}
-
-	var args struct {
-		ProjectPath string   `json:"project_path"`
-		Intent      string   `json:"intent"`
-		TargetRoles []string `json:"target_roles"`
-	}
-	_ = json.Unmarshal(req.Params.Arguments, &args)
-
-	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("# Pipeline Plan for: %s\n\n", args.ProjectPath))
-	sb.WriteString(fmt.Sprintf("**Intent**: %s\n\n", args.Intent))
-
-	// Query recall for project history (used for context enrichment, NOT BM25 scoring).
-	var projectHistory string
-	if h.RecallClient != nil && h.RecallClient.RecallEnabled() {
-		projectHistory = h.RecallClient.ListSessionsByFilter(ctx, args.ProjectPath, "", "", 5)
-	}
-
-	// Query recall for relevant standards (intent-derived for precision).
-	var standards string
-	if h.RecallClient != nil && h.RecallClient.RecallEnabled() {
-		standardsQuery := args.Intent + " best practices code quality"
-		standards = h.RecallClient.SearchStandards(ctx, standardsQuery, "", "", 10)
-	}
-
-	// Build the recommended pipeline stages.
-	sb.WriteString("## Recommended Pipeline Stages\n\n")
-
-	// 🛡️ SERVER-FILTERED TOOL REGISTRY: Only brainstorm and go-refactor tools enter the DAG.
-	// Query each server directly to avoid fetching all 135+ tools and discarding most.
-	brainstormRecords, _ := h.Store.SearchTools("", "", "brainstorm", 0.0)
-	goRefactorRecords, _ := h.Store.SearchTools("", "", "go-refactor", 0.0)
-	pipelineRecords := make([]*db.ToolRecord, 0, len(brainstormRecords)+len(goRefactorRecords))
-	for _, r := range brainstormRecords {
-		if r != nil {
-			pipelineRecords = append(pipelineRecords, r)
-		}
-	}
-	for _, r := range goRefactorRecords {
-		if r != nil {
-			pipelineRecords = append(pipelineRecords, r)
-		}
-	}
-
-	intent := strings.ToLower(args.Intent)
-	stages, gatekeeperWarnings := h.executeSwarmBidding(ctx, intent, args.TargetRoles, pipelineRecords)
-
-	for i, stage := range stages {
-		roleTag := ""
-		if stage.Role != "" {
-			roleTag = fmt.Sprintf(" [%s]", stage.Role)
-		}
-		phaseTag := ""
-		if stage.Phase > 0 {
-			phaseTag = fmt.Sprintf(" (Phase %d)", stage.Phase)
-		}
-		sb.WriteString(fmt.Sprintf("%d. **%s**%s%s — %s\n", i+1, stage.ToolName, roleTag, phaseTag, stage.Purpose))
-	}
-
-	// 🛡️ SEMANTIC GATEKEEPER: Validate DAG ordering for structural anti-patterns.
-	if strictWarnings := validateDAGSemantics(stages); len(strictWarnings) > 0 {
-		gatekeeperWarnings = append(gatekeeperWarnings, strictWarnings...)
-	}
-
-	if len(gatekeeperWarnings) > 0 {
-		sb.WriteString("\n## ⚠️ Semantic Gatekeeper Warnings\n\n")
-		for _, w := range gatekeeperWarnings {
-			sb.WriteString("- " + w + "\n")
-		}
-		sb.WriteString("\n")
-	}
-
-	if projectHistory != "" {
-		sb.WriteString("\n## Project History (from Recall)\n")
-		sb.WriteString(projectHistory + "\n")
-	}
-
-	if standards != "" {
-		sb.WriteString("\n## Applicable Standards (from Recall)\n")
-		sb.WriteString(standards + "\n")
-	}
-
-	sb.WriteString("\n## Execution Notes\n")
-	sb.WriteString("- Execute stages sequentially — each stage depends on the previous.\n")
-	sb.WriteString("- Phase ordering: BOOTSTRAP → ANALYSIS → ADVERSARIAL → PROPOSAL → CRITIQUE → SYNTHESIS → PLANNER → MUTATOR → VALIDATION → TERMINAL.\n")
-	sb.WriteString("- Only MUTATOR-role tools may write to the filesystem.\n")
-
-	return &mcp.CallToolResult{
-		Content: []mcp.Content{&mcp.TextContent{Text: sb.String()}},
-	}, nil
-}
+// handleComposePipeline has been merged into handleExecutePipeline.
+// Use execute_pipeline with dry_run=true for plan preview.
 
 // PipelineStep represents a single recommended stage natively mapping tight Go bounds.
 type PipelineStep struct {
@@ -166,13 +71,15 @@ type scoredTool struct {
 // executeSwarmBidding uses intent-weighted tri-factor scoring with phase sequencing
 // to compose a pipeline DAG from go-refactor and brainstorm tools only.
 //
-// Scoring formula: S_final = (S_engine × wEngine) + (S_synergy × wSynergy) + (R_role × wRole)
+// Scoring formula: S_final = ((S_engine × wEngine) + (S_synergy × wSynergy) + (R_role × wRole) + (S_intent × wIntent)) × failurePenalty
 // where S_engine = (α × cosine) + ((1-α) × bm25) for hybrid mode, or pure bm25 for offline mode.
+// S_intent is the Option 3 intent→tool outcome score from real-time synergy tracking.
+// failurePenalty is the Option 6 contrastive failure anchor proximity multiplier.
 func (h *OrchestratorHandler) executeSwarmBidding(ctx context.Context, intent string, targetRoles []string, pipelineTools []*db.ToolRecord) ([]PipelineStep, []string) {
 	var stages []PipelineStep
 
-	// 1. Classify intent for role boosting
-	intentType := classifyIntent(intent)
+	// 1. Classify intent for role boosting (blended multi-category)
+	intentWeights := classifyIntentWeights(intent)
 
 	// 1b. GHOST INDEX PROBE: Extract mathematically validated historical DAG arrays locally
 	now := time.Now().Unix()
@@ -208,42 +115,74 @@ func (h *OrchestratorHandler) executeSwarmBidding(ctx context.Context, intent st
 				vectorScores[r.Key] = r.Score
 			}
 
-			// Direct score fusion: α*cosine + (1-α)*bm25
-			// Both engines produce [0,1] normalized scores, so direct combination
-			// preserves full discriminative spread unlike rank-based RRF.
-			alpha := 0.6
-			if h.Config != nil && h.Config.ScoreFusionAlpha > 0 {
-				alpha = h.Config.ScoreFusionAlpha
+			type scorePair struct {
+				urn   string
+				score float64
 			}
 
-			allURNs := make(map[string]bool)
+			var bPairs []scorePair
+			for u, s := range bm25Scores {
+				bPairs = append(bPairs, scorePair{u, s})
+			}
+			for i := 1; i < len(bPairs); i++ {
+				for j := i; j > 0 && bPairs[j].score > bPairs[j-1].score; j-- {
+					bPairs[j], bPairs[j-1] = bPairs[j-1], bPairs[j]
+				}
+			}
+
+			var hPairs []scorePair
+			for u, s := range vectorScores {
+				hPairs = append(hPairs, scorePair{u, s})
+			}
+			for i := 1; i < len(hPairs); i++ {
+				for j := i; j > 0 && hPairs[j].score > hPairs[j-1].score; j-- {
+					hPairs[j], hPairs[j-1] = hPairs[j-1], hPairs[j]
+				}
+			}
+
+			bRank := make(map[string]int)
+			for i, pair := range bPairs {
+				bRank[pair.urn] = i + 1
+			}
+
+			hRank := make(map[string]int)
+			for i, pair := range hPairs {
+				hRank[pair.urn] = i + 1
+			}
+
+			allURNs := make(map[string]struct{})
 			for urn := range bm25Scores {
-				allURNs[urn] = true
+				allURNs[urn] = struct{}{}
 			}
 			for urn := range vectorScores {
-				allURNs[urn] = true
+				allURNs[urn] = struct{}{}
 			}
 
 			var vectorDominant, lexicalDominant int64
+			const k = 60.0
 			for urn := range allURNs {
-				cosine, hasVector := vectorScores[urn]
-				bm25, hasBM25 := bm25Scores[urn]
+				var fused float64
+				hasVec := false
+				hasBM25 := false
 
-				switch {
-				case hasVector && hasBM25:
-					scores[urn] = alpha*cosine + (1-alpha)*bm25
-				case hasVector:
-					scores[urn] = cosine * alpha // Natural penalty: no BM25 confirmation
-				case hasBM25:
-					scores[urn] = bm25 * (1 - alpha) // Natural penalty: no vector confirmation
+				if r, ok := hRank[urn]; ok {
+					fused += 1.0 / (k + float64(r))
+					hasVec = true
+				}
+				if r, ok := bRank[urn]; ok {
+					fused += 1.0 / (k + float64(r))
+					hasBM25 = true
 				}
 
-				// Telemetry: track which engine contributed more
-				if cosine > bm25 {
-					vectorDominant++
-				} else if bm25 > cosine {
-					lexicalDominant++
+				if hasVec && hasBM25 {
+					if vectorScores[urn] > bm25Scores[urn] {
+						vectorDominant++
+					} else {
+						lexicalDominant++
+					}
 				}
+				// 🛡️ ISOLATED RRF SCALING: Multiply by 31.0 to normalize max theoretical score (1/61 + 1/61) * 31 ≈ 1.0
+				scores[urn] = fused * 31.0
 			}
 			telemetry.SearchMetrics.VectorWins.Add(vectorDominant)
 			telemetry.SearchMetrics.LexicalWins.Add(lexicalDominant)
@@ -262,8 +201,13 @@ func (h *OrchestratorHandler) executeSwarmBidding(ctx context.Context, intent st
 		roleMap[strings.ToUpper(tr)] = true
 	}
 
-	// 3. Intent-Weighted Tri-Factor Scoring
+	// 3. Intent-Weighted Tri-Factor Scoring with Server Diversity
 	var candidates []scoredTool
+
+	// Server diversity tracking: count how many tools from each server
+	// have scored above a competitive threshold so far.
+	serverCounts := make(map[string]int)
+	var totalCandidates int
 
 	for _, t := range pipelineTools {
 		if t == nil {
@@ -292,17 +236,18 @@ func (h *OrchestratorHandler) executeSwarmBidding(ctx context.Context, intent st
 			const halfLifeHours = 72.0
 			sSynergy = math.Exp(-0.693 * ageHours / halfLifeHours)
 		} else if _, ok := ghostMap[t.URN]; ok {
-			// Ghost entry exists but has no timestamp (pre-decay era) — use flat score
-			sSynergy = 1.0
+			// Ghost entry exists but has no timestamp (pre-decay era) — use strict neutral base
+			sSynergy = 0.1
 		}
 
-		// R_role: Intent-Role alignment boost (+1.0 if aligned, 0.0 otherwise)
-		rRole := computeRoleBoost(t.Role, intentType)
+		// R_role: Intent-Role alignment boost (blended across matched categories)
+		rRole := computeRoleBoostBlended(t.Role, intentWeights)
 
-		// RRF Biases securely hooked dynamically explicitly via local Config
-		biasVector := 0.5
-		biasSynergy := 0.2
-		biasRole := 0.3
+		// RRF Biases — rebalanced to reduce engine dominance and amplify
+		// structural role alignment. Old: 0.50/0.20/0.30. New: 0.40/0.15/0.35.
+		biasVector := 0.40
+		biasSynergy := 0.15
+		biasRole := 0.35
 		if h.Config != nil {
 			biasVector = h.Config.SynthesisBiasVector
 			biasSynergy = h.Config.SynthesisBiasSynergy
@@ -312,7 +257,50 @@ func (h *OrchestratorHandler) executeSwarmBidding(ctx context.Context, intent st
 		// Tri-factor scoring: engine × wEngine + synergy × wSynergy + role × wRole
 		sFinal := (sEngine * biasVector) + (sSynergy * biasSynergy) + (rRole * biasRole)
 
+		// ── Option 3: Intent-Keyed Outcome Scoring (4th factor) ──
+		// Boost or penalize based on historical intent→tool success rate.
+		sIntent := intelligence.GetIntentToolScore(h.Store, intent, t.URN)
+		if sIntent > 0 {
+			// Weight intent score at 10% of total — enough to influence, not dominate.
+			sFinal += sIntent * 0.10
+		}
+
+		// ── Option 6: Contrastive Failure Anchor Penalty ──
+		// Apply multiplicative penalty if this tool has failed for similar intents.
+		failurePenalty := intelligence.CheckFailureProximity(ctx, h.Store, intent, t.URN)
+		sFinal *= failurePenalty
+
+		// ── Negative Trigger Filtering ──
+		// If the tool's NegativeTriggers contain tokens matching the intent,
+		// apply a 0.5 multiplicative penalty. This provides a feedback
+		// mechanism — poor tool selections can be corrected by adding negative
+		// triggers without code changes.
+		if len(t.NegativeTriggers) > 0 {
+			normalizedIntent := strings.ToLower(intent)
+			for _, nt := range t.NegativeTriggers {
+				if strings.Contains(normalizedIntent, strings.ToLower(nt)) {
+					sFinal *= 0.5
+					break
+				}
+			}
+		}
+
+		// ── Server Diversity Multiplier ──
+		// Prevent single-server domination. If a server already contributes
+		// >50% of candidates, dampen new tools from that server. If <20%,
+		// boost to encourage cross-server representation.
+		if totalCandidates > 2 {
+			serverRatio := float64(serverCounts[t.Server]) / float64(totalCandidates)
+			if serverRatio > 0.50 {
+				sFinal *= 0.85 // Dampen over-represented server
+			} else if serverRatio < 0.20 {
+				sFinal *= 1.15 // Boost under-represented server
+			}
+		}
+
 		candidates = append(candidates, scoredTool{record: t, finalScore: sFinal})
+		serverCounts[t.Server]++
+		totalCandidates++
 	}
 
 	// 4. Dynamic Thresholding — adaptive stddev-based threshold
@@ -382,6 +370,85 @@ func (h *OrchestratorHandler) executeSwarmBidding(ctx context.Context, intent st
 		}
 	}
 
+	// 🛡️ ROLE PRESERVATION GUARANTEE (Swarm Bidding Starvation Fix)
+	// If the pipeline allows PLANNER or SYNTHESIZER roles, ensure ALL
+	// tools of these roles survive the median absolute deviation threshold to guarantee a complete DAG natively.
+	if len(roleMap) == 0 || roleMap["PLANNER"] || roleMap["SYNTHESIZER"] || roleMap["REPORTING"] {
+		slog.Info(fmt.Sprintf("DEBUG: candidates length: %d", len(candidates)))
+
+		injectIfMissing := func(best *scoredTool) {
+			if best == nil {
+				return
+			}
+			exists := false
+			for _, q := range qualified {
+				if q.record.URN == best.record.URN {
+					exists = true
+					break
+				}
+			}
+			if !exists {
+				// Inject with threshold bounds to confidently survive later phase-role pruning
+				clone := *best
+				clone.finalScore = threshold + 0.01
+				qualified = append(qualified, clone)
+				slog.Info(fmt.Sprintf("DEBUG: Injected %s into qualified with finalScore %f", best.record.URN, clone.finalScore))
+			} else {
+				slog.Info(fmt.Sprintf("DEBUG: %s is already in qualified", best.record.URN))
+			}
+		}
+
+		for i := range candidates {
+			c := &candidates[i]
+			if c.record.Role == "PLANNER" || c.record.Role == "SYNTHESIZER" || c.record.Role == "REPORTING" {
+				slog.Info(fmt.Sprintf("DEBUG: Preserving Role Tool: %s, Role: %s, Score: %f", c.record.URN, c.record.Role, c.finalScore))
+				injectIfMissing(c)
+			}
+		}
+	}
+
+	// 🛡️ PHASE COVERAGE GAP ANALYSIS
+	// A well-formed pipeline needs tools across multiple phases. If the MAD
+	// threshold eliminated all tools from a structurally necessary phase, find
+	// the best candidate from that phase and inject it. This is dynamic — it
+	// doesn't specify WHICH tools, just ensures structural phase coverage.
+	{
+		coveredPhases := make(map[int]bool)
+		qualifiedSet := make(map[string]bool)
+		for _, q := range qualified {
+			coveredPhases[q.record.Phase] = true
+			qualifiedSet[q.record.URN] = true
+		}
+
+		// Check phases 0-5 for gaps. For each missing phase, inject the
+		// highest-scoring unqualified candidate from that phase.
+		for phase := 0; phase <= 5; phase++ {
+			if coveredPhases[phase] {
+				continue
+			}
+			var best *scoredTool
+			for i := range candidates {
+				c := &candidates[i]
+				if c.record.Phase == phase && !qualifiedSet[c.record.URN] {
+					if best == nil || c.finalScore > best.finalScore {
+						best = c
+					}
+				}
+			}
+			if best != nil {
+				clone := *best
+				clone.finalScore = threshold + 0.01
+				qualified = append(qualified, clone)
+				qualifiedSet[clone.record.URN] = true
+				slog.Info("swarm_bidding: phase coverage gap filled",
+					"phase", phase,
+					"urn", clone.record.URN,
+					"role", clone.record.Role,
+				)
+			}
+		}
+	}
+
 	// 🛡️ OPTIMIZATION 1: Adjacency Thresholds (Synergy Injection)
 	// If a RoleMutator triggers, dynamically inject critique tools from Brainstorm to break Phase isolation
 	// and eliminate mathematical Intent starvation.
@@ -426,9 +493,9 @@ func (h *OrchestratorHandler) executeSwarmBidding(ctx context.Context, intent st
 		}
 	}
 
-	// 🛡️ PHASE-ROLE CLUSTER PRUNING: Strict singleton mapping. Limit to exactly 1 tool per (phase, role) group natively.
+	// 🛡️ PHASE-ROLE CLUSTER PRUNING: Strict mapping. Limit to 2 tools per (phase, role) group natively.
 	// This prevents pathological clustering and natively shrinks pipeline steps.
-	qualified = prunePhaseRoleClusters(qualified, 1)
+	qualified = prunePhaseRoleClusters(qualified, 3)
 
 	// 6. Compose final stages with phase-enriched metadata
 	for _, q := range qualified {
@@ -446,68 +513,96 @@ func (h *OrchestratorHandler) executeSwarmBidding(ctx context.Context, intent st
 	}
 
 	// 🛡️ Socratic Option B Anchor Resolver (Dynamic DAG Generation)
-	stages = resolveDynamicDAG(stages, pipelineTools)
+	stages = resolveDynamicDAG(stages, pipelineTools, intent)
 
 	// 🛡️ DFS Topological Mapping: Kahn's Gatekeeper Algorithm natively replacing SliceStable flaws.
 	stages, warnings := topologicalSort(stages, pipelineTools)
 
-	stages = append(stages, PipelineStep{
-		ToolName: "magictools:generate_audit_report",
-		Role:     "SYNTHESIZER",
-		Phase:    8,
-		Purpose:  "Generate git diff and formal markdown compliance report",
-	})
-
 	// 🛡️ Mutual Exclusivity Enclaves: Prune colliding analyzers internally
 	stages = enforceExclusivityEnclaves(stages)
-
-	// 🛡️ Socratic Markdown Injector
-	// Determine natively if the Aporia Engine or Suggest Fixes are active mapped tools
-	hasSocraticEngine := false
-	for _, s := range stages {
-		if strings.Contains(s.ToolName, "aporia_engine") || strings.Contains(s.ToolName, "suggest_fixes") {
-			hasSocraticEngine = true
-			break
-		}
-	}
-
-	if hasSocraticEngine {
-		// Organically build the Markdown list logic traces so the LLM evaluates the JSON telemetry
-		stages = append(stages, PipelineStep{
-			ToolName: "magictools:cross_server_quality_gate",
-			Role:     "GATEKEEPER",
-			Phase:    7,
-			Purpose:  "Verify mathematical standards, Brainstorm approvals, and prior analyses before allowing file system mutation natively.",
-		})
-		stages = append(stages, PipelineStep{
-			ToolName: "go-refactor:apply_vetted_edit",
-			Role:     "MUTATOR",
-			Phase:    8,
-			Purpose:  "CONDITIONAL GATEKEEPER: Execute MUTATOR natively ONLY IF previous Socratic node emitted ADOPT or SUCCESS payload logic.",
-		})
-		stages = append(stages, PipelineStep{
-			ToolName: "go-refactor:go_test_validation",
-			Role:     "VALIDATOR",
-			Phase:    9,
-			Purpose:  "CONDITIONAL GATEKEEPER: Run automatically verifying structural test constraints post-mutation natively.",
-		})
-		stages = append(stages, PipelineStep{
-			ToolName: "magictools:validate_pipeline_step",
-			Role:     "VALIDATOR",
-			Phase:    10,
-			Purpose:  "Scan execution outputs natively for fatal panics, semantic degradation, or structural test failures.",
-		})
-	}
 
 	return stages, warnings
 }
 
 // resolveDynamicDAG continuously walks the explicit Requires/Triggers constraints provided by local MCP Sub-Servers.
 // Recursively extracts properties ensuring no dependency limit violates pure topology limits physically tracking graph logic dynamically.
-func resolveDynamicDAG(stages []PipelineStep, pipelineTools []*db.ToolRecord) []PipelineStep {
+func resolveDynamicDAG(stages []PipelineStep, pipelineTools []*db.ToolRecord, intent string) []PipelineStep {
 	registry := make(map[string]*db.ToolRecord)
 	for _, t := range pipelineTools {
 		registry[t.URN] = t
+	}
+
+	// 🛡️ ATOMIC SOCRATIC TRIFECTA ENCLAVE
+	// If the intent asks to improve code, or if any trifecta member is present, ensure ALL THREE are injected.
+	trifectaURNs := []string{
+		"brainstorm:thesis_architect",
+		"brainstorm:antithesis_skeptic",
+		"brainstorm:aporia_engine",
+	}
+
+	intentLower := strings.ToLower(intent)
+	needsTrifecta := strings.Contains(intentLower, "improve") || strings.Contains(intentLower, "evaluate")
+
+	if !needsTrifecta {
+		for _, s := range stages {
+			if slices.Contains(trifectaURNs, s.ToolName) {
+				needsTrifecta = true
+			}
+			if needsTrifecta {
+				break
+			}
+		}
+	}
+
+	if needsTrifecta {
+		selected := make(map[string]bool)
+		for _, s := range stages {
+			selected[s.ToolName] = true
+		}
+		for _, urn := range trifectaURNs {
+			if !selected[urn] {
+				if target, ok := registry[urn]; ok {
+					stages = append(stages, PipelineStep{
+						ToolName:       target.URN,
+						Role:           target.Role,
+						Phase:          target.Phase,
+						Purpose:        "Atomic Socratic Trifecta Enclave: Automatically bound sequentially.",
+						InputContract:  target.InputContract,
+						OutputContract: target.OutputContract,
+					})
+					selected[urn] = true
+				}
+			}
+		}
+	}
+
+	// 🛡️ MANDATORY PLANNER INJECTION
+	// If the intent requires mutation (refactor, fix, optimize, etc.), ensure at
+	// least one PLANNER tool is in the DAG so a concrete implementation plan is
+	// generated before autonomous MUTATOR injection.
+	if intentRequiresMutation(intent) {
+		hasPLANNER := false
+		currentSelected := make(map[string]bool)
+		for _, s := range stages {
+			currentSelected[s.ToolName] = true
+			if s.Role == "PLANNER" {
+				hasPLANNER = true
+			}
+		}
+		if !hasPLANNER {
+			plannerURN := "go-refactor:generate_implementation_plan"
+			if target, ok := registry[plannerURN]; ok && !currentSelected[plannerURN] {
+				stages = append(stages, PipelineStep{
+					ToolName:       target.URN,
+					Role:           target.Role,
+					Phase:          target.Phase,
+					Purpose:        "Mandatory PLANNER Injection: Ensures plan generation before autonomous MUTATOR injection.",
+					InputContract:  target.InputContract,
+					OutputContract: target.OutputContract,
+				})
+				slog.Info("resolveDynamicDAG: mandatory PLANNER injected", "urn", plannerURN)
+			}
+		}
 	}
 
 	for {
@@ -551,6 +646,32 @@ func resolveDynamicDAG(stages []PipelineStep, pipelineTools []*db.ToolRecord) []
 							addedNewNode = true
 						}
 					}
+				}
+			}
+		}
+
+		// 🛡️ REVERSE-TOPOLOGY INJECTION: Interceptor mapping natively overriding starvation flaws.
+		for _, rec := range pipelineTools {
+			if selected[rec.URN] {
+				continue
+			}
+			// Only orchestrator firewalls, synthesizers, and validators organically pull themselves in
+			if rec.Server != "magictools" {
+				continue
+			}
+			for _, req := range rec.Requires {
+				if selected[req] {
+					stages = append(stages, PipelineStep{
+						ToolName:       rec.URN,
+						Role:           rec.Role,
+						Phase:          rec.Phase,
+						Purpose:        fmt.Sprintf("Dynamic DAG Interceptor: Automatically bound to required node %s natively.", req),
+						InputContract:  rec.InputContract,
+						OutputContract: rec.OutputContract,
+					})
+					selected[rec.URN] = true
+					addedNewNode = true
+					break
 				}
 			}
 		}
@@ -656,8 +777,7 @@ func topologicalSort(stages []PipelineStep, pipelineTools []*db.ToolRecord) ([]P
 
 func getOfflineBM25Scores(intent string, pipelineTools []*db.ToolRecord) map[string]float64 {
 	pruned := pruneIntent(intent)
-	scorer := dag.NewBM25Scorer(pipelineTools)
-	return scorer.Score(pruned)
+	return dag.ScoreGroupedByServer(pruned, pipelineTools)
 }
 
 // pruneIntent mathematically strips grammatical buzzwords strictly guaranteeing dense token scoring matching natively structurally.
@@ -718,44 +838,66 @@ func prunePhaseRoleClusters(tools []scoredTool, maxPerGroup int) []scoredTool {
 	return result
 }
 
-// classifyIntent determines the dominant intent category from the user's request.
-// Returns one of: "audit", "refactor", "plan"
-func classifyIntent(intent string) string {
-	intent = strings.ToLower(intent)
+// classifyIntentWeights determines proportional intent category weights from
+// the user's request. Instead of a single winner, returns normalized weights
+// across all matching categories. This eliminates cliff-edge instability where
+// "evaluate and refactor" vs "refactor and evaluate" would flip the entire
+// role boost table.
+func classifyIntentWeights(intent string) map[string]float64 {
+	lower := strings.ToLower(intent)
 
 	auditSignals := []string{"audit", "analyze", "review", "inspect", "assess", "evaluate", "check", "scan", "trace"}
 	refactorSignals := []string{"refactor", "fix", "modernize", "optimize", "clean", "prune", "migrate", "upgrade"}
 	planSignals := []string{"plan", "design", "architect", "propose", "strategy", "blueprint", "feature"}
 
-	auditScore, refactorScore, planScore := 0, 0, 0
+	weights := map[string]float64{"audit": 0, "refactor": 0, "plan": 0}
 	for _, s := range auditSignals {
-		if strings.Contains(intent, s) {
-			auditScore++
+		if strings.Contains(lower, s) {
+			weights["audit"]++
 		}
 	}
 	for _, s := range refactorSignals {
-		if strings.Contains(intent, s) {
-			refactorScore++
+		if strings.Contains(lower, s) {
+			weights["refactor"]++
 		}
 	}
 	for _, s := range planSignals {
-		if strings.Contains(intent, s) {
-			planScore++
+		if strings.Contains(lower, s) {
+			weights["plan"]++
 		}
 	}
 
-	if refactorScore >= auditScore && refactorScore >= planScore {
-		return "refactor"
+	// Normalize to proportions [0,1]
+	total := weights["audit"] + weights["refactor"] + weights["plan"]
+	if total > 0 {
+		for k := range weights {
+			weights[k] /= total
+		}
+	} else {
+		// No signals matched — default to audit (analysis-only)
+		weights["audit"] = 1.0
 	}
-	if planScore >= auditScore {
-		return "plan"
-	}
-	return "audit"
+
+	return weights
 }
 
-// computeRoleBoost returns a graduated boost based on Role-Intent alignment.
-// Uses a 4-level gradient instead of binary 0/1 to prevent cliff-edge scoring.
-func computeRoleBoost(role, intentType string) float64 {
+// computeRoleBoostBlended returns a weighted role boost blended across all
+// matched intent categories. For "evaluate and refactor" (audit=0.5, refactor=0.5):
+//
+//	ANALYZER = (1.0 × 0.5) + (0.75 × 0.5) = 0.875
+//	CRITIC   = (0.7 × 0.5) + (0.5 × 0.5)  = 0.60
+//	MUTATOR  = (0.2 × 0.5) + (1.0 × 0.5)  = 0.60
+func computeRoleBoostBlended(role string, weights map[string]float64) float64 {
+	boost := 0.0
+	for intentType, weight := range weights {
+		boost += lookupRoleBoost(role, intentType) * weight
+	}
+	return boost
+}
+
+// lookupRoleBoost returns the single-category role boost value.
+// This is the lookup table used by computeRoleBoostBlended.
+func lookupRoleBoost(role, intentType string) float64 {
 	switch intentType {
 	case "audit":
 		switch role {
@@ -765,6 +907,8 @@ func computeRoleBoost(role, intentType string) float64 {
 			return 0.7
 		case "SYNTHESIZER":
 			return 0.4
+		case "PLANNER":
+			return 0.3
 		case "MUTATOR":
 			return 0.2
 		}
@@ -774,6 +918,8 @@ func computeRoleBoost(role, intentType string) float64 {
 			return 1.0
 		case "ANALYZER":
 			return 0.75
+		case "PLANNER":
+			return 0.7
 		case "CRITIC":
 			return 0.5
 		case "SYNTHESIZER":
@@ -1026,4 +1172,91 @@ func (h *OrchestratorHandler) handleQualityGate(ctx context.Context, req *mcp.Ca
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{&mcp.TextContent{Text: sb.String()}},
 	}, nil
+}
+
+// trifectaURNs lists the Socratic Trifecta members that must never be
+// amputated by the scope cap.
+var trifectaURNs = map[string]bool{
+	"brainstorm:thesis_architect":   true,
+	"brainstorm:antithesis_skeptic": true,
+	"brainstorm:aporia_engine":      true,
+}
+
+// smartCap applies a role-aware cap that protects structural guarantees:
+//  1. Sole representatives of a role are unconditionally preserved.
+//  2. Trifecta members are unconditionally preserved.
+//  3. Excess is trimmed from the most over-represented role first (by count).
+//
+// This replaces the naive stages[:maxTools] truncation that blindly amputated
+// critical pipeline members landing past the scope cut.
+func smartCap(stages []PipelineStep, maxTools int) []PipelineStep {
+	if len(stages) <= maxTools {
+		return stages
+	}
+
+	// Phase 1: Identify protected stages.
+	roleCounts := make(map[string]int)
+	for _, s := range stages {
+		roleCounts[s.Role]++
+	}
+
+	protected := make(map[int]bool) // index → is protected
+	for i, s := range stages {
+		// Protect Trifecta members unconditionally.
+		if trifectaURNs[s.ToolName] {
+			protected[i] = true
+			continue
+		}
+		// Protect sole role representatives.
+		if roleCounts[s.Role] == 1 {
+			protected[i] = true
+		}
+	}
+
+	// Phase 2: Trim unprotected stages from the most over-represented role.
+	excess := len(stages) - maxTools
+	for excess > 0 {
+		// Find the most over-represented role (by unprotected count).
+		roleUnprotected := make(map[string]int)
+		for i, s := range stages {
+			if !protected[i] {
+				roleUnprotected[s.Role]++
+			}
+		}
+
+		// Find the role with the most unprotected members.
+		var trimRole string
+		trimMax := 0
+		for role, count := range roleUnprotected {
+			if count > trimMax {
+				trimMax = count
+				trimRole = role
+			}
+		}
+		if trimMax == 0 {
+			break // All remaining are protected — cannot trim further.
+		}
+
+		// Remove the LAST unprotected member of the most over-represented role
+		// (last = lowest priority since stages are sorted by score descending).
+		for i := len(stages) - 1; i >= 0; i-- {
+			if stages[i].Role == trimRole && !protected[i] {
+				stages = append(stages[:i], stages[i+1:]...)
+				// Re-index protected map after removal.
+				newProtected := make(map[int]bool)
+				for k := range protected {
+					if k < i {
+						newProtected[k] = true
+					} else if k > i {
+						newProtected[k-1] = true
+					}
+				}
+				protected = newProtected
+				excess--
+				break
+			}
+		}
+	}
+
+	return stages
 }

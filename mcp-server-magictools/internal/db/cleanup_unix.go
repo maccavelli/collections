@@ -84,7 +84,7 @@ func cleanupStaleProcess(path string) error {
 					slog.Warn("Failed to send SIGKILL to stale instance", "pid", pid, "error", err)
 				}
 				// 🛡️ CRITICAL: Wait for the OS to actually kill the process and release file locks
-				for i := 0; i < 10; i++ {
+				for range 10 {
 					time.Sleep(100 * time.Millisecond)
 					if err := process.Signal(syscall.Signal(0)); err != nil {
 						slog.Info("Stale instance successfully killed", "pid", pid)

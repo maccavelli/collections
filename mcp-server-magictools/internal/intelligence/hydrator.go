@@ -48,9 +48,23 @@ func RunSweep(ctx context.Context, store *db.Store, cfg *config.Config, provider
 	var hnswBackfill []*db.ToolRecord
 
 	// 🛡️ OPTIMISTIC SKIP: If no tools have been marked pending since last sweep, skip the full scan.
+	// EXCEPTION: When the vector engine is online, always allow the scan if the HNSW graph
+	// is missing tools. This catches the case where tools were hydrated in BadgerDB (intel
+	// status = "hydrated") but never embedded in the HNSW graph (e.g., after expanding
+	// universal hydration to all sub-servers).
 	e := vector.GetEngine()
 	vectorMissing := e != nil && e.VectorEnabled() && e.RequiresHydration()
-	if store.PendingHydrations.Load() == 0 && !vectorMissing {
+
+	// 🛡️ HNSW DELTA DETECTION: Even if the graph isn't empty, it may be incomplete.
+	// Compare HNSW graph size against the Bleve index tool count to detect missing tools.
+	hnswIncomplete := false
+	if !vectorMissing && e != nil && e.VectorEnabled() {
+		if expectedCount, err := store.Index.DocCount(); err == nil && uint64(e.Len()) < expectedCount {
+			hnswIncomplete = true
+		}
+	}
+
+	if store.PendingHydrations.Load() == 0 && !vectorMissing && !hnswIncomplete {
 		return false
 	}
 
@@ -179,7 +193,7 @@ func RunSweep(ctx context.Context, store *db.Store, cfg *config.Config, provider
 				case "call_proxy":
 					intents = []string{"execute tool", "run", "invoke", "proxy call"}
 					tokens = []string{"execute", "dispatch", "proxy", "run"}
-				case "compose_pipeline":
+				case "execute_pipeline":
 					intents = []string{"DAG", "pipeline", "execution plan", "analysis graph"}
 					tokens = []string{"DAG", "pipeline", "brainstorm", "go-refactor", "sequence"}
 				case "sync_ecosystem":
@@ -310,8 +324,8 @@ func updateToolStatus(store *db.Store, tool *db.ToolRecord, status string) {
 }
 
 // hydrateVectorGraph populates the HNSW vector index with tool descriptions
-// from brainstorm and go-refactor servers. This runs sequentially after the
-// LLM sweep completes to prevent thundering herd API calls.
+// from all sub-servers. This runs sequentially after the LLM sweep completes
+// to prevent thundering herd API calls.
 func hydrateVectorGraph(ctx context.Context, tools []*db.ToolRecord) {
 	e := vector.GetEngine()
 	if e == nil || !e.VectorEnabled() {
@@ -326,9 +340,7 @@ func hydrateVectorGraph(ctx context.Context, tools []*db.ToolRecord) {
 		if tool == nil {
 			continue
 		}
-		if tool.Server != "brainstorm" && tool.Server != "go-refactor" {
-			continue
-		}
+
 		// 🛡️ PANIC GUARD: The HNSW library panics with "node not added"
 		// on duplicate key insertion. Catch per-tool to prevent one bad
 		// node from aborting the entire vector hydration batch.
@@ -666,7 +678,7 @@ func MineRecallPatterns(ctx context.Context, rc RecallMiner, store *db.Store) {
 					if s, ok := contentObj["stage"].(string); ok {
 						stageName = s
 					}
-					if stageName == "compose_pipeline" {
+					if stageName == "execute_pipeline" {
 						if i, ok := contentObj["intent"].(string); ok {
 							intent = i
 						}
@@ -679,8 +691,8 @@ func MineRecallPatterns(ctx context.Context, rc RecallMiner, store *db.Store) {
 				if tags, ok := entry["tags"].([]any); ok {
 					for _, tag := range tags {
 						tagStr, _ := tag.(string)
-						if strings.HasPrefix(tagStr, "trace:") {
-							candidate := strings.TrimPrefix(tagStr, "trace:")
+						if after, ok0 := strings.CutPrefix(tagStr, "trace:"); ok0 {
+							candidate := after
 							if candidate != "auto_publish" && candidate != "async_push" {
 								stageName = candidate
 							}
@@ -703,7 +715,7 @@ func MineRecallPatterns(ctx context.Context, rc RecallMiner, store *db.Store) {
 				break // Session had a failure, skip entirely
 			}
 
-			if stageName != "" && stageName != "compose_pipeline" && stageName != "generate_audit_report" {
+			if stageName != "" && stageName != "execute_pipeline" && stageName != "generate_audit_report" {
 				dagURNs = append(dagURNs, stageName)
 			}
 		}
@@ -776,8 +788,8 @@ func CalibrateFromRecall(ctx context.Context, rc RecallMiner, store *db.Store) {
 			isSuccess := true
 			for _, tag := range tags {
 				tagStr, _ := tag.(string)
-				if strings.HasPrefix(tagStr, "trace:") {
-					candidate := strings.TrimPrefix(tagStr, "trace:")
+				if after, ok0 := strings.CutPrefix(tagStr, "trace:"); ok0 {
+					candidate := after
 					if candidate != "auto_publish" && candidate != "async_push" {
 						toolURN = serverID + ":" + candidate
 					}

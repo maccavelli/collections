@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -72,13 +73,7 @@ func (m *WarmRegistry) PruneOrphans() {
 			continue
 		}
 
-		isOrphan := false
-		for _, e := range env {
-			if e == EnvManaged+"="+EnvManagedValue {
-				isOrphan = true
-				break
-			}
-		}
+		isOrphan := slices.Contains(env, EnvManaged+"="+EnvManagedValue)
 
 		if isOrphan {
 			exeName, _ := p.Exe()
@@ -169,12 +164,9 @@ func (m *WarmRegistry) lookupSystemProcesses(_ context.Context, name, command st
 		}
 
 		found := false
-		for _, e := range env {
-			if e == targetStamp {
-				toCheck[int(pid)] = true
-				found = true
-				break
-			}
+		if slices.Contains(env, targetStamp) {
+			toCheck[int(pid)] = true
+			found = true
 		}
 
 		if found {

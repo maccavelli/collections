@@ -1,8 +1,14 @@
 package handler
 
 import (
+	"context"
+	"encoding/json"
+	"os"
+	"strings"
+	"sync/atomic"
 	"testing"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"mcp-server-magictools/internal/db"
 )
 
@@ -109,7 +115,7 @@ func TestValidateDAGSemanticsRedundancy(t *testing.T) {
 	cleanWarnings := validateDAGSemantics(clean)
 
 	for _, w := range cleanWarnings {
-		if contains(w, "Redundancy") {
+		if strings.Contains(w, "Redundancy") {
 			t.Errorf("unexpected redundancy warning for interleaved roles: %s", w)
 		}
 	}
@@ -151,7 +157,7 @@ func TestTopologicalSortChronological(t *testing.T) {
 func TestGlobalPipelineCap(t *testing.T) {
 	// Build 20 unique stages
 	var stages []PipelineStep
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		stages = append(stages, PipelineStep{
 			ToolName: "tool-" + string(rune('A'+i)),
 			Role:     "ANALYZER",
@@ -229,10 +235,10 @@ func TestAdaptiveThreshold(t *testing.T) {
 // TestComputeRoleBoostAuditDifferentiation verifies that ANALYZER gets a higher
 // role boost than CRITIC for audit intents (F3 fix).
 func TestComputeRoleBoostAuditDifferentiation(t *testing.T) {
-	analyzerBoost := computeRoleBoost("ANALYZER", "audit")
-	criticBoost := computeRoleBoost("CRITIC", "audit")
-	synthBoost := computeRoleBoost("SYNTHESIZER", "audit")
-	mutatorBoost := computeRoleBoost("MUTATOR", "audit")
+	analyzerBoost := lookupRoleBoost("ANALYZER", "audit")
+	criticBoost := lookupRoleBoost("CRITIC", "audit")
+	synthBoost := lookupRoleBoost("SYNTHESIZER", "audit")
+	mutatorBoost := lookupRoleBoost("MUTATOR", "audit")
 
 	if analyzerBoost <= criticBoost {
 		t.Errorf("ANALYZER boost (%.2f) should be greater than CRITIC boost (%.2f) for audit", analyzerBoost, criticBoost)
@@ -304,31 +310,119 @@ func TestTriFactorWeightBalance(t *testing.T) {
 // role boost gradients and are unchanged by the audit fix.
 func TestComputeRoleBoostRefactorPlan(t *testing.T) {
 	// Refactor: MUTATOR should be highest
-	if computeRoleBoost("MUTATOR", "refactor") != 1.0 {
+	if lookupRoleBoost("MUTATOR", "refactor") != 1.0 {
 		t.Error("MUTATOR should get 1.0 for refactor")
 	}
-	if computeRoleBoost("ANALYZER", "refactor") != 0.75 {
+	if lookupRoleBoost("ANALYZER", "refactor") != 0.75 {
 		t.Error("ANALYZER should get 0.75 for refactor")
 	}
 
 	// Plan: CRITIC and SYNTHESIZER should be highest
-	if computeRoleBoost("CRITIC", "plan") != 1.0 {
+	if lookupRoleBoost("CRITIC", "plan") != 1.0 {
 		t.Error("CRITIC should get 1.0 for plan")
 	}
-	if computeRoleBoost("SYNTHESIZER", "plan") != 1.0 {
+	if lookupRoleBoost("SYNTHESIZER", "plan") != 1.0 {
 		t.Error("SYNTHESIZER should get 1.0 for plan")
 	}
 }
 
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsHelper(s, substr))
-}
+func TestHandleValidatePipelineStep(t *testing.T) {
+	h, _, _, tmpDir := newTestHandler(t)
+	defer os.RemoveAll(tmpDir)
 
-func containsHelper(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
+	h.PipelineEnabled = &atomic.Bool{}
+	h.PipelineEnabled.Store(true)
+
+	ctx := context.Background()
+
+	// 1. Test PASS verdict
+	req := &mcp.CallToolRequest{
+		Params: &mcp.CallToolParamsRaw{
+			Name: "validate_pipeline_step",
+			Arguments: json.RawMessage(`{
+				"step_name": "test_step",
+				"step_output": "This is a very long output that should pass validation because it has no failure markers and is long enough.",
+				"project_path": "/tmp"
+			}`),
+		},
+	}
+
+	res, err := h.handleValidatePipelineStep(ctx, req)
+	if err != nil {
+		t.Fatalf("handleValidatePipelineStep failed: %v", err)
+	}
+
+	found := false
+	var fullText strings.Builder
+	for _, c := range res.Content {
+		if tc, ok := c.(*mcp.TextContent); ok {
+			fullText.WriteString(tc.Text)
+			if strings.Contains(tc.Text, "**Verdict**: PASS") {
+				found = true
+			}
 		}
 	}
-	return false
+	if !found {
+		t.Errorf("expected PASS verdict, got: %s", fullText.String())
+	}
+
+	// 2. Test FAIL verdict (panic)
+	req = &mcp.CallToolRequest{
+		Params: &mcp.CallToolParamsRaw{
+			Name: "validate_pipeline_step",
+			Arguments: json.RawMessage(`{
+				"step_name": "test_step",
+				"step_output": "panic: something went wrong in this tool execution",
+				"project_path": "/tmp"
+			}`),
+		},
+	}
+
+	res, err = h.handleValidatePipelineStep(ctx, req)
+	if err != nil {
+		t.Fatalf("handleValidatePipelineStep failed: %v", err)
+	}
+
+	found = false
+	fullText.Reset()
+	for _, c := range res.Content {
+		if tc, ok := c.(*mcp.TextContent); ok {
+			fullText.WriteString(tc.Text)
+			if strings.Contains(tc.Text, "**Verdict**: FAIL") {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Errorf("expected FAIL verdict, got: %s", fullText.String())
+	}
+}
+
+func TestHandleQualityGate(t *testing.T) {
+	h, _, _, tmpDir := newTestHandler(t)
+	defer os.RemoveAll(tmpDir)
+
+	h.PipelineEnabled = &atomic.Bool{}
+	h.PipelineEnabled.Store(true)
+
+	ctx := context.Background()
+
+	req := &mcp.CallToolRequest{
+		Params: &mcp.CallToolParamsRaw{
+			Name: "cross_server_quality_gate",
+			Arguments: json.RawMessage(`{
+				"project_path": "/tmp",
+				"plan_hash": "abc"
+			}`),
+		},
+	}
+
+	res, err := h.handleQualityGate(ctx, req)
+	if err != nil {
+		t.Fatalf("handleQualityGate failed: %v", err)
+	}
+
+	if len(res.Content) == 0 {
+		t.Fatalf("expected results, got none")
+	}
 }

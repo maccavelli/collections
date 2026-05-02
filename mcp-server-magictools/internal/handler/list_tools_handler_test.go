@@ -5,8 +5,6 @@ import (
 	"os"
 	"testing"
 
-	"mcp-server-magictools/internal/db"
-
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -29,7 +27,7 @@ func TestListToolsMiddleware(t *testing.T) {
 	mw := h.ListToolsMiddleware(next)
 
 	t.Run("ToolsList", func(t *testing.T) {
-		_ = store.SaveTool(&db.ToolRecord{URN: "sub:tool", Name: "tool", Server: "sub", Category: "search"})
+		h.ActiveToolsLRU.Add("sub:tool", &mcp.Tool{Name: "sub:tool", Description: "desc"})
 		h.Registry.IsSynced.Store(true)
 
 		res, err := mw(ctx, "tools/list", nil)

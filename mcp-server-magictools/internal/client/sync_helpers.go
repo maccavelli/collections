@@ -95,8 +95,8 @@ var synonyms = map[string][]string{
 // parseAnnotations extracts structured ALIASES:, USE_WHEN:, and CASCADES: blocks
 // from tool descriptions. Returns the parsed terms and the description without annotations.
 func parseAnnotations(desc string) (aliases, useWhen, cascades []string) {
-	lines := strings.Split(desc, "\n")
-	for _, line := range lines {
+	lines := strings.SplitSeq(desc, "\n")
+	for line := range lines {
 		line = strings.TrimSpace(line)
 		upper := strings.ToUpper(line)
 		switch {
@@ -218,10 +218,7 @@ func (m *WarmRegistry) logSyncError(server string, err error) {
 	if f, oerr := os.Open(logPath); oerr == nil {
 		defer f.Close()
 		fi, _ := f.Stat()
-		offset := fi.Size() - 4096
-		if offset < 0 {
-			offset = 0
-		}
+		offset := max(fi.Size()-4096, 0)
 		if _, err := f.Seek(offset, io.SeekStart); err != nil {
 			slog.Debug("sync: seek failed in file reader", "error", err)
 		}
@@ -408,7 +405,7 @@ func generateLexicalTokens(name string, schema map[string]any) []string {
 	}
 
 	// Split tool name into tokens
-	for _, part := range strings.Split(strings.ReplaceAll(name, "-", "_"), "_") {
+	for part := range strings.SplitSeq(strings.ReplaceAll(name, "-", "_"), "_") {
 		add(part)
 	}
 
@@ -418,7 +415,7 @@ func generateLexicalTokens(name string, schema map[string]any) []string {
 			for paramName := range props {
 				add(paramName)
 				// Also split camelCase/snake_case parameter names
-				for _, sub := range strings.Split(paramName, "_") {
+				for sub := range strings.SplitSeq(paramName, "_") {
 					add(sub)
 				}
 			}

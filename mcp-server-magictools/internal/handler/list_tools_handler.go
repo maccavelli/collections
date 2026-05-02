@@ -67,41 +67,15 @@ func (h *OrchestratorHandler) ListToolsMiddleware(next mcp.MethodHandler) mcp.Me
 			}
 		}
 
-		// 2. DYNAMIC LAYER: Append aggregate tools from the Backplane (sub-servers).
-		// 🛡️ ERROR SHIELD: Load backplane tools but don't fail if they are missing or sync is in progress.
+		// 2. DYNAMIC LAYER: Append aggregate tools from the ActiveToolsLRU.
+		// 🛡️ LRU BOUNDING: Instead of dumping all tools from the Backplane, we only
+		// serve the recently discovered tools (max 20) to strictly cap the context window.
 		if !h.Registry.IsSynced.Load() {
 			slog.Log(ctx, util.LevelTrace, "orchestrator: backplane sync in progress; returning base layer only")
 		} else {
-			h.Registry.RLock()
-			managedRecords, searchErr := h.Store.SearchTools("", "", "", 0.0)
-			h.Registry.RUnlock()
-
-			if searchErr != nil {
-				slog.Warn("orchestrator: backplane search failed; returning base layer only", "error", searchErr)
-			} else {
-				for _, rec := range managedRecords {
-					if rec == nil || rec.Server == "magictools" {
-						continue
-					}
-
-					// 🛡️ UNIQUE NAMESPACE: Ensure every tool has a server_id prefix.
-					toolName := rec.URN
-					if !strings.Contains(toolName, ":") {
-						toolName = fmt.Sprintf("%s:%s", rec.Server, rec.Name)
-					}
-
-					// 🛡️ RAWS DEFINITIONS: No-Minification for sub-server tools.
-					desc := rec.Description
-
-					// 🛡️ DEEP COPY & SANITIZATION for all sub-server tools.
-					t := &mcp.Tool{
-						Name:        toolName,
-						Description: desc,
-						InputSchema: rec.InputSchema,
-					}
-
-					// Apply standard sanitization to sub-server tools only.
-					t = util.SanitizeToolSchema(t)
+			lruTools := h.ActiveToolsLRU.Values()
+			for _, t := range lruTools {
+				if t != nil {
 					finalTools = append(finalTools, t)
 				}
 			}

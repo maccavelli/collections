@@ -44,6 +44,18 @@ func TestLoadAndExtract(t *testing.T) {
 	if err := os.WriteFile(configPath, data, 0644); err != nil {
 		t.Fatal(err)
 	}
+	// Create mock servers.yaml to provide brainstorm
+	magictoolsDir := filepath.Join(tmpDir, "mcp-server-magictools")
+	os.MkdirAll(magictoolsDir, 0755)
+	serversYaml := `servers:
+  - name: brainstorm
+    command: /bin/brainstorm
+    args:
+      - --dry-run
+    env:
+      DEBUG: "1"
+`
+	os.WriteFile(filepath.Join(magictoolsDir, "servers.yaml"), []byte(serversYaml), 0644)
 
 	// Test Load
 	cfg, err := Load(configPath)
@@ -51,15 +63,17 @@ func TestLoadAndExtract(t *testing.T) {
 		t.Fatalf("Load failed: %v", err)
 	}
 
-	if len(cfg.ManagedServers) != 1 {
-		t.Errorf("expected 1 managed server, got %d", len(cfg.ManagedServers))
+	var s *ServerConfig
+	for i := range cfg.ManagedServers {
+		if cfg.ManagedServers[i].Name == "brainstorm" {
+			s = &cfg.ManagedServers[i]
+			break
+		}
 	}
 
-	s := cfg.ManagedServers[0]
-	if s.Name != "brainstorm" {
-		t.Errorf("expected brainstorm to be managed, got %s", s.Name)
-	}
-	if s.Env["DEBUG"] != "1" {
+	if s == nil {
+		t.Errorf("expected brainstorm to be managed, but not found")
+	} else if s.Env["DEBUG"] != "1" {
 		t.Errorf("expected env DEBUG=1, got %v", s.Env["DEBUG"])
 	}
 

@@ -141,11 +141,28 @@ func (h *OrchestratorHandler) SleepServers(ctx context.Context, req *mcp.CallToo
 		_, _ = ps.ExecuteProxy(timeoutCtx, "recall", "context_vacuum", nil, 120*time.Second)
 	}()
 
-	h.Registry.DisconnectAll()
+	pinned := make(map[string]bool)
+	for _, p := range h.Config.GetPinnedServers() {
+		pinned[p] = true
+	}
+
+	sleptCount := 0
+	for _, sc := range h.Config.GetManagedServers() {
+		if !pinned[sc.Name] {
+			h.Registry.DisconnectServer(sc.Name, true)
+			sleptCount++
+		}
+	}
+
+	msg := fmt.Sprintf("All %d eligible sub-server processes have been put to sleep. They will reactivate automatically on the next tool call.", sleptCount)
+	if len(pinned) > 0 {
+		msg = fmt.Sprintf("%d sub-server processes have been put to sleep. Pinned servers (%v) remain active.", sleptCount, h.Config.GetPinnedServers())
+	}
+
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{
 			&mcp.TextContent{
-				Text: "All sub-server processes have been put to sleep. They will reactivate automatically on the next tool call.",
+				Text: msg,
 			},
 		},
 	}, nil

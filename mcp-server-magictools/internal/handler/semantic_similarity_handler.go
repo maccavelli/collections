@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"maps"
 	"math"
 	"os"
 	"path/filepath"
@@ -42,9 +43,7 @@ func extractKeys(prefix string, schema map[string]any) map[string]string {
 			// Recurse into properties
 			if props, ok := vm["properties"].(map[string]any); ok {
 				subKeys := extractKeys(prefix+k+".", props)
-				for sk, sv := range subKeys {
-					keys[sk] = sv
-				}
+				maps.Copy(keys, subKeys)
 			}
 		}
 		keys[prefix+k] = typeStr
@@ -84,7 +83,7 @@ func (h *OrchestratorHandler) SemanticSimilarityAudit(ctx context.Context, req *
 	if len(req.Params.Arguments) > 0 {
 		if err := json.Unmarshal(req.Params.Arguments, &args); err == nil {
 			if serversArg, ok := args["servers"].(string); ok && serversArg != "" {
-				for _, s := range strings.Fields(serversArg) {
+				for s := range strings.FieldsSeq(serversArg) {
 					targetServers[s] = true
 				}
 			}
@@ -95,7 +94,7 @@ func (h *OrchestratorHandler) SemanticSimilarityAudit(ctx context.Context, req *
 	}
 
 	// Phase I: Get ALL tools
-	allTools, err := h.Store.SearchTools("", "", "", 0)
+	allTools, err := h.Store.SearchTools(ctx, "", "", "", 0, h.Config.ScoreFusionAlpha)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list all tools: %w", err)
 	}
@@ -135,11 +134,11 @@ func (h *OrchestratorHandler) SemanticSimilarityAudit(ctx context.Context, req *
 						}
 					}
 				} else {
-					matches, err = h.Store.SearchTools(toolA.Description, toolA.Category, "", 0.7)
+					matches, err = h.Store.SearchTools(ctx, toolA.Description, toolA.Category, "", 0.7, h.Config.ScoreFusionAlpha)
 				}
 			} else {
 				// OFFLINE: Bleve Natural Linguistic Search
-				matches, err = h.Store.SearchTools(toolA.Description, toolA.Category, "", 0.7)
+				matches, err = h.Store.SearchTools(ctx, toolA.Description, toolA.Category, "", 0.7, h.Config.ScoreFusionAlpha)
 			}
 
 			if err != nil || len(matches) == 0 {
@@ -237,12 +236,17 @@ func (h *OrchestratorHandler) SemanticSimilarityAudit(ctx context.Context, req *
 	}
 
 	// Phase IV: Markdown generation
-	var summary strings.Builder
-	summary.WriteString("# Semantic Similarity Audit\n\n")
+	envelope := map[string]any{
+		"metadata": map[string]any{
+			"duplicate_count": len(uniqueMatches),
+		},
+		"matches": make([]map[string]any, 0, len(uniqueMatches)),
+	}
 
 	if len(uniqueMatches) == 0 {
-		summary.WriteString("*No overlapping tools found matching the threshold.*")
-		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: summary.String()}}}, nil
+		envJSON, _ := json.MarshalIndent(envelope, "", "  ")
+		finalText := fmt.Sprintf("```json\n%s\n```\n\n# Semantic Similarity Audit\n\n*No overlapping tools found matching the threshold.*", string(envJSON))
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: finalText}}}, nil
 	}
 
 	// Sort results by ROI descending
@@ -253,6 +257,23 @@ func (h *OrchestratorHandler) SemanticSimilarityAudit(ctx context.Context, req *
 	sort.Slice(sorted, func(i, j int) bool {
 		return sorted[i].TotalScore > sorted[j].TotalScore
 	})
+
+	for _, res := range sorted {
+		scorePct := int(res.TotalScore * 100)
+		matchMap := map[string]any{
+			"tool_a":         res.ToolA,
+			"tool_b":         res.ToolB,
+			"similarity":     scorePct,
+			"recommendation": res.Recommendation,
+		}
+		envelope["matches"] = append(envelope["matches"].([]map[string]any), matchMap)
+	}
+
+	envJSON, _ := json.MarshalIndent(envelope, "", "  ")
+
+	var summary strings.Builder
+	summary.WriteString(fmt.Sprintf("```json\n%s\n```\n\n", string(envJSON)))
+	summary.WriteString("# Semantic Similarity Audit\n\n")
 
 	summary.WriteString("| Tool A | Tool B | Similarity | Socratic Recommendation |\n")
 	summary.WriteString("| :--- | :--- | :--- | :--- |\n")
