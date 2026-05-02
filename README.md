@@ -38,64 +38,65 @@ MagicTools manages Brainstorm's lifecycle. Invoke its tools via `magictools:call
 
 ---
 
-## ⚙️ Configuration
+## 📦 Installation & Setup
 
 ### 1. Build the Binary
 ```bash
 make build
 ```
 
-### 2. Standalone Environment Variables
-If running without the MagicTools orchestrator:
-| Variable | Description |
-| :--- | :--- |
-| `MCP_API_URL` | Comma-separated list of context servers (e.g., `recall`). |
-| `MCP_ORCHESTRATOR_OWNED` | Set to `true` for full swarm integration. |
+### 2. MagicTools Orchestrator Configuration (Recommended)
+Add this to your `~/.config/mcp-server-magictools/servers.yaml` to run Brainstorm as an orchestrated sub-server:
 
----
+```yaml
+- name: brainstorm
+  command: /absolute/path/to/mcp-server-brainstorm
+  env:
+    HOME: /absolute/path/to/home
+    MCP_API_URL: http://localhost:7000/mcp # URL for Recall context
+  memory_limit_mb: 4096
+  gomemlimit_mb: 2048
+  max_cpu_limit: 2
+  disabled: false
+  deferred_boot: false
+```
 
-## 🖥️ IDE Configuration Examples (Standalone)
+### 3. Direct IDE Configuration
+If you prefer to run the server standalone, use the following configuration for your IDE:
 
-### 🌌 Antigravity
-**Path:** `~/.gemini/mcp_config.json`
+#### 🌌 Antigravity / VSCode (Roo Code / Cline)
+**Paths:**
+- **Linux/macOS:** `~/.gemini/antigravity/mcp_config.json`
+- **Windows:** `%APPDATA%\Antigravity\mcp_config.json`
+
 ```json
 {
   "mcpServers": {
     "brainstorm": {
-      "command": "/absolute/path/to/mcp-server-brainstorm",
+      "command": "C:\\path\\to\\mcp-server-brainstorm.exe",
       "env": {
-        "MCP_ORCHESTRATOR_OWNED": "true"
+        "HOME": "C:\\Users\\YourName",
+        "MCP_API_URL": "http://localhost:7000/mcp"
       }
     }
   }
 }
 ```
 
-### 💻 VSCode (Roo Code / Cline)
+#### 🤖 Claude Desktop
 **Paths:**
-*   **Linux/macOS**: `~/Library/Application Support/Code/User/globalStorage/rooveterinaryinc.roo-cline/settings/cline_mcp_settings.json`
-*   **Windows**: `%APPDATA%\Code\User\globalStorage\rooveterinaryinc.roo-cline\settings\cline_mcp_settings.json`
+- **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
 
 ```json
 {
   "mcpServers": {
     "brainstorm": {
-      "command": "C:/path/to/mcp-server-brainstorm.exe"
-    }
-  }
-}
-```
-
-### 🤖 Claude Desktop
-**Paths:**
-*   **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
-*   **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
-
-```json
-{
-  "mcpServers": {
-    "brainstorm": {
-      "command": "/usr/local/bin/mcp-server-brainstorm"
+      "command": "/absolute/path/to/mcp-server-brainstorm",
+      "env": {
+        "HOME": "/absolute/path/to/home",
+        "MCP_API_URL": "http://localhost:7000/mcp"
+      }
     }
   }
 }
