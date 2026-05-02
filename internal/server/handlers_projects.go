@@ -12,81 +12,15 @@ import (
 )
 
 // projectsTools returns the tool catalog for projects-domain retrieval.
-func (rs *MCPRecallServer) projectsTools() []toolDef {
-	return []toolDef{
-		{
-			Name:        "list_project_categories",
-			Description: "Returns a hierarchical, package-grouped overview of all harvested project data. Shows packages, symbol counts by type, individual symbol names, package doc availability, and API drift checksums. Scoped exclusively to the projects domain.",
-			InputSchema: json.RawMessage(`{
-				"type": "object",
-				"properties": {
-					"package": { "type": "string", "description": "Optional package path prefix to filter results." },
-					"symbol_type": { "type": "string", "description": "Optional filter by symbol type: func, struct, interface." }
-				}
-			}`),
-			Handler: rs.handleListProjectCategories,
-		},
-		{
-			Name:        "search_projects",
-			Description: "Multi-dimensional search across harvested project code. Supports free-text queries with structured filters for package, symbol_type, interface, receiver, and domain. Returns structured symbol metadata. Completely isolated from standards and general memories.",
-			InputSchema: json.RawMessage(`{
-				"type": "object",
-				"properties": {
-					"query":       { "type": "string", "description": "Free-text search query (BM25 + fuzzy ranking)." },
-					"package":     { "type": "string", "description": "Scope search to a specific package path prefix." },
-					"symbol_type": { "type": "string", "description": "Filter by symbol type: func, struct, interface, type." },
-					"interface":   { "type": "string", "description": "Find symbols implementing a specific interface." },
-					"receiver":    { "type": "string", "description": "Find methods bound to a specific receiver type." },
-					"domain":      { "type": "string", "description": "Filter by semantic domain: auth, database, api, middleware." },
-					"limit":       { "type": "integer", "description": "Max results to return (default: 20)." }
-				},
-				"required": ["query"]
-			}`),
-			Handler: rs.handleSearchProjects,
-		},
-		{
-			Name:        "get_project",
-			Description: "Fetches a single project entry by its exact key with fully parsed metadata. Scoped exclusively to the projects namespace. Use keys from list_project_categories or search_projects for precision lookups.",
-			InputSchema: json.RawMessage(`{
-				"type": "object",
-				"properties": {
-					"key": { "type": "string", "description": "Exact key of the project record to retrieve (e.g. 'pkg:mcp-server-magicskills/internal/server:MCPServer')." }
-				},
-				"required": ["key"]
-			}`),
-			Handler: rs.handleGetProject,
-		},
-		{
-			Name:        "delete_projects",
-			Description: "Deletes projects by category name (e.g. HarvestedCode), exact package name, or category number (matching list_project_categories output). Deleting by category wipes all packages within it; deleting by package name targets that package.",
-			InputSchema: json.RawMessage(`{
-				"type": "object",
-				"properties": {
-					"category": { "type": "string", "description": "Delete all projects matching this category name (e.g. HarvestedCode, PackageDoc)." },
-					"package": { "type": "string", "description": "Delete all projects under this specific package path prefix." },
-					"category_number": { "type": "integer", "description": "Delete package corresponding to this 1-based index from the alphabetically sorted packages list." }
-				}
-			}`),
-			Handler: rs.handleDeleteProjects,
-		},
-	}
-}
 
-func (rs *MCPRecallServer) handleListProjectCategories(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	var args struct {
-		Package    string `json:"package"`
-		SymbolType string `json:"symbol_type"`
-	}
-	if err := json.Unmarshal(req.Params.Arguments, &args); err != nil {
-		return nil, fmt.Errorf("invalid parameters: %w", err)
-	}
+func (rs *MCPRecallServer) handleListProjectCategories(ctx context.Context, _ *mcp.CallToolRequest, args ListProjectCategoriesInput) (*mcp.CallToolResult, any, error) {
 
 	packages, err := rs.store.ListDomainOverview(ctx, memory.DomainProjects, args.Package)
 	if err != nil {
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Error: %v", err)}},
 			IsError: true,
-		}, nil
+		}, nil, nil
 	}
 
 	// Post-filter by symbol type if requested
@@ -141,22 +75,10 @@ func (rs *MCPRecallServer) handleListProjectCategories(ctx context.Context, req 
 
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{&mcp.TextContent{Text: sb.String()}},
-	}, nil
+	}, nil, nil
 }
 
-func (rs *MCPRecallServer) handleSearchProjects(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	var args struct {
-		Query      string `json:"query"`
-		Package    string `json:"package"`
-		SymbolType string `json:"symbol_type"`
-		Interface  string `json:"interface"`
-		Receiver   string `json:"receiver"`
-		Domain     string `json:"domain"`
-		Limit      int    `json:"limit"`
-	}
-	if err := json.Unmarshal(req.Params.Arguments, &args); err != nil {
-		return nil, fmt.Errorf("invalid parameters: %w", err)
-	}
+func (rs *MCPRecallServer) handleSearchProjects(ctx context.Context, req *mcp.CallToolRequest, args SearchProjectsInput) (*mcp.CallToolResult, any, error) {
 
 	if args.Limit <= 0 {
 		args.Limit = 20
@@ -167,7 +89,7 @@ func (rs *MCPRecallServer) handleSearchProjects(ctx context.Context, req *mcp.Ca
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Error: %v", err)}},
 			IsError: true,
-		}, nil
+		}, nil, nil
 	}
 
 	// Build filter summary for context
@@ -212,23 +134,17 @@ func (rs *MCPRecallServer) handleSearchProjects(ctx context.Context, req *mcp.Ca
 
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{&mcp.TextContent{Text: sb.String()}},
-	}, nil
+	}, nil, nil
 }
 
-func (rs *MCPRecallServer) handleGetProject(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	var args struct {
-		Key string `json:"key"`
-	}
-	if err := json.Unmarshal(req.Params.Arguments, &args); err != nil {
-		return nil, fmt.Errorf("invalid parameters: %w", err)
-	}
+func (rs *MCPRecallServer) handleGetProject(ctx context.Context, _ *mcp.CallToolRequest, args GetProjectInput) (*mcp.CallToolResult, any, error) {
 
 	rec, err := rs.store.Get(ctx, args.Key)
 	if err != nil {
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Project record not found: %v", err)}},
 			IsError: true,
-		}, nil
+		}, nil, nil
 	}
 
 	// Verify this is a projects record
@@ -236,10 +152,10 @@ func (rs *MCPRecallServer) handleGetProject(ctx context.Context, req *mcp.CallTo
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Key '%s' is not a projects record (domain: %s). Use 'get_standards' for standards or 'recall' for memories.", args.Key, rec.Domain)}},
 			IsError: true,
-		}, nil
+		}, nil, nil
 	}
 
-	data, marshalErr := json.MarshalIndent(map[string]interface{}{
+	data, marshalErr := json.MarshalIndent(map[string]any{
 		"key":         args.Key,
 		"title":       rec.Title,
 		"category":    rec.Category,
@@ -255,29 +171,21 @@ func (rs *MCPRecallServer) handleGetProject(ctx context.Context, req *mcp.CallTo
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Failed to marshal project record: %v", marshalErr)}},
 			IsError: true,
-		}, nil
+		}, nil, nil
 	}
 
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{&mcp.TextContent{Text: string(data)}},
-	}, nil
+	}, nil, nil
 }
 
-func (rs *MCPRecallServer) handleDeleteProjects(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	var args struct {
-		Category       string `json:"category"`
-		Package        string `json:"package"`
-		CategoryNumber int    `json:"category_number"`
-	}
-	if err := json.Unmarshal(req.Params.Arguments, &args); err != nil {
-		return nil, fmt.Errorf("invalid parameters: %w", err)
-	}
+func (rs *MCPRecallServer) handleDeleteProjects(ctx context.Context, _ *mcp.CallToolRequest, args DeleteProjectsInput) (*mcp.CallToolResult, any, error) {
 
-	if args.Category == "" && args.Package == "" && args.CategoryNumber <= 0 {
+	if !args.All && args.Category == "" && args.Package == "" && args.CategoryNumber <= 0 {
 		return &mcp.CallToolResult{
-			Content: []mcp.Content{&mcp.TextContent{Text: "Error: must specify either category, package, or category_number"}},
+			Content: []mcp.Content{&mcp.TextContent{Text: "Error: must specify category, package, category_number, or explicitly set 'all' to true"}},
 			IsError: true,
-		}, nil
+		}, nil, nil
 	}
 
 	pkgFilter := args.Package
@@ -285,7 +193,7 @@ func (rs *MCPRecallServer) handleDeleteProjects(ctx context.Context, req *mcp.Ca
 	if args.CategoryNumber > 0 {
 		packagesMap, err := rs.store.ListDomainOverview(ctx, memory.DomainProjects, "")
 		if err != nil {
-			return nil, fmt.Errorf("failed to list projects overview: %w", err)
+			return nil, nil, fmt.Errorf("failed to list projects overview: %w", err)
 		}
 		var pkgNames []string
 		for p := range packagesMap {
@@ -297,7 +205,7 @@ func (rs *MCPRecallServer) handleDeleteProjects(ctx context.Context, req *mcp.Ca
 			return &mcp.CallToolResult{
 				Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Error: category_number %d is out of bounds (max %d)", args.CategoryNumber, len(pkgNames))}},
 				IsError: true,
-			}, nil
+			}, nil, nil
 		}
 		pkgFilter = pkgNames[args.CategoryNumber-1]
 	}
@@ -307,7 +215,7 @@ func (rs *MCPRecallServer) handleDeleteProjects(ctx context.Context, req *mcp.Ca
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Error deleting projects: %v", err)}},
 			IsError: true,
-		}, nil
+		}, nil, nil
 	}
 
 	var sb strings.Builder
@@ -321,5 +229,5 @@ func (rs *MCPRecallServer) handleDeleteProjects(ctx context.Context, req *mcp.Ca
 
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{&mcp.TextContent{Text: sb.String()}},
-	}, nil
+	}, nil, nil
 }

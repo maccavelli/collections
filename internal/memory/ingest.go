@@ -31,7 +31,7 @@ func (s *MemoryStore) DeleteByCategory(ctx context.Context, category string) (in
 
 	// Phase 1: Collect keys via category index, filtering by domain.
 	var ids []string
-	catPrefix := []byte(fmt.Sprintf("_idx:cat:%s:", strings.ToLower(category)))
+	catPrefix := fmt.Appendf(nil, "_idx:cat:%s:", strings.ToLower(category))
 
 	err := s.db.View(func(txn *badger.Txn) error {
 		it := txn.NewIterator(badger.DefaultIteratorOptions)
@@ -77,10 +77,7 @@ func (s *MemoryStore) DeleteByCategory(ctx context.Context, category string) (in
 
 	// Phase 2: Delete collected keys (already holding s.mu).
 	for start := 0; start < len(ids); start += s.maxBatchSize {
-		end := start + s.maxBatchSize
-		if end > len(ids) {
-			end = len(ids)
-		}
+		end := min(start+s.maxBatchSize, len(ids))
 		chunk := ids[start:end]
 
 		if err := s.UpdateWithRetry(func(txn *badger.Txn) error {
@@ -104,6 +101,78 @@ func (s *MemoryStore) DeleteByCategory(ctx context.Context, category string) (in
 	return len(ids), nil
 }
 
+// DeleteDomain purges all records that match the exact domain string.
+func (s *MemoryStore) DeleteDomain(ctx context.Context, domain string) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var ids []string
+
+	err := s.db.View(func(txn *badger.Txn) error {
+		it := txn.NewIterator(badger.DefaultIteratorOptions)
+		defer it.Close()
+
+		for it.Rewind(); it.Valid(); it.Next() {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			default:
+			}
+			item := it.Item()
+			key := string(item.Key())
+			if strings.HasPrefix(key, "_idx:") {
+				continue
+			}
+
+			if err := item.Value(func(v []byte) error {
+				rec, err := migrateRecord(v)
+				if err != nil {
+					return nil
+				}
+				if rec.Domain == domain {
+					ids = append(ids, key)
+				}
+				return nil
+			}); err != nil {
+				slog.Warn("Error scanning during domain delete", "domain", domain, "error", err)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("domain index scan failed: %w", err)
+	}
+
+	if len(ids) == 0 {
+		return 0, nil
+	}
+
+	for start := 0; start < len(ids); start += s.maxBatchSize {
+		end := min(start+s.maxBatchSize, len(ids))
+		chunk := ids[start:end]
+
+		if err := s.UpdateWithRetry(func(txn *badger.Txn) error {
+			for _, k := range chunk {
+				if err := s.deleteNoLockTxn(txn, k); err != nil && err != badger.ErrKeyNotFound {
+					return err
+				}
+			}
+			return nil
+		}); err != nil {
+			return 0, fmt.Errorf("failed deleting batched domain hits: %w", err)
+		}
+
+		if s.search != nil {
+			if sErr := s.search.DeleteBatch(chunk); sErr != nil {
+				slog.Warn("Bleve index delete batch failed during domain purge", "error", sErr)
+			}
+		}
+	}
+
+	return len(ids), nil
+}
+
+
 // DeleteBatch performs a single transaction badger deletion pass.
 func (s *MemoryStore) DeleteBatch(ctx context.Context, keys []string) error {
 	s.mu.Lock()
@@ -111,10 +180,7 @@ func (s *MemoryStore) DeleteBatch(ctx context.Context, keys []string) error {
 
 	// It's possible for big requests to OOM or exceed max transaction sizes, limit to maxBatchSize
 	for start := 0; start < len(keys); start += s.maxBatchSize {
-		end := start + s.maxBatchSize
-		if end > len(keys) {
-			end = len(keys)
-		}
+		end := min(start+s.maxBatchSize, len(keys))
 		chunk := keys[start:end]
 
 		err := s.UpdateWithRetry(func(txn *badger.Txn) error {
@@ -155,6 +221,20 @@ func (s *MemoryStore) deleteNoLockTxn(txn *badger.Txn, key string) error {
 		return err
 	}
 	s.deleteRecordIndices(txn, key, rec)
+	
+	if rec != nil {
+		switch rec.Domain {
+		case DomainMemories:
+			s.memoriesCount.Add(-1)
+		case DomainSessions:
+			s.sessionsCount.Add(-1)
+		case DomainStandards:
+			s.standardsCount.Add(-1)
+		case DomainProjects:
+			s.projectsCount.Add(-1)
+		}
+	}
+	
 	return txn.Delete([]byte(key))
 }
 
@@ -420,10 +500,9 @@ func (s *MemoryStore) ProcessPath(ctx context.Context, rootPath string) (int, er
 	}(ctx)
 
 	var wg sync.WaitGroup
-	workers := runtime.NumCPU()
-	if workers > 2 {
-		workers = 2 // Cap workers for Bastion resource constraints
-	}
+	workers := min(runtime.NumCPU(),
+		// Cap workers for Bastion resource constraints
+		2)
 	wg.Add(workers)
 
 	recordCh := make(chan []BatchEntry, 100)

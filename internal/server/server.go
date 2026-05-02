@@ -24,7 +24,6 @@ import (
 	"mcp-server-recall/internal/config"
 	"mcp-server-recall/internal/memory"
 	"mcp-server-recall/internal/telemetry"
-	"mcp-server-recall/internal/util"
 )
 
 const recallServerName = "mcp-server-recall"
@@ -107,396 +106,10 @@ func NewMCPRecallServer(cfg *config.Config, store *memory.MemoryStore, logs *Log
 	return rs, nil
 }
 
-// toolDef describes a single MCP tool registration.
-type toolDef struct {
-	Name        string
-	Description string
-	InputSchema json.RawMessage
-	Handler     func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error)
-}
-
-// registerTools registers all MCP tools on the primary server.
-func (rs *MCPRecallServer) registerTools() {
-	for _, td := range rs.toolCatalog() {
-		if td.Name == "harvest" {
-			continue
-		}
-		rs.mcpServer.AddTool(&mcp.Tool{
-			Name:        td.Name,
-			Description: td.Description,
-			InputSchema: td.InputSchema,
-		}, util.SafeToolHandler(td.Handler))
-	}
-	slog.Info("All hardened and featured tools registered")
-}
-
-// RegisterSafeTools assigns the safe, non-destructive queries and temporal scaffolding buckets to the SSE instance.
-func (rs *MCPRecallServer) RegisterSafeTools(srv *mcp.Server) {
-	safeConfig := rs.cfg.SafeTools()
-	safeMap := make(map[string]bool, len(safeConfig))
-	for _, name := range safeConfig {
-		safeMap[name] = true
-	}
-
-	catalog := rs.toolCatalog()
-
-	for _, td := range catalog {
-		if !safeMap[td.Name] {
-			continue
-		}
-		srv.AddTool(&mcp.Tool{
-			Name:        td.Name,
-			Description: td.Description,
-			InputSchema: td.InputSchema,
-		}, util.SafeToolHandler(td.Handler))
-	}
-	slog.Info("All safe tools are now registered to secondary server endpoint", "count", len(safeConfig))
-}
-
 // toolCatalog returns the central registry of all MCP tools.
-func (rs *MCPRecallServer) toolCatalog() []toolDef {
-	var tools []toolDef
-	tools = append(tools, rs.buildRememberTool(), rs.buildRecallTool(), rs.buildRecallRecentTool(), rs.buildGetMetricsTool(), rs.buildSaveSessionsTool())
-	tools = append(tools, rs.adminTools()...)
-	tools = append(tools, rs.batchTools()...)
-	tools = append(tools, rs.consolidatedTools()...)
 
-	return tools
-}
+func (rs *MCPRecallServer) handleContextVacuum(ctx context.Context, req *mcp.CallToolRequest, args ContextVacuumInput) (*mcp.CallToolResult, any, error) {
 
-func (rs *MCPRecallServer) buildRememberTool() toolDef {
-	return toolDef{
-		Name:        "remember",
-		Description: "[DIRECTIVE: Memory Storage] Commits long-term agent context securely embedding semantic inline deduplication. Keywords: save, memorize, persistent, context, text, facts, history",
-		InputSchema: json.RawMessage(`{
-			"type": "object",
-			"properties": {
-				"title": { "type": "string", "description": "Optional explicit title for maximum Search Relevance bounding." },
-				"key": { "type": "string", "description": "Unique identifier (e.g., 'auth-strategy')." },
-				"value": { "type": "string", "description": "Content to store." },
-				"tags": { "type": "array", "items": { "type": "string" }, "description": "Optional categories." },
-				"category": { "type": "string", "description": "Primary classification." },
-				"dedup_threshold": { "type": "number", "description": "Jaccard similarity threshold for inline dedup (0.0-1.0). Default from config. Set 0 to disable.", "default": 0.8 }
-			},
-			"required": ["key", "value"]
-		}`),
-		Handler: rs.handleRemember,
-	}
-}
-
-func (rs *MCPRecallServer) buildSaveSessionsTool() toolDef {
-	return toolDef{
-		Name:        "save_sessions",
-		Description: "[DIRECTIVE: Diagnostic Snapshot] Binds OpenTelemetry-compliant W3C tracing state to the ecosystem index securely. Keywords: session, trace, spans, states, active-context",
-		InputSchema: json.RawMessage(`{
-			"type": "object",
-			"properties": {
-				"server_id": { "type": "string", "description": "The ID of the server saving the session." },
-				"project_id": { "type": "string", "description": "The absolute path or UUID representing the target project." },
-				"outcome": { "type": "string", "description": "The resolution of the session (e.g. 'approved', 'rejected', 'pending')." },
-				"session_id": { "type": "string", "description": "Unique session trace identifier (e.g. timestamp or UUID) to prevent overwrites." },
-				"model": { "type": "string", "description": "Optional telemetry: model version utilized." },
-				"token_spend": { "type": "integer", "description": "Optional telemetry: gross token utilization count." },
-				"trace_context": { "type": "string", "description": "Optional telemetry: parent step ID or multi-agent chain correlation ID." },
-				"state_data": { "type": "string", "description": "JSON string or text containing session state." }
-			},
-			"required": ["server_id", "project_id", "outcome", "session_id", "state_data"]
-		}`),
-		Handler: rs.handleSaveSessions,
-	}
-}
-
-func (rs *MCPRecallServer) buildListSessionsTool() toolDef {
-	return toolDef{
-		Name:        "list_sessions",
-		Description: "Returns a list of cross-server session records matching specified filters. [Domain: Sessions] Supports analytic aggregation across 1:N data arrays.",
-		InputSchema: json.RawMessage(`{
-			"type": "object",
-			"properties": {
-				"project_id": { "type": "string", "description": "Filter by target project." },
-				"server_id": { "type": "string", "description": "Filter by saving server." },
-				"outcome": { "type": "string", "description": "Filter by resolution outcome." },
-				"trace_context": { "type": "string", "description": "Filter by explicit analytical thread." },
-				"limit": { "type": "integer", "description": "Maximum number of results to return. Defaults to 50 if not specified. Use to prevent payload overflow." },
-				"truncate_content": { "type": "boolean", "description": "If true, truncates each record's content to 32KB. Use for aggregation queries where full content is not needed." }
-			}
-		}`),
-		Handler: rs.handleListSessions,
-	}
-}
-
-func (rs *MCPRecallServer) buildGetSessionsTool() toolDef {
-	return toolDef{
-		Name:        "get_sessions",
-		Description: "Fetches a specific cross-server pipeline trace. Accepts either a composite key for direct lookup, or a session_id for suffix-match scanning. [Domain: Sessions]",
-		InputSchema: json.RawMessage(`{
-			"type": "object",
-			"properties": {
-				"key": { "type": "string", "description": "Direct composite key lookup (e.g. 'gorefactor:session:global:saved:12345'). Takes precedence over session_id if both are provided." },
-				"session_id": { "type": "string", "description": "The session trace identifier. The handler will scan the sessions domain for any key whose final segment matches this value." }
-			}
-		}`),
-		Handler: rs.handleGetSessions,
-	}
-}
-
-func (rs *MCPRecallServer) buildRecallTool() toolDef {
-	return toolDef{
-		Name:        "recall",
-		Description: "[DIRECTIVE: Memory Extraction] Extracts isolated unstructured conversational knowledge explicitly via unique key constraint. Keywords: fetch-memory, exact-key, retrieve-fact, discrete-pull",
-		InputSchema: json.RawMessage(`{
-			"type": "object",
-			"properties": { "key": { "type": "string", "description": "Key of the memory to retrieve." } },
-			"required": ["key"]
-		}`),
-		Handler: rs.handleRecall,
-	}
-}
-
-func (rs *MCPRecallServer) buildSearchMemoriesTool() toolDef {
-	return toolDef{
-		Name:        "search_memories",
-		Description: "Performs full-text, vector search, fuzzy key query, and database lookup across all stored memories. [Domain: Memories] Use this for knowledge exploration or when exact keys are unknown. Results are ranked by relevance.",
-		InputSchema: json.RawMessage(`{
-			"type": "object",
-			"properties": {
-				"query": { "type": "string", "description": "Fuzzy keyword to look for." },
-				"tag": { "type": "string", "description": "Optional filter for a specific tag." },
-				"limit": { "type": "integer", "description": "Maximum number of results to return.", "default": 20 }
-			}
-		}`),
-		Handler: rs.handleSearch,
-	}
-}
-
-func (rs *MCPRecallServer) buildRecallRecentTool() toolDef {
-	return toolDef{
-		Name:        "recall_recent",
-		Description: "[DIRECTIVE: Context Synchronization] Restores immediately preceding state data natively restoring IDE restarts. Keywords: recent, latest, restart-recovery, timeline",
-		InputSchema: json.RawMessage(`{
-			"type": "object",
-			"properties": { "count": { "type": "integer", "description": "Number of recent memories to retrieve.", "default": 10 } }
-		}`),
-		Handler: rs.handleRecallRecent,
-	}
-}
-
-func (rs *MCPRecallServer) buildListMemoriesTool() toolDef {
-	return toolDef{
-		Name:        "list_memories",
-		Description: "Lists all stored knowledge keys and metadata summaries. [Domain: Memories] Use this for initial system orientation to discover available memory keys.",
-		InputSchema: json.RawMessage(`{
-			"type": "object",
-			"properties": {}
-		}`),
-		Handler: rs.handleList,
-	}
-}
-
-func (rs *MCPRecallServer) buildGetMetricsTool() toolDef {
-	return toolDef{
-		Name:        "get_metrics",
-		Description: "[DIRECTIVE: Hardware Diagnostics] Exports runtime footprint and storage telemetry limits. Keywords: ram, memory-size, footprint, cache-hits, system-stats",
-		InputSchema: json.RawMessage(`{
-			"type": "object",
-			"properties": {}
-		}`),
-		Handler: rs.handleGetMetrics,
-	}
-}
-
-func (rs *MCPRecallServer) adminTools() []toolDef {
-	return []toolDef{
-		// 7. forget
-		{
-			Name:        "forget",
-			Description: "[DIRECTIVE: Memory Eradication] Deletes obsolete conversational facts and unstructured knowledge snippets natively. Keywords: unlearn-memory, drop-fact, target-erase",
-			InputSchema: json.RawMessage(`{
-				"type": "object",
-				"properties": {
-					"key": {
-						"type": "string",
-						"description": "Key of the memory to delete."
-					}
-				},
-				"required": ["key"]
-			}`),
-			Handler: rs.handleForget,
-		},
-
-		// 9. reload_cache
-		{
-			Name:        "reload_cache",
-			Description: "[DIRECTIVE: Storage Synchronization] Forces memory backend alignment bridging database indices ensuring zero-drift globally. Keywords: sync, repair, force-rebuild",
-			InputSchema: json.RawMessage(`{
-				"type": "object",
-				"properties": {}
-			}`),
-			Handler: rs.handleReloadCache,
-		},
-		// 10. (consolidate_memories removed — dedup is now inline in remember/batch_remember)
-		// 11. get_internal_logs
-		{
-			Name:        "get_internal_logs",
-			Description: "[DIRECTIVE: Audit Streaming] Streams live fault vectors and daemon stdout directly bypassing limits. Keywords: debug, errors, stack-trace, logs, fault",
-			InputSchema: json.RawMessage(`{
-				"type": "object",
-				"properties": {
-					"max_lines": {
-						"type": "integer",
-						"description": "Max log lines to return (default 25)."
-					}
-				}
-			}`),
-			Handler: rs.handleGetLogs,
-		},
-
-		{
-			Name:        "context_vacuum",
-			Description: "[DIRECTIVE: Database Maintenance] Executes garbage collection eliminating orphaned network nodes autonomously. Keywords: gc, prune, sweep, deduplication, dry-run",
-			InputSchema: json.RawMessage(`{
-				"type": "object",
-				"properties": {
-					"namespace": {
-						"type": "string",
-						"enum": ["sessions", "memories", "standards", "all"],
-						"description": "Data domain to vacuum. Default: sessions.",
-						"default": "sessions"
-					},
-					"target_outcome": {
-						"type": "string",
-						"description": "Sessions namespace: outcome signature to evacuate (e.g. 'rejected', 'abandoned'). Ignored for other namespaces."
-					},
-					"days_old": {
-						"type": "integer",
-						"description": "Age limit in days for entries to be flagged/pruned. Defaults to configured sessionpurgedays for sessions, 30 for memories."
-					},
-					"dedup_threshold": {
-						"type": "number",
-						"description": "Memories namespace: Jaccard similarity threshold (0.0-1.0) for near-duplicate detection. Default: 0.7.",
-						"default": 0.7
-					},
-					"category": {
-						"type": "string",
-						"description": "Memories/Standards: scope vacuum to a specific category."
-					},
-					"flatten_threshold": {
-						"type": "integer",
-						"description": "Optional threshold of mutated keys before triggering an I/O expensive LSM defragmentation (Flatten). Default is 1000."
-					},
-					"report_only": {
-						"type": "boolean",
-						"description": "If true, return analysis without mutating data. Default: false.",
-						"default": false
-					}
-				}
-			}`),
-			Handler: rs.handleContextVacuum,
-		},
-	}
-}
-
-func (rs *MCPRecallServer) batchTools() []toolDef {
-	return []toolDef{
-		// 13. batch_remember
-		{
-			Name:        "batch_remember",
-			Description: "[DIRECTIVE: Mass Memory Storage] Queues multiple context chunks atomically maximizing bandwidth efficiently. Keywords: bulk-upload, batch-save, array-commit",
-			InputSchema: json.RawMessage(`{
-				"type": "object",
-				"properties": {
-					"entries": {
-						"type": "array",
-						"items": {
-							"type": "object",
-							"properties": {
-								"title":    { "type": "string", "description": "Optional explicit title." },
-								"key":      { "type": "string", "description": "Unique identifier for the entry." },
-								"value":    { "type": "string", "description": "Content to store." },
-								"tags":     { "type": "array", "items": { "type": "string" }, "description": "Optional tags." },
-								"category": { "type": "string", "description": "Optional category." }
-							},
-							"required": ["key", "value"]
-						},
-						"description": "Array of entries to store (max 100).",
-						"maxItems": 100
-					}
-				},
-				"required": ["entries"]
-			}`),
-			Handler: rs.handleBatchRemember,
-		},
-		// 14. batch_recall
-		{
-			Name:        "batch_recall",
-			Description: "[DIRECTIVE: Mass Memory Retrieval] Iterates an array of context items via unique ID map securely. Keywords: bulk-fetch, sync-array, mass-download",
-			InputSchema: json.RawMessage(`{
-				"type": "object",
-				"properties": {
-					"keys": {
-						"type": "array",
-						"items": { "type": "string" },
-						"description": "Array of keys to retrieve (max 100).",
-						"maxItems": 100
-					}
-				},
-				"required": ["keys"]
-			}`),
-			Handler: rs.handleBatchRecall,
-		},
-		// 15. export_memories
-		{
-			Name:        "export_memories",
-			Description: "[DIRECTIVE: Memory Backup] Dumps internal state strictly to explicit sandbox JSONL filesystem safely. Keywords: backup, disk-write, export",
-			InputSchema: json.RawMessage(`{
-				"type": "object",
-				"properties": {
-					"filename": { "type": "string", "description": "Optional name. Defaults to generated timestamp." }
-				}
-			}`),
-			Handler: rs.handleExportMemories,
-		},
-		// 16. import_memories
-		{
-			Name:        "import_memories",
-			Description: "[DIRECTIVE: Mass Ingestion] Pushes physical disk JSONL arrays directly overriding active database mapping natively. Keywords: restore, payload, load-file",
-			InputSchema: json.RawMessage(`{
-				"type": "object",
-				"properties": {
-					"filename": { "type": "string", "description": "Required filename to import from within the sandbox." }
-				},
-				"required": ["filename"]
-			}`),
-			Handler: rs.handleImportMemories,
-		},
-		{
-			Name:        "ingest_files",
-			Description: "[DIRECTIVE: Code Harvester] Recursively indexes live workspace source code into dynamic arrays buffering duplicates natively. Keywords: parse-directory, scan-project, bleve-mapping, load-code",
-			InputSchema: json.RawMessage(`{
-				"type": "object",
-				"properties": {
-					"path": { "type": "string", "description": "Absolute path to a single file or directory." }
-				},
-				"required": ["path"]
-			}`),
-			Handler: rs.handleIngestFiles,
-		},
-	}
-}
-
-func (rs *MCPRecallServer) handleContextVacuum(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	var args struct {
-		Namespace        string  `json:"namespace"`
-		TargetOutcome    string  `json:"target_outcome"`
-		FlattenThreshold int     `json:"flatten_threshold"`
-		DaysOld          int     `json:"days_old"`
-		DedupThreshold   float64 `json:"dedup_threshold"`
-		Category         string  `json:"category"`
-		ReportOnly       bool    `json:"report_only"`
-	}
-	if err := json.Unmarshal(req.Params.Arguments, &args); err != nil {
-		return nil, fmt.Errorf("invalid parameters: %w", err)
-	}
 	if args.FlattenThreshold <= 0 {
 		args.FlattenThreshold = 1000
 	}
@@ -521,7 +134,7 @@ func (rs *MCPRecallServer) handleContextVacuum(ctx context.Context, req *mcp.Cal
 			return &mcp.CallToolResult{
 				Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Error performing session vacuum: %v", err)}},
 				IsError: true,
-			}, nil
+			}, nil, nil
 		}
 		sessionMutated = mutated
 
@@ -534,7 +147,7 @@ func (rs *MCPRecallServer) handleContextVacuum(ctx context.Context, req *mcp.Cal
 			return &mcp.CallToolResult{
 				Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Error performing memory vacuum: %v", err)}},
 				IsError: true,
-			}, nil
+			}, nil, nil
 		}
 		reports = append(reports, report)
 
@@ -544,7 +157,7 @@ func (rs *MCPRecallServer) handleContextVacuum(ctx context.Context, req *mcp.Cal
 			return &mcp.CallToolResult{
 				Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Error performing standards vacuum: %v", err)}},
 				IsError: true,
-			}, nil
+			}, nil, nil
 		}
 		reports = append(reports, report)
 
@@ -579,11 +192,11 @@ func (rs *MCPRecallServer) handleContextVacuum(ctx context.Context, req *mcp.Cal
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Invalid namespace: %q. Must be one of: sessions, memories, standards, all", args.Namespace)}},
 			IsError: true,
-		}, nil
+		}, nil, nil
 	}
 
 	// Build structured result.
-	result := map[string]interface{}{
+	result := map[string]any{
 		"namespace": args.Namespace,
 	}
 
@@ -606,23 +219,18 @@ func (rs *MCPRecallServer) handleContextVacuum(ctx context.Context, req *mcp.Cal
 
 	return &mcp.CallToolResult{
 		StructuredContent: result,
-	}, nil
+	}, nil, nil
 }
 
-func (rs *MCPRecallServer) handleGetLogs(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	var args struct {
-		MaxLines int `json:"max_lines"`
-	}
-	if err := json.Unmarshal(req.Params.Arguments, &args); err != nil {
-		return nil, fmt.Errorf("invalid parameters: %w", err)
-	}
+func (rs *MCPRecallServer) handleGetLogs(ctx context.Context, req *mcp.CallToolRequest, args GetLogsInput) (*mcp.CallToolResult, any, error) {
+
 	if args.MaxLines <= 0 {
 		args.MaxLines = config.DefaultLogLines
 	}
 
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{&mcp.TextContent{Text: tailLines(rs.logs.String(), args.MaxLines)}},
-	}, nil
+	}, nil, nil
 }
 
 // tailLines returns the last n lines of s using a zero-allocation backward scan.
@@ -649,29 +257,18 @@ func tailLines(s string, n int) string {
 
 // handleConsolidate has been removed — dedup is now inline in remember/batch_remember.
 
-func (rs *MCPRecallServer) handleRemember(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	var args struct {
-		Title          string   `json:"title"`
-		Key            string   `json:"key"`
-		Value          string   `json:"value"`
-		Category       string   `json:"category"`
-		Tags           []string `json:"tags"`
-		DedupThreshold *float64 `json:"dedup_threshold,omitempty"`
-	}
-	if err := json.Unmarshal(req.Params.Arguments, &args); err != nil {
-		return nil, fmt.Errorf("invalid parameters: %w", err)
-	}
+func (rs *MCPRecallServer) handleRemember(ctx context.Context, req *mcp.CallToolRequest, args RememberInput) (*mcp.CallToolResult, any, error) {
 
 	if len(args.Value) > 15000000 {
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{&mcp.TextContent{Text: "Error: Payload value exceeds maximum length bounds (15MB limit) preventing Memory OOM."}},
 			IsError: true,
-		}, nil
+		}, nil, nil
 	}
 
 	threshold := rs.cfg.DedupThreshold()
-	if args.DedupThreshold != nil {
-		threshold = *args.DedupThreshold
+	if args.DedupThreshold > 0 {
+		threshold = args.DedupThreshold
 	}
 
 	result, err := rs.store.Save(ctx, args.Title, args.Key, args.Value, args.Category, args.Tags, memory.DomainMemories, threshold)
@@ -679,11 +276,11 @@ func (rs *MCPRecallServer) handleRemember(ctx context.Context, req *mcp.CallTool
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Error: %v", err)}},
 			IsError: true,
-		}, nil
+		}, nil, nil
 	}
 
 	summary := fmt.Sprintf("Memory for '%s' %s.", result.Key, result.Action)
-	data := map[string]interface{}{
+	data := map[string]any{
 		"message":  summary,
 		"action":   result.Action,
 		"title":    args.Title,
@@ -696,33 +293,20 @@ func (rs *MCPRecallServer) handleRemember(ctx context.Context, req *mcp.CallTool
 	}
 
 	return &mcp.CallToolResult{
-		StructuredContent: map[string]interface{}{
+		StructuredContent: map[string]any{
 			"summary": summary,
 			"data":    data,
 		},
-	}, nil
+	}, nil, nil
 }
 
-func (rs *MCPRecallServer) handleSaveSessions(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	var args struct {
-		ServerID     string `json:"server_id"`
-		ProjectID    string `json:"project_id"`
-		Outcome      string `json:"outcome"`
-		SessionID    string `json:"session_id"`
-		Model        string `json:"model,omitempty"`
-		TokenSpend   int    `json:"token_spend,omitempty"`
-		TraceContext string `json:"trace_context,omitempty"`
-		StateData    string `json:"state_data"`
-	}
-	if err := json.Unmarshal(req.Params.Arguments, &args); err != nil {
-		return nil, fmt.Errorf("invalid parameters: %w", err)
-	}
+func (rs *MCPRecallServer) handleSaveSessions(ctx context.Context, req *mcp.CallToolRequest, args SaveSessionsInput) (*mcp.CallToolResult, any, error) {
 
 	if len(args.StateData) > 15000000 {
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{&mcp.TextContent{Text: "Error: Session StateData exceeds maximum length bounds (15MB limit) preventing Memory OOM."}},
 			IsError: true,
-		}, nil
+		}, nil, nil
 	}
 
 	tags := []string{"session"}
@@ -741,33 +325,16 @@ func (rs *MCPRecallServer) handleSaveSessions(ctx context.Context, req *mcp.Call
 
 	// UMFA / CSSA Transport Decoupling
 	// Intercept the payload, explicitly tear off "report_fragment", dump to local artifacts, and delete from CSSA DB commit entirely.
-	var metadata map[string]any
-	if err := json.Unmarshal([]byte(args.StateData), &metadata); err == nil {
-		if fragmentVal, ok := metadata["report_fragment"]; ok {
-			if fragStr, isStr := fragmentVal.(string); isStr && fragStr != "" {
-				// We have a fragment. Slice it explicitly to disk.
-				homeDir, _ := os.UserHomeDir()
-				fragDir := filepath.Join(homeDir, ".gemini", "antigravity", "brain", args.SessionID, "fragments")
-				_ = os.MkdirAll(fragDir, 0755)
 
-				// Create standard normalized layout name: magictools_report_generated_generate_audit_report.md
-				safeOutcome := strings.ReplaceAll(args.Outcome, "/", "_")
-				safeTrace := strings.ReplaceAll(args.TraceContext, "/", "_")
-				fragFile := filepath.Join(fragDir, fmt.Sprintf("%s_%s_%s.md", args.ServerID, safeOutcome, safeTrace))
+	// We have a fragment. Slice it explicitly to disk.
 
-				// Write fragment explicitly natively
-				_ = os.WriteFile(fragFile, []byte(fragStr), 0644)
+	// Create standard normalized layout name: magictools_report_generated_generate_audit_report.md
 
-				// Strip from badgerDB persistence map
-				delete(metadata, "report_fragment")
+	// Write fragment explicitly natively
 
-				// Repackage metric JSON exclusively
-				if cleanedData, mErr := json.Marshal(metadata); mErr == nil {
-					args.StateData = string(cleanedData)
-				}
-			}
-		}
-	}
+	// Strip from badgerDB persistence map
+
+	// Repackage metric JSON exclusively
 
 	// Native 5-part matrix key for subset bound scanning
 	key := fmt.Sprintf("%s:session:%s:%s:%s", args.ServerID, args.ProjectID, args.Outcome, args.SessionID)
@@ -777,37 +344,31 @@ func (rs *MCPRecallServer) handleSaveSessions(ctx context.Context, req *mcp.Call
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Error: %v", err)}},
 			IsError: true,
-		}, nil
+		}, nil, nil
 	}
 
 	summary := fmt.Sprintf("Session trace state for '%s' saved persistently.", key)
 	return &mcp.CallToolResult{
-		StructuredContent: map[string]interface{}{
+		StructuredContent: map[string]any{
 			"summary": summary,
-			"data": map[string]interface{}{
+			"data": map[string]any{
 				"key":        key,
 				"server_id":  args.ServerID,
 				"session_id": args.SessionID,
 				"action":     result.Action,
 			},
 		},
-	}, nil
+	}, nil, nil
 }
 
-func (rs *MCPRecallServer) handleRecall(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	var args struct {
-		Key string `json:"key"`
-	}
-	if err := json.Unmarshal(req.Params.Arguments, &args); err != nil {
-		return nil, fmt.Errorf("invalid parameters: %w", err)
-	}
+func (rs *MCPRecallServer) handleRecall(ctx context.Context, req *mcp.CallToolRequest, args RecallInput) (*mcp.CallToolResult, any, error) {
 
 	rec, err := rs.store.Get(ctx, args.Key)
 	if err != nil {
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Error: %v", err)}},
 			IsError: true,
-		}, nil
+		}, nil, nil
 	}
 
 	// Domain isolation: recall is scoped to the memories namespace.
@@ -815,27 +376,19 @@ func (rs *MCPRecallServer) handleRecall(ctx context.Context, req *mcp.CallToolRe
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Key '%s' belongs to the %s domain. Use 'get_sessions' or 'get_standards' instead.", args.Key, rec.Domain)}},
 			IsError: true,
-		}, nil
+		}, nil, nil
 	}
 
 	summary := fmt.Sprintf("Retrieved memory: %s", args.Key)
 	return &mcp.CallToolResult{
-		StructuredContent: map[string]interface{}{
+		StructuredContent: map[string]any{
 			"summary": summary,
 			"data":    rec,
 		},
-	}, nil
+	}, nil, nil
 }
 
-func (rs *MCPRecallServer) handleSearch(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	var args struct {
-		Query string `json:"query"`
-		Tag   string `json:"tag"`
-		Limit int    `json:"limit"`
-	}
-	if err := json.Unmarshal(req.Params.Arguments, &args); err != nil {
-		return nil, fmt.Errorf("invalid parameters: %w", err)
-	}
+func (rs *MCPRecallServer) handleSearch(ctx context.Context, req *mcp.CallToolRequest, args SearchMemoriesInput) (*mcp.CallToolResult, any, error) {
 
 	if args.Limit <= 0 {
 		args.Limit = 20
@@ -846,26 +399,41 @@ func (rs *MCPRecallServer) handleSearch(ctx context.Context, req *mcp.CallToolRe
 	elapsed := time.Since(start)
 
 	// Update latency metrics
-	rs.searchLatencyMS.Add(elapsed.Milliseconds())
-	rs.searchCount.Add(1)
+	rs.store.RecordSearchTelemetry(elapsed.Milliseconds())
 
 	if err != nil {
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Error: %v", err)}},
 			IsError: true,
-		}, nil
+		}, nil, nil
 	}
 
 	return rs.formatResults(fmt.Sprintf("Search Results for '%s'", args.Query), req, results)
 }
 
-func (rs *MCPRecallServer) handleRecallRecent(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	var args struct {
-		Count int `json:"count"`
+func (rs *MCPRecallServer) handleSearchSessions(ctx context.Context, req *mcp.CallToolRequest, args SearchSessionsInput) (*mcp.CallToolResult, any, error) {
+	if args.Limit <= 0 {
+		args.Limit = 20
 	}
-	if err := json.Unmarshal(req.Params.Arguments, &args); err != nil {
-		return nil, fmt.Errorf("invalid parameters: %w", err)
+
+	start := time.Now()
+	results, err := rs.store.SearchSessions(ctx, args.Query, args.ProjectID, args.ServerID, args.Outcome, args.TraceContext, args.Limit)
+	elapsed := time.Since(start)
+
+	// Update latency metrics
+	rs.store.RecordSearchTelemetry(elapsed.Milliseconds())
+
+	if err != nil {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Error: %v", err)}},
+			IsError: true,
+		}, nil, nil
 	}
+
+	return rs.formatResults(fmt.Sprintf("Session Search Results for '%s'", args.Query), req, results)
+}
+
+func (rs *MCPRecallServer) handleRecallRecent(ctx context.Context, req *mcp.CallToolRequest, args RecallRecentInput) (*mcp.CallToolResult, any, error) {
 
 	if args.Count <= 0 {
 		args.Count = 10
@@ -876,36 +444,29 @@ func (rs *MCPRecallServer) handleRecallRecent(ctx context.Context, req *mcp.Call
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Error: %v", err)}},
 			IsError: true,
-		}, nil
+		}, nil, nil
 	}
 
 	return rs.formatResults("Recent Context Memories", req, results)
 }
 
-func (rs *MCPRecallServer) handleList(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (rs *MCPRecallServer) handleList(ctx context.Context, req *mcp.CallToolRequest, args ListMemoriesInput) (*mcp.CallToolResult, any, error) {
 	keys, err := rs.store.ListKeys(ctx)
 	if err != nil {
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Error: %v", err)}},
 			IsError: true,
-		}, nil
+		}, nil, nil
 	}
 
 	return rs.formatResults("Knowledge Index", req, keys)
 }
 
-func (rs *MCPRecallServer) handleListSessions(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	var args struct {
-		ProjectID       string `json:"project_id,omitempty"`
-		ServerID        string `json:"server_id,omitempty"`
-		Outcome         string `json:"outcome,omitempty"`
-		TraceContext    string `json:"trace_context,omitempty"`
-		Limit           int    `json:"limit,omitempty"`
-		TruncateContent bool   `json:"truncate_content,omitempty"`
-	}
+func (rs *MCPRecallServer) handleListSessions(ctx context.Context, req *mcp.CallToolRequest, args ListSessionsInput) (*mcp.CallToolResult, any, error) {
+
 	if req.Params.Arguments != nil {
 		if err := json.Unmarshal(req.Params.Arguments, &args); err != nil {
-			return nil, fmt.Errorf("invalid parameters: %w", err)
+			return nil, nil, fmt.Errorf("invalid parameters: %w", err)
 		}
 	}
 
@@ -920,7 +481,7 @@ func (rs *MCPRecallServer) handleListSessions(ctx context.Context, req *mcp.Call
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Error: %v", err)}},
 			IsError: true,
-		}, nil
+		}, nil, nil
 	}
 
 	// Apply limit — keep the most recent entries (end of slice).
@@ -942,14 +503,7 @@ func (rs *MCPRecallServer) handleListSessions(ctx context.Context, req *mcp.Call
 	return rs.formatResults("Analytic Session Dataset", req, sessions)
 }
 
-func (rs *MCPRecallServer) handleGetSessions(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	var args struct {
-		Key       string `json:"key,omitempty"`
-		SessionID string `json:"session_id,omitempty"`
-	}
-	if err := json.Unmarshal(req.Params.Arguments, &args); err != nil {
-		return nil, fmt.Errorf("invalid parameters: %w", err)
-	}
+func (rs *MCPRecallServer) handleGetSessions(ctx context.Context, req *mcp.CallToolRequest, args GetSessionsInput) (*mcp.CallToolResult, any, error) {
 
 	// Direct key lookup takes precedence.
 	if args.Key != "" {
@@ -958,18 +512,18 @@ func (rs *MCPRecallServer) handleGetSessions(ctx context.Context, req *mcp.CallT
 			return &mcp.CallToolResult{
 				Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Session not found: %v", err)}},
 				IsError: true,
-			}, nil
+			}, nil, nil
 		}
 		if rec.Domain != memory.DomainSessions {
 			return &mcp.CallToolResult{
 				Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Key '%s' is not a session record (domain: %s). Use 'recall' for memories.", args.Key, rec.Domain)}},
 				IsError: true,
-			}, nil
+			}, nil, nil
 		}
 		return &mcp.CallToolResult{
-			StructuredContent: map[string]interface{}{
+			StructuredContent: map[string]any{
 				"summary": fmt.Sprintf("Session '%s' retrieved.", args.Key),
-				"data": map[string]interface{}{
+				"data": map[string]any{
 					"key":        args.Key,
 					"server_id":  rec.Category,
 					"content":    rec.Content,
@@ -978,7 +532,7 @@ func (rs *MCPRecallServer) handleGetSessions(ctx context.Context, req *mcp.CallT
 					"updated_at": rec.UpdatedAt,
 				},
 			},
-		}, nil
+		}, nil, nil
 	}
 
 	// Fallback: suffix-match scan using session_id across the sessions domain.
@@ -989,7 +543,7 @@ func (rs *MCPRecallServer) handleGetSessions(ctx context.Context, req *mcp.CallT
 			return &mcp.CallToolResult{
 				Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Error scanning sessions: %v", err)}},
 				IsError: true,
-			}, nil
+			}, nil, nil
 		}
 
 		// Find the most recent session whose composite key ends with :session_id.
@@ -1006,13 +560,13 @@ func (rs *MCPRecallServer) handleGetSessions(ctx context.Context, req *mcp.CallT
 			return &mcp.CallToolResult{
 				Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("No session found matching session_id '%s'.", args.SessionID)}},
 				IsError: true,
-			}, nil
+			}, nil, nil
 		}
 
 		return &mcp.CallToolResult{
-			StructuredContent: map[string]interface{}{
+			StructuredContent: map[string]any{
 				"summary": fmt.Sprintf("Session '%s' retrieved via session_id match.", bestMatch.Key),
-				"data": map[string]interface{}{
+				"data": map[string]any{
 					"key":        bestMatch.Key,
 					"server_id":  bestMatch.Record.Category,
 					"content":    bestMatch.Record.Content,
@@ -1021,25 +575,25 @@ func (rs *MCPRecallServer) handleGetSessions(ctx context.Context, req *mcp.CallT
 					"updated_at": bestMatch.Record.UpdatedAt,
 				},
 			},
-		}, nil
+		}, nil, nil
 	}
 
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{&mcp.TextContent{Text: "Either 'key' or 'session_id' must be provided."}},
 		IsError: true,
-	}, nil
+	}, nil, nil
 }
 
-func (rs *MCPRecallServer) handleGetMetrics(ctx context.Context, _ *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (rs *MCPRecallServer) handleGetMetrics(ctx context.Context, _ *mcp.CallToolRequest, args GetMetricsInput) (*mcp.CallToolResult, any, error) {
 	if os.Getenv("MCP_ORCHESTRATOR_OWNED") == "true" {
 		metrics := rs.store.GetMetrics()
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{&mcp.TextContent{Text: "JSON-RPC Telemetry Payload yielded correctly."}},
-			StructuredContent: map[string]interface{}{
+			StructuredContent: map[string]any{
 				"summary": "Shadow channel metric sync executed.",
 				"data":    metrics,
 			},
-		}, nil
+		}, nil, nil
 	}
 
 	// Database Entry Stats
@@ -1048,7 +602,7 @@ func (rs *MCPRecallServer) handleGetMetrics(ctx context.Context, _ *mcp.CallTool
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Error fetching DB stats: %v", err)}},
 			IsError: true,
-		}, nil
+		}, nil, nil
 	}
 
 	metrics := rs.store.GetMetrics()
@@ -1091,8 +645,8 @@ func (rs *MCPRecallServer) handleGetMetrics(ctx context.Context, _ *mcp.CallTool
 	summary := fmt.Sprintf("System metrics retrieved. App Uptime: %s, CPU: %.2f%%, Mem Used: %.2f%%",
 		appUptime.Round(time.Second), cpuUsage, vMem.UsedPercent)
 
-	data := map[string]interface{}{
-		"system": map[string]interface{}{
+	data := map[string]any{
+		"system": map[string]any{
 			"app_uptime":      appUptime.String(),
 			"host_uptime_sec": sysUptime.Seconds(),
 			"goroutines":      runtime.NumGoroutine(),
@@ -1102,7 +656,7 @@ func (rs *MCPRecallServer) handleGetMetrics(ctx context.Context, _ *mcp.CallTool
 			"memory_used_pct": vMem.UsedPercent,
 			"memory_alloc_mb": float64(vMem.Used) / 1024 / 1024,
 		},
-		"storage": map[string]interface{}{
+		"storage": map[string]any{
 			"db_entries":            count,
 			"standards_count":       metrics.Standards,
 			"projects_count":        metrics.Projects,
@@ -1140,53 +694,41 @@ func (rs *MCPRecallServer) handleGetMetrics(ctx context.Context, _ *mcp.CallTool
 
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{&mcp.TextContent{Text: sb.String()}},
-		StructuredContent: map[string]interface{}{
+		StructuredContent: map[string]any{
 			"summary": summary,
 			"data":    data,
 		},
-	}, nil
+	}, nil, nil
 }
 
-func (rs *MCPRecallServer) handleForget(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	var args struct {
-		Key string `json:"key"`
-	}
-	if err := json.Unmarshal(req.Params.Arguments, &args); err != nil {
-		return nil, fmt.Errorf("invalid parameters: %w", err)
-	}
+func (rs *MCPRecallServer) handleForget(ctx context.Context, req *mcp.CallToolRequest, args ForgetInput) (*mcp.CallToolResult, any, error) {
 
 	if err := rs.store.Delete(ctx, args.Key); err != nil {
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Error: %v", err)}},
 			IsError: true,
-		}, nil
+		}, nil, nil
 	}
 
 	summary := fmt.Sprintf("Memory for '%s' forgotten.", args.Key)
 	return &mcp.CallToolResult{
-		StructuredContent: map[string]interface{}{
+		StructuredContent: map[string]any{
 			"summary": summary,
-			"data": map[string]interface{}{
+			"data": map[string]any{
 				"message": summary,
 				"key":     args.Key,
 			},
 		},
-	}, nil
+	}, nil, nil
 }
 
-func (rs *MCPRecallServer) handleBatchRemember(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	var args struct {
-		Entries []memory.BatchEntry `json:"entries"`
-	}
-	if err := json.Unmarshal(req.Params.Arguments, &args); err != nil {
-		return nil, fmt.Errorf("invalid parameters: %w", err)
-	}
+func (rs *MCPRecallServer) handleBatchRemember(ctx context.Context, req *mcp.CallToolRequest, args BatchRememberInput) (*mcp.CallToolResult, any, error) {
 
 	if len(args.Entries) == 0 {
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{&mcp.TextContent{Text: "Error: entries array is empty"}},
 			IsError: true,
-		}, nil
+		}, nil, nil
 	}
 
 	// Validate each entry.
@@ -1195,13 +737,13 @@ func (rs *MCPRecallServer) handleBatchRemember(ctx context.Context, req *mcp.Cal
 			return &mcp.CallToolResult{
 				Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Error: entry[%d] has an empty key", i)}},
 				IsError: true,
-			}, nil
+			}, nil, nil
 		}
 		if strings.TrimSpace(e.Value) == "" {
 			return &mcp.CallToolResult{
 				Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Error: entry[%d] (key=%q) has an empty value", i, e.Key)}},
 				IsError: true,
-			}, nil
+			}, nil, nil
 		}
 	}
 
@@ -1210,35 +752,29 @@ func (rs *MCPRecallServer) handleBatchRemember(ctx context.Context, req *mcp.Cal
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Batch save error: %v", err)}},
 			IsError: true,
-		}, nil
+		}, nil, nil
 	}
 
 	summary := fmt.Sprintf("Batch save complete: %d stored, %d failed.", stored, len(batchErrors))
 	return &mcp.CallToolResult{
-		StructuredContent: map[string]interface{}{
+		StructuredContent: map[string]any{
 			"summary": summary,
-			"data": map[string]interface{}{
+			"data": map[string]any{
 				"stored": stored,
 				"failed": len(batchErrors),
 				"errors": batchErrors,
 			},
 		},
-	}, nil
+	}, nil, nil
 }
 
-func (rs *MCPRecallServer) handleBatchRecall(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	var args struct {
-		Keys []string `json:"keys"`
-	}
-	if err := json.Unmarshal(req.Params.Arguments, &args); err != nil {
-		return nil, fmt.Errorf("invalid parameters: %w", err)
-	}
+func (rs *MCPRecallServer) handleBatchRecall(ctx context.Context, req *mcp.CallToolRequest, args BatchRecallInput) (*mcp.CallToolResult, any, error) {
 
 	if len(args.Keys) == 0 {
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{&mcp.TextContent{Text: "Error: keys array is empty"}},
 			IsError: true,
-		}, nil
+		}, nil, nil
 	}
 
 	found, missing, err := rs.store.GetBatch(ctx, args.Keys)
@@ -1246,36 +782,36 @@ func (rs *MCPRecallServer) handleBatchRecall(ctx context.Context, req *mcp.CallT
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Batch recall error: %v", err)}},
 			IsError: true,
-		}, nil
+		}, nil, nil
 	}
 
 	summary := fmt.Sprintf("Batch recall complete: %d found, %d missing.", len(found), len(missing))
 	return &mcp.CallToolResult{
-		StructuredContent: map[string]interface{}{
+		StructuredContent: map[string]any{
 			"summary": summary,
-			"data": map[string]interface{}{
+			"data": map[string]any{
 				"found":   len(found),
 				"missing": missing,
 				"entries": found,
 			},
 		},
-	}, nil
+	}, nil, nil
 }
 
-func (rs *MCPRecallServer) handleListCategories(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (rs *MCPRecallServer) handleListCategories(ctx context.Context, req *mcp.CallToolRequest, _ ListCategoriesInput) (*mcp.CallToolResult, any, error) {
 
 	categories, err := rs.store.ListCategories(ctx)
 	if err != nil {
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Error fetching categories: %v", err)}},
 			IsError: true,
-		}, nil
+		}, nil, nil
 	}
 
 	return rs.formatResults("Memory Categories", req, categories)
 }
 
-func (rs *MCPRecallServer) formatResults(title string, req *mcp.CallToolRequest, results any) (*mcp.CallToolResult, error) {
+func (rs *MCPRecallServer) formatResults(title string, req *mcp.CallToolRequest, results any) (*mcp.CallToolResult, any, error) {
 	var summary string
 
 	var artifactPath string
@@ -1295,7 +831,7 @@ func (rs *MCPRecallServer) formatResults(title string, req *mcp.CallToolRequest,
 		count = len(v)
 	case []string:
 		count = len(v)
-	case []interface{}:
+	case []any:
 	case map[string]int:
 		count = len(v)
 	}
@@ -1304,17 +840,17 @@ func (rs *MCPRecallServer) formatResults(title string, req *mcp.CallToolRequest,
 
 	if count == 0 {
 		summary = fmt.Sprintf("%s: No results found.", title)
-		res.StructuredContent = map[string]interface{}{
+		res.StructuredContent = map[string]any{
 			"summary": summary,
-			"data": map[string]interface{}{
+			"data": map[string]any{
 				"message": "No matches found.",
 			},
 		}
 	} else {
 		summary = fmt.Sprintf("%s: Found %d entries.", title, count)
-		res.StructuredContent = map[string]interface{}{
+		res.StructuredContent = map[string]any{
 			"summary": summary,
-			"data": map[string]interface{}{
+			"data": map[string]any{
 				"title":   title,
 				"count":   count,
 				"entries": results,
@@ -1325,18 +861,18 @@ func (rs *MCPRecallServer) formatResults(title string, req *mcp.CallToolRequest,
 	if rawJSON, err := json.MarshalIndent(res.StructuredContent, "", "  "); err == nil {
 		if artifactPath != "" {
 			if err := os.MkdirAll(filepath.Dir(artifactPath), 0o755); err != nil {
-				return nil, fmt.Errorf("failed to create artifact directory: %w", err)
+				return nil, nil, fmt.Errorf("failed to create artifact directory: %w", err)
 			}
 			if err := os.WriteFile(artifactPath, rawJSON, 0o644); err != nil {
-				return nil, fmt.Errorf("failed to write artifact: %w", err)
+				return nil, nil, fmt.Errorf("failed to write artifact: %w", err)
 			}
 			res.Content = []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Artifact written to: %s", artifactPath)}}
-			return res, nil
+			return res, nil, nil
 		}
 		res.Content = []mcp.Content{&mcp.TextContent{Text: string(rawJSON)}}
 	}
 
-	return res, nil
+	return res, nil, nil
 }
 
 // Serve initializes the transport and starts serving the MCP protocol.
@@ -1350,13 +886,7 @@ func (rs *MCPRecallServer) Serve(ctx context.Context, stdout io.WriteCloser, rea
 	return err
 }
 
-func (rs *MCPRecallServer) handleExportMemories(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	var args struct {
-		Filename string `json:"filename"`
-	}
-	if err := json.Unmarshal(req.Params.Arguments, &args); err != nil {
-		return nil, fmt.Errorf("invalid json arguments: %w", err)
-	}
+func (rs *MCPRecallServer) handleExportMemories(ctx context.Context, req *mcp.CallToolRequest, args ExportMemoriesInput) (*mcp.CallToolResult, any, error) {
 
 	fname := args.Filename
 	if fname == "" {
@@ -1371,27 +901,21 @@ func (rs *MCPRecallServer) handleExportMemories(ctx context.Context, req *mcp.Ca
 		return &mcp.CallToolResult{
 			IsError: true,
 			Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Failed to export: %v", err)}},
-		}, nil
+		}, nil, nil
 	}
 
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Successfully exported %d records to %s", count, exportPath)}},
-	}, nil
+	}, nil, nil
 }
 
-func (rs *MCPRecallServer) handleImportMemories(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	var args struct {
-		Filename string `json:"filename"`
-	}
-	if err := json.Unmarshal(req.Params.Arguments, &args); err != nil {
-		return nil, fmt.Errorf("invalid json arguments: %w", err)
-	}
+func (rs *MCPRecallServer) handleImportMemories(ctx context.Context, req *mcp.CallToolRequest, args ImportMemoriesInput) (*mcp.CallToolResult, any, error) {
 
 	if args.Filename == "" {
 		return &mcp.CallToolResult{
 			IsError: true,
 			Content: []mcp.Content{&mcp.TextContent{Text: "Error: filename is strictly required for import."}},
-		}, nil
+		}, nil, nil
 	}
 
 	fname := filepath.Base(args.Filename)
@@ -1402,36 +926,36 @@ func (rs *MCPRecallServer) handleImportMemories(ctx context.Context, req *mcp.Ca
 		return &mcp.CallToolResult{
 			IsError: true,
 			Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Catastrophic error during import: %v. %d records succeeded.", err, count)}},
-		}, nil
+		}, nil, nil
 	}
 
 	if len(errList) > 0 {
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Partially imported %d records but encountered %d errors (e.g. %v).", count, len(errList), errList[0])}},
-		}, nil
+		}, nil, nil
 	}
 
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Successfully imported %d records from %s", count, importPath)}},
-	}, nil
+	}, nil, nil
 }
 
-func (rs *MCPRecallServer) handleReloadCache(ctx context.Context, _ *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (rs *MCPRecallServer) handleReloadCache(ctx context.Context, _ *mcp.CallToolRequest, args ReloadCacheInput) (*mcp.CallToolResult, any, error) {
 	if rs.store == nil {
 		return &mcp.CallToolResult{
 			IsError: true,
 			Content: []mcp.Content{&mcp.TextContent{Text: "Error: store not initialized"}},
-		}, nil
+		}, nil, nil
 	}
 
 	if err := rs.store.SyncSearchIndex(ctx); err != nil {
 		return &mcp.CallToolResult{
 			IsError: true,
 			Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Failed to reload cache: %v", err)}},
-		}, nil
+		}, nil, nil
 	}
 
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{&mcp.TextContent{Text: "Search cache successfully re-synchronized with source of truth."}},
-	}, nil
+	}, nil, nil
 }

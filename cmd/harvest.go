@@ -48,7 +48,7 @@ func runHarvestViaMCP(namespace, pkgPath string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	url := fmt.Sprintf("http://127.0.0.1:%d/mcp", port)
+	url := fmt.Sprintf("http://127.0.0.1:%d/mcp/internal", port)
 	fmt.Fprintf(os.Stderr, "Connecting to local recall server at %s...\n", url)
 
 	mcpClient := client.NewMCPClient(url)
@@ -68,7 +68,7 @@ func runHarvestViaMCP(namespace, pkgPath string) error {
 
 	fmt.Fprintf(os.Stderr, "Connected to running Recall server. Firing %s -> %s\n", namespace, pkgPath)
 
-	toolArgs := map[string]interface{}{
+	toolArgs := map[string]any{
 		"namespace":   namespace,
 		"target_path": pkgPath,
 	}

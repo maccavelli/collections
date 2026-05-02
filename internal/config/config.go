@@ -51,6 +51,7 @@ type State struct {
 	APIPort          int           `mapstructure:"apiPort"`
 	Harvest          HarvestConfig `mapstructure:"harvest"`
 	SafeTools        []string      `mapstructure:"safeTools"`
+	SafeToolsInternal []string      `mapstructure:"safeToolsInternal"`
 	Batch            BatchConfig   `mapstructure:"batchsettings"`
 	SessionPurgeDays int           `mapstructure:"sessionpurgedays"`
 }
@@ -114,16 +115,30 @@ func New(version string) *Config {
 
 	// Default SafeTools dynamically exposed to read-only Streamable HTTP endpoint
 	viper.SetDefault("safeTools", []string{
+		"save_sessions",
+		"search",
+		"get",
+		"list",
+	})
+
+	// Default SafeToolsInternal explicitly bypassing restrictions for the internal CLI
+	viper.SetDefault("safeToolsInternal", []string{
 		"recall",
 		"batch_recall",
-		"export_memories",
-		"import_memories",
+		"export_records",
+		"import_records",
 		"save_sessions",
 		"search",
 		"get",
 		"list",
 		"harvest",
 		"delete",
+		"prune_records",
+		"forget",
+		"reload_cache",
+		"get_internal_logs",
+		"get_metrics",
+		"recall_recent",
 	})
 
 	if err := viper.ReadInConfig(); err != nil {
@@ -239,6 +254,14 @@ func (c *Config) SafeTools() []string {
 	defer c.mu.RUnlock()
 	tools := make([]string, len(c.state.SafeTools))
 	copy(tools, c.state.SafeTools)
+	return tools
+}
+
+func (c *Config) SafeToolsInternal() []string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	tools := make([]string, len(c.state.SafeToolsInternal))
+	copy(tools, c.state.SafeToolsInternal)
 	return tools
 }
 

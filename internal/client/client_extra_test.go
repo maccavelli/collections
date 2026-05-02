@@ -26,7 +26,7 @@ func TestCallDatabaseTool_CancelledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // pre-cancel
 
-	_, err := c.CallDatabaseTool(ctx, "test_tool", map[string]interface{}{"key": "value"})
+	_, err := c.CallDatabaseTool(ctx, "test_tool", map[string]any{"key": "value"})
 	if err == nil {
 		t.Error("expected error on cancelled context when recall is not enabled")
 	}

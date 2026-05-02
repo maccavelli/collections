@@ -17,16 +17,31 @@ encryptionkey: %s
 exportdir: /tmp
 # Internal codename mapping for the storage schema
 name: recall
-# A curated whitelist of MCP tools this server is permitted to expose
+# A curated whitelist of MCP tools this server is permitted to expose externally
 safetools:
+    - save_sessions
+    - search
+    - get
+    - list
+# A full administrative footprint of tools exposed ONLY to the internal localhost CLI
+safetools_internal:
     - recall
     - batch_recall
+    - export_records
+    - import_records
+    - save_sessions
     - search
     - get
     - list
     - harvest
     - delete
-# Age limit in days for preserving sessions before they are purged via context_vacuum
+    - prune_records
+    - forget
+    - reload_cache
+    - get_internal_logs
+    - get_metrics
+    - recall_recent
+# Age limit in days for preserving sessions before they are purged via prune_records
 sessionpurgedays: 5
 # Toggles whether hybrid database search (BM25 + Semantic/Fuzzy) is active
 searchenabled: true
