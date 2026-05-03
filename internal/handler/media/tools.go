@@ -30,9 +30,10 @@ func (t *MediaTool) Name() string {
 }
 
 type MediaInput struct {
+	util.UniversalBaseInput
 	Query      string `json:"query" jsonschema:"The search keywords"`
-	MaxResults int    `json:"max_results" jsonschema:"Maximum results to return (default 5). Low counts are faster and more token-efficient."`
-	Format     string `json:"format" jsonschema:"Output format: 'hybrid' (JSON metadata + markdown content), 'json' (pure structured data), or 'markdown' (all markdown formatting).,enum=hybrid,enum=json,enum=markdown"`
+	MaxResults int    `json:"max_results,omitempty" jsonschema:"Maximum results to return (default 5). Low counts are faster and more token-efficient."`
+	Format     string `json:"format,omitempty" jsonschema:"Output format: 'hybrid' (JSON metadata + markdown content), 'json' (pure structured data), or 'markdown' (all markdown formatting).,enum=hybrid,enum=json,enum=markdown"`
 }
 
 func (t *MediaTool) Register(s *mcp.Server) {
