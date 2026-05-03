@@ -1,17 +1,20 @@
 # 🦆 MagicDuck Sub-Server
 
-A high-performance Model Context Protocol (MCP) sub-server providing secure web search and media discovery via DuckDuckGo.
+A high-performance Model Context Protocol (MCP) sub-server providing secure web search and
+media discovery via DuckDuckGo.
 
 ## 🚀 Overview
 
-`mcp-server-duckduckgo` enables AI agents to retrieve real-time information from the web without the need for complex API keys or tracking. It provides a clean, privacy-focused interface for web search, image discovery, and news retrieval.
+`mcp-server-duckduckgo` enables AI agents to retrieve real-time information from the web without the
+need for complex API keys or tracking. It provides a clean, privacy-focused interface for web search,
+image discovery, and news retrieval.
 
 ### 📋 Core Pillars
 
-1.  **Privacy-First Search**: Executes queries via DuckDuckGo, ensuring no user tracking.
-2.  **Rich Media Discovery**: Tools for finding images and videos relevant to the current task.
-3.  **Real-Time News**: Fetch the latest headlines for up-to-date context.
-4.  **Optimized Transport**: Uses a high-performance stdio transport for minimal latency.
+* **Privacy-First Search**: Executes queries via DuckDuckGo, ensuring no user tracking.
+* **Rich Media Discovery**: Tools for finding images and videos relevant to the current task.
+* **Real-Time News**: Fetch the latest headlines for up-to-date context.
+* **Optimized Transport**: Uses a high-performance stdio transport for minimal latency.
 
 ---
 
@@ -19,13 +22,15 @@ A high-performance Model Context Protocol (MCP) sub-server providing secure web 
 
 ### Specialized Tools
 
-*   **`search_web`**: Performs a standard text search and returns a summary of top results.
-*   **`search_images`**: Finds images relevant to the query.
-*   **`search_news`**: Retrieves the latest news articles.
-*   **`get_web_content`**: (If applicable) Extracts markdown content from a specific URL.
+* **`search_web`**: Performs a standard text search and returns a summary of top results.
+* **`search_images`**: Finds images relevant to the query.
+* **`search_news`**: Retrieves the latest news articles.
+* **`get_web_content`**: (If applicable) Extracts markdown content from a specific URL.
 
 ### Orchestration with MagicTools (Recommended)
+
 Invoke DuckDuckGo tools via `magictools:call_proxy`:
+
 ```json
 {
   "name": "magictools:call_proxy",
@@ -41,11 +46,13 @@ Invoke DuckDuckGo tools via `magictools:call_proxy`:
 ## 📦 Installation & Setup
 
 ### 1. Build the Binary
+
 ```bash
 make build
 ```
 
 ### 2. MagicTools Orchestrator Configuration (Recommended)
+
 Add this to your `~/.config/mcp-server-magictools/servers.yaml` to run DuckDuckGo as an orchestrated sub-server:
 
 ```yaml
@@ -60,12 +67,32 @@ Add this to your `~/.config/mcp-server-magictools/servers.yaml` to run DuckDuckG
 ```
 
 ### 3. Direct IDE Configuration
+
 If you prefer to run the server standalone, use the following configuration for your IDE:
 
 #### 🌌 Antigravity / VSCode (Roo Code / Cline)
+
 **Paths:**
-- **Linux/macOS:** `~/.gemini/antigravity/mcp_config.json`
-- **Windows:** `%APPDATA%\Antigravity\mcp_config.json`
+
+* **Linux/macOS:** `~/.gemini/antigravity/mcp_config.json`
+* **Windows:** `%APPDATA%\Antigravity\mcp_config.json`
+
+##### Linux/macOS Example
+
+```json
+{
+  "mcpServers": {
+    "duckduckgo": {
+      "command": "/absolute/path/to/mcp-server-duckduckgo",
+      "env": {
+        "HOME": "/absolute/path/to/home"
+      }
+    }
+  }
+}
+```
+
+##### Windows Example (Antigravity)
 
 ```json
 {
@@ -81,9 +108,13 @@ If you prefer to run the server standalone, use the following configuration for 
 ```
 
 #### 🤖 Claude Desktop
+
 **Paths:**
-- **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
-- **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
+
+* **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
+* **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
+
+##### macOS Example
 
 ```json
 {
@@ -92,6 +123,21 @@ If you prefer to run the server standalone, use the following configuration for 
       "command": "/absolute/path/to/mcp-server-duckduckgo",
       "env": {
         "HOME": "/absolute/path/to/home"
+      }
+    }
+  }
+}
+```
+
+##### Windows Example (Claude)
+
+```json
+{
+  "mcpServers": {
+    "duckduckgo": {
+      "command": "C:\\path\\to\\mcp-server-duckduckgo.exe",
+      "env": {
+        "HOME": "C:\\Users\\YourName"
       }
     }
   }

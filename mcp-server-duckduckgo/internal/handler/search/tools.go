@@ -32,9 +32,10 @@ func (t *SearchTool) Name() string {
 }
 
 type SearchInput struct {
+	util.UniversalBaseInput
 	Query      string `json:"query" jsonschema:"The primary search query string to execute"`
-	MaxResults int    `json:"max_results" jsonschema:"The maximum number of search results to return. Default is 5."`
-	Format     string `json:"format" jsonschema:"Output format: 'hybrid', 'json', or 'markdown'.,enum=hybrid,enum=json,enum=markdown"`
+	MaxResults int    `json:"max_results,omitempty" jsonschema:"The maximum number of search results to return. Default is 5."`
+	Format     string `json:"format,omitempty" jsonschema:"Output format: 'hybrid', 'json', or 'markdown'.,enum=hybrid,enum=json,enum=markdown"`
 }
 
 func (t *SearchTool) Register(s *mcp.Server) {
