@@ -1,3 +1,4 @@
+// Package models provides functionality for the models subsystem.
 package models
 
 // AporiaReport represents the highly compressed dialectic critique model.

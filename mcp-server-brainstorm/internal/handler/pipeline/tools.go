@@ -1,3 +1,4 @@
+// Package pipeline provides functionality for the pipeline subsystem.
 package pipeline
 
 import (

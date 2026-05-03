@@ -1,3 +1,4 @@
+// Package design provides functionality for the design subsystem.
 package design
 
 import (
@@ -9,6 +10,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"mcp-server-brainstorm/internal/engine"
 	"mcp-server-brainstorm/internal/models"
+	"mcp-server-brainstorm/internal/staging"
 	"mcp-server-brainstorm/internal/state"
 	"mcp-server-brainstorm/internal/util"
 )
@@ -19,10 +21,12 @@ type ThesisArchitectTool struct {
 	Engine  *engine.Engine
 }
 
+// Name performs the Name operation.
 func (t *ThesisArchitectTool) Name() string {
 	return "thesis_architect"
 }
 
+// Register performs the Register operation.
 func (t *ThesisArchitectTool) Register(s util.SessionProvider) {
 	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
@@ -35,6 +39,7 @@ type ThesisInput struct {
 	models.UniversalPipelineInput
 }
 
+// Handle performs the Handle operation.
 func (t *ThesisArchitectTool) Handle(ctx context.Context, req *mcp.CallToolRequest, input ThesisInput) (*mcp.CallToolResult, any, error) {
 	session, err := t.Manager.LoadSession(ctx)
 	if err != nil {
@@ -126,6 +131,11 @@ func (t *ThesisArchitectTool) Handle(ctx context.Context, req *mcp.CallToolReque
 			doc.Summary = returnSummary
 			returnData = doc
 		}
+	}
+
+	// BuntDB Socratic Verdict Staging
+	if input.SessionID != "" && t.Engine != nil && t.Engine.DB != nil {
+		_ = staging.SaveSocraticVerdict(t.Engine.DB, input.SessionID, t.Name(), "THESIS_PROPOSED", doc)
 	}
 
 	return &mcp.CallToolResult{}, returnData, nil

@@ -1,3 +1,4 @@
+// Package design provides functionality for the design subsystem.
 package design
 
 import (
@@ -20,10 +21,12 @@ type CritiqueDesignTool struct {
 	Engine  *engine.Engine
 }
 
+// Name performs the Name operation.
 func (t *CritiqueDesignTool) Name() string {
 	return "critique_design"
 }
 
+// Register performs the Register operation.
 func (t *CritiqueDesignTool) Register(s util.SessionProvider) {
 	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
@@ -31,10 +34,12 @@ func (t *CritiqueDesignTool) Register(s util.SessionProvider) {
 	}, t.Handle)
 }
 
+// DesignInput defines the DesignInput structure.
 type DesignInput struct {
 	models.UniversalPipelineInput
 }
 
+// Handle performs the Handle operation.
 func (t *CritiqueDesignTool) Handle(ctx context.Context, req *mcp.CallToolRequest, input DesignInput) (*mcp.CallToolResult, any, error) {
 	session, err := t.Manager.LoadSession(ctx)
 	if err != nil {
@@ -130,10 +135,12 @@ type AnalyzeEvolutionTool struct {
 	Engine  *engine.Engine
 }
 
+// Name performs the Name operation.
 func (t *AnalyzeEvolutionTool) Name() string {
 	return "analyze_evolution"
 }
 
+// Register performs the Register operation.
 func (t *AnalyzeEvolutionTool) Register(s util.SessionProvider) {
 	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
@@ -141,10 +148,12 @@ func (t *AnalyzeEvolutionTool) Register(s util.SessionProvider) {
 	}, t.Handle)
 }
 
+// EvolutionInput defines the EvolutionInput structure.
 type EvolutionInput struct {
 	models.UniversalPipelineInput
 }
 
+// Handle performs the Handle operation.
 func (t *AnalyzeEvolutionTool) Handle(ctx context.Context, req *mcp.CallToolRequest, input EvolutionInput) (*mcp.CallToolResult, any, error) {
 	session, err := t.Manager.LoadSession(ctx)
 	if err != nil {
@@ -240,10 +249,12 @@ type ClarifyRequirementsTool struct {
 	Engine  *engine.Engine
 }
 
+// Name performs the Name operation.
 func (t *ClarifyRequirementsTool) Name() string {
 	return "clarify_requirements"
 }
 
+// Register performs the Register operation.
 func (t *ClarifyRequirementsTool) Register(s util.SessionProvider) {
 	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
@@ -251,10 +262,12 @@ func (t *ClarifyRequirementsTool) Register(s util.SessionProvider) {
 	}, t.Handle)
 }
 
+// RequirementsInput defines the RequirementsInput structure.
 type RequirementsInput struct {
 	models.UniversalPipelineInput
 }
 
+// Handle performs the Handle operation.
 func (t *ClarifyRequirementsTool) Handle(ctx context.Context, req *mcp.CallToolRequest, input RequirementsInput) (*mcp.CallToolResult, any, error) {
 	session, err := t.Manager.LoadSession(ctx)
 	if err != nil {

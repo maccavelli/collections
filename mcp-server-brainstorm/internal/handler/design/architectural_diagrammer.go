@@ -1,3 +1,4 @@
+// Package design provides functionality for the design subsystem.
 package design
 
 import (
@@ -20,10 +21,12 @@ type ArchitecturalDiagrammerTool struct {
 	Engine  *engine.Engine
 }
 
+// Name performs the Name operation.
 func (t *ArchitecturalDiagrammerTool) Name() string {
 	return "architectural_diagrammer"
 }
 
+// Register performs the Register operation.
 func (t *ArchitecturalDiagrammerTool) Register(s util.SessionProvider) {
 	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
@@ -31,10 +34,12 @@ func (t *ArchitecturalDiagrammerTool) Register(s util.SessionProvider) {
 	}, t.Handle)
 }
 
+// DiagrammerInput defines the DiagrammerInput structure.
 type DiagrammerInput struct {
 	models.UniversalPipelineInput
 }
 
+// Handle performs the Handle operation.
 func (t *ArchitecturalDiagrammerTool) Handle(ctx context.Context, req *mcp.CallToolRequest, input DiagrammerInput) (*mcp.CallToolResult, any, error) {
 	session, err := t.Manager.LoadSession(ctx)
 	if err != nil {

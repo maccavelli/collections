@@ -1,3 +1,4 @@
+// Package server provides functionality for the server subsystem.
 package server
 
 import (
@@ -8,11 +9,13 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
+// MCPServer defines the MCPServer structure.
 type MCPServer struct {
 	mcpServer *mcp.Server
 	session   *mcp.ServerSession
 }
 
+// NewMCPServer performs the NewMCPServer operation.
 func NewMCPServer(name, version string, logger *slog.Logger) *MCPServer {
 	return &MCPServer{
 		mcpServer: mcp.NewServer(
@@ -22,10 +25,12 @@ func NewMCPServer(name, version string, logger *slog.Logger) *MCPServer {
 	}
 }
 
+// MCPServer performs the MCPServer operation.
 func (s *MCPServer) MCPServer() *mcp.Server {
 	return s.mcpServer
 }
 
+// Serve performs the Serve operation.
 func (s *MCPServer) Serve(ctx context.Context, stdout io.WriteCloser, reader io.ReadCloser) error {
 	t := &mcp.IOTransport{
 		Reader: reader,
@@ -38,6 +43,7 @@ func (s *MCPServer) Serve(ctx context.Context, stdout io.WriteCloser, reader io.
 	return err
 }
 
+// Session performs the Session operation.
 func (s *MCPServer) Session() *mcp.ServerSession {
 	return s.session
 }

@@ -1,3 +1,4 @@
+// Package engine provides functionality for the engine subsystem.
 package engine
 
 import (

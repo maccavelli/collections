@@ -1,3 +1,4 @@
+// Package pipeline provides functionality for the pipeline subsystem.
 package pipeline
 
 import (
@@ -9,19 +10,23 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"mcp-server-brainstorm/internal/engine"
 	"mcp-server-brainstorm/internal/models"
+	"mcp-server-brainstorm/internal/staging"
 	"mcp-server-brainstorm/internal/state"
 	"mcp-server-brainstorm/internal/util"
 )
 
+// ComplexityForecasterTool defines the ComplexityForecasterTool structure.
 type ComplexityForecasterTool struct {
 	Manager *state.Manager
 	Engine  *engine.Engine
 }
 
+// Name performs the Name operation.
 func (t *ComplexityForecasterTool) Name() string {
 	return "brainstorm_complexity_forecaster"
 }
 
+// Register performs the Register operation.
 func (t *ComplexityForecasterTool) Register(s util.SessionProvider) {
 	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
@@ -29,10 +34,12 @@ func (t *ComplexityForecasterTool) Register(s util.SessionProvider) {
 	}, t.Handle)
 }
 
+// ComplexityForecasterInput defines the ComplexityForecasterInput structure.
 type ComplexityForecasterInput struct {
 	models.UniversalPipelineInput
 }
 
+// Handle performs the Handle operation.
 func (t *ComplexityForecasterTool) Handle(ctx context.Context, _ *mcp.CallToolRequest, input ComplexityForecasterInput) (*mcp.CallToolResult, any, error) {
 	if input.Context == "" {
 		res := &mcp.CallToolResult{}
@@ -73,6 +80,11 @@ func (t *ComplexityForecasterTool) Handle(ctx context.Context, _ *mcp.CallToolRe
 
 	if input.SessionID != "" && recallAvailable {
 		_ = t.Engine.ExternalClient.SaveSession(ctx, input.SessionID, input.SessionID, payload)
+	}
+
+	// BuntDB Socratic Verdict Staging
+	if input.SessionID != "" && t.Engine != nil && t.Engine.DB != nil {
+		_ = staging.SaveSocraticVerdict(t.Engine.DB, input.SessionID, t.Name(), "APPROVED_PREDICTION", payload)
 	}
 
 	return &mcp.CallToolResult{}, payload, nil

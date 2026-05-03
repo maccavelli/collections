@@ -1,3 +1,4 @@
+// Package external provides functionality for the external subsystem.
 package external
 
 import (

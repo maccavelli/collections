@@ -1,3 +1,4 @@
+// Package design provides functionality for the design subsystem.
 package design
 
 import (
@@ -20,10 +21,12 @@ type PeerReviewTool struct {
 	Engine  *engine.Engine
 }
 
+// Name performs the Name operation.
 func (t *PeerReviewTool) Name() string {
 	return "peer_review"
 }
 
+// Register performs the Register operation.
 func (t *PeerReviewTool) Register(s util.SessionProvider) {
 	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
@@ -31,12 +34,14 @@ func (t *PeerReviewTool) Register(s util.SessionProvider) {
 	}, t.Handle)
 }
 
+// PeerReviewInput defines the PeerReviewInput structure.
 type PeerReviewInput struct {
 	models.UniversalPipelineInput
 	Focus           string `json:"focus"`
 	ComponentDesign string `json:"component_design"`
 }
 
+// Handle performs the Handle operation.
 func (t *PeerReviewTool) Handle(ctx context.Context, req *mcp.CallToolRequest, input PeerReviewInput) (*mcp.CallToolResult, any, error) {
 	session, err := t.Manager.LoadSession(ctx)
 	if err != nil {

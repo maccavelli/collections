@@ -1,3 +1,4 @@
+// Package persistent provides functionality for the persistent subsystem.
 package persistent
 
 import (

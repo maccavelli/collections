@@ -1,3 +1,4 @@
+// Package pipeline provides functionality for the pipeline subsystem.
 package pipeline
 
 import (
@@ -24,10 +25,12 @@ type AporiaEngineTool struct {
 	Engine  *engine.Engine
 }
 
+// Name performs the Name operation.
 func (t *AporiaEngineTool) Name() string {
 	return "aporia_engine"
 }
 
+// Register performs the Register operation.
 func (t *AporiaEngineTool) Register(s util.SessionProvider) {
 	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
@@ -40,6 +43,7 @@ type AporiaInput struct {
 	models.UniversalPipelineInput
 }
 
+// Handle performs the Handle operation.
 func (t *AporiaEngineTool) Handle(ctx context.Context, _ *mcp.CallToolRequest, input AporiaInput) (*mcp.CallToolResult, any, error) {
 	session, err := t.Manager.LoadSession(ctx)
 	if err != nil {
@@ -204,6 +208,11 @@ func (t *AporiaEngineTool) Handle(ctx context.Context, _ *mcp.CallToolRequest, i
 	// CSSA publishing
 	if input.SessionID != "" && recallAvailable {
 		_ = t.Engine.ExternalClient.SaveSession(ctx, input.SessionID, input.SessionID, report)
+	}
+
+	// BuntDB Socratic Verdict Staging
+	if input.SessionID != "" && t.Engine != nil && t.Engine.DB != nil {
+		_ = staging.SaveSocraticVerdict(t.Engine.DB, input.SessionID, t.Name(), report.SafePathVerdict, report)
 	}
 
 	return &mcp.CallToolResult{}, report, nil
