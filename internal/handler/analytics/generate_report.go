@@ -1,3 +1,4 @@
+// Package analytics provides functionality for the analytics subsystem.
 package analytics
 
 import (
@@ -6,12 +7,14 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"mcp-server-brainstorm/internal/engine"
 	"mcp-server-brainstorm/internal/models"
+	"mcp-server-brainstorm/internal/staging"
 	"mcp-server-brainstorm/internal/state"
 	"mcp-server-brainstorm/internal/util"
 )
@@ -23,10 +26,12 @@ type GenerateReportTool struct {
 	Engine  *engine.Engine
 }
 
+// Name performs the Name operation.
 func (t *GenerateReportTool) Name() string {
 	return "generate_final_report"
 }
 
+// Register performs the Register operation.
 func (t *GenerateReportTool) Register(s util.SessionProvider) {
 	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
@@ -63,6 +68,7 @@ var conflictKeywords = []string{
 	`"CRITICAL"`,
 }
 
+// Handle performs the Handle operation.
 func (t *GenerateReportTool) Handle(ctx context.Context, req *mcp.CallToolRequest, input GenerateReportInput) (*mcp.CallToolResult, any, error) {
 	// Early context guard.
 	select {
@@ -292,6 +298,23 @@ func (t *GenerateReportTool) Handle(ctx context.Context, req *mcp.CallToolReques
 		}
 	}
 
+	// Load Socratic Verdicts from local BuntDB
+	if t.Engine != nil && t.Engine.DB != nil {
+		if verdicts, err := staging.LoadSocraticVerdicts(t.Engine.DB, input.SessionID); err == nil && len(verdicts) > 0 {
+			sb.WriteString("## Stage-by-Stage Socratic Verdicts\n\n")
+			sb.WriteString("| Stage / Tool | Verdict |\n")
+			sb.WriteString("|--------------|---------|\n")
+			for _, v := range verdicts {
+				toolName, _ := v["tool"].(string)
+				verdictStr, _ := v["verdict"].(string)
+				sb.WriteString(fmt.Sprintf("| %s | `%s` |\n", toolName, verdictStr))
+			}
+			sb.WriteString("\n")
+		} else if err != nil {
+			slog.Warn("generate_final_report: failed to load socratic verdicts", "err", err)
+		}
+	}
+
 	sb.WriteString("## Technical Delta\n\n```json\n")
 	sb.WriteString(string(rawJson))
 	sb.WriteString("\n```\n")
@@ -308,6 +331,29 @@ func (t *GenerateReportTool) Handle(ctx context.Context, req *mcp.CallToolReques
 
 	now := time.Now().UTC().Format(time.RFC3339)
 
+	reportContent := sb.String()
+
+	// Telemetry Artifact Fan-out
+	go func(content string, sID string) {
+		if sID == "" {
+			return
+		}
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			return
+		}
+		basePath := filepath.Join(homeDir, ".gemini", "antigravity", "brain", sID)
+		if err := os.MkdirAll(basePath, 0755); err != nil {
+			return
+		}
+		mdPath := filepath.Join(basePath, "brainstorm_final_report.md")
+		_ = os.WriteFile(mdPath, []byte(content), 0644)
+		
+		jsonPath := mdPath + ".metadata.json"
+		metaContent := `{"artifactType": "ARTIFACT_TYPE_WALKTHROUGH", "summary": "Final report automatically surfaced from pipeline telemetry.", "requestFeedback": false, "isArtifact": true}`
+		_ = os.WriteFile(jsonPath, []byte(metaContent), 0644)
+	}(reportContent, input.SessionID)
+
 	report := HybridReport{
 		Status: "success",
 		Metadata: ReportMetadata{
@@ -317,7 +363,7 @@ func (t *GenerateReportTool) Handle(ctx context.Context, req *mcp.CallToolReques
 			ServerID:    "brainstorm",
 			GeneratedAt: now,
 		},
-		MarkdownPayload: sb.String(),
+		MarkdownPayload: reportContent,
 	}
 
 	// Persist the report itself to recall for cross-server consumers.

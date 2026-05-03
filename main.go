@@ -1,3 +1,4 @@
+// Package main provides functionality for the main subsystem.
 package main
 
 import (

@@ -1,3 +1,4 @@
+// Package util provides functionality for the util subsystem.
 package util
 
 import (

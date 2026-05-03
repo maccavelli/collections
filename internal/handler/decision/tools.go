@@ -1,3 +1,4 @@
+// Package decision provides functionality for the decision subsystem.
 package decision
 
 import (
@@ -19,10 +20,12 @@ type CaptureDecisionTool struct {
 	Engine  *engine.Engine
 }
 
+// Name performs the Name operation.
 func (t *CaptureDecisionTool) Name() string {
 	return "capture_decision_logic"
 }
 
+// Register performs the Register operation.
 func (t *CaptureDecisionTool) Register(s util.SessionProvider) {
 	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
@@ -30,10 +33,12 @@ func (t *CaptureDecisionTool) Register(s util.SessionProvider) {
 	}, t.Handle)
 }
 
+// DecisionInput defines the DecisionInput structure.
 type DecisionInput struct {
 	models.UniversalPipelineInput
 }
 
+// Handle performs the Handle operation.
 func (t *CaptureDecisionTool) Handle(ctx context.Context, req *mcp.CallToolRequest, input DecisionInput) (*mcp.CallToolResult, any, error) {
 	var standards string
 	session, sessionErr := t.Manager.LoadSession(ctx)

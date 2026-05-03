@@ -1,3 +1,4 @@
+// Package state provides functionality for the state subsystem.
 package state
 
 import (

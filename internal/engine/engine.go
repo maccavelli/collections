@@ -77,12 +77,14 @@ func (e *Engine) SetExternalClient(c RecallClient) {
 	e.ExternalClient = c
 }
 
+// SetSession performs the SetSession operation.
 func (e *Engine) SetSession(s *mcp.ServerSession) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.mcpSession = s
 }
 
+// Session performs the Session operation.
 func (e *Engine) Session() *mcp.ServerSession {
 	e.mu.RLock()
 	defer e.mu.RUnlock()

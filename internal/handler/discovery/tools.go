@@ -1,3 +1,4 @@
+// Package discovery provides functionality for the discovery subsystem.
 package discovery
 
 import (
@@ -20,10 +21,12 @@ type DiscoverProjectTool struct {
 	Engine  *engine.Engine
 }
 
+// Name performs the Name operation.
 func (t *DiscoverProjectTool) Name() string {
 	return "discover_project"
 }
 
+// Register performs the Register operation.
 func (t *DiscoverProjectTool) Register(s util.SessionProvider) {
 	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
@@ -31,10 +34,12 @@ func (t *DiscoverProjectTool) Register(s util.SessionProvider) {
 	}, t.Handle)
 }
 
+// DiscoverInput defines the DiscoverInput structure.
 type DiscoverInput struct {
 	models.UniversalPipelineInput
 }
 
+// Handle performs the Handle operation.
 func (t *DiscoverProjectTool) Handle(ctx context.Context, req *mcp.CallToolRequest, input DiscoverInput) (*mcp.CallToolResult, any, error) {
 	session, err := t.Manager.LoadSession(ctx)
 	if err != nil {

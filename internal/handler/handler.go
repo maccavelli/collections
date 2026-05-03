@@ -1,3 +1,4 @@
+// Package handler provides functionality for the handler subsystem.
 package handler
 
 import (

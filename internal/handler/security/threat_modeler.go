@@ -1,3 +1,4 @@
+// Package security provides functionality for the security subsystem.
 package security
 
 import (
@@ -20,10 +21,12 @@ type ThreatModelerTool struct {
 	Engine  *engine.Engine
 }
 
+// Name performs the Name operation.
 func (t *ThreatModelerTool) Name() string {
 	return "threat_model_auditor"
 }
 
+// Register performs the Register operation.
 func (t *ThreatModelerTool) Register(s util.SessionProvider) {
 	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
@@ -31,10 +34,12 @@ func (t *ThreatModelerTool) Register(s util.SessionProvider) {
 	}, t.Handle)
 }
 
+// ThreatModelerInput defines the ThreatModelerInput structure.
 type ThreatModelerInput struct {
 	models.UniversalPipelineInput
 }
 
+// Handle performs the Handle operation.
 func (t *ThreatModelerTool) Handle(ctx context.Context, req *mcp.CallToolRequest, input ThreatModelerInput) (*mcp.CallToolResult, any, error) {
 	session, err := t.Manager.LoadSession(ctx)
 	if err != nil {

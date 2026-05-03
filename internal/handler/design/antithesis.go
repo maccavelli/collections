@@ -1,3 +1,4 @@
+// Package design provides functionality for the design subsystem.
 package design
 
 import (
@@ -20,10 +21,12 @@ type AntithesisSkepticTool struct {
 	Engine  *engine.Engine
 }
 
+// Name performs the Name operation.
 func (t *AntithesisSkepticTool) Name() string {
 	return "antithesis_skeptic"
 }
 
+// Register performs the Register operation.
 func (t *AntithesisSkepticTool) Register(s util.SessionProvider) {
 	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
@@ -36,6 +39,7 @@ type AntithesisInput struct {
 	models.UniversalPipelineInput
 }
 
+// Handle performs the Handle operation.
 func (t *AntithesisSkepticTool) Handle(ctx context.Context, req *mcp.CallToolRequest, input AntithesisInput) (*mcp.CallToolResult, any, error) {
 	session, err := t.Manager.LoadSession(ctx)
 	if err != nil {
@@ -154,6 +158,11 @@ func (t *AntithesisSkepticTool) Handle(ctx context.Context, req *mcp.CallToolReq
 			report.Summary = returnSummary
 			returnData = report
 		}
+	}
+
+	// BuntDB Socratic Verdict Staging
+	if input.SessionID != "" && t.Engine != nil && t.Engine.DB != nil {
+		_ = staging.SaveSocraticVerdict(t.Engine.DB, input.SessionID, t.Name(), "COUNTER_THESIS_PROPOSED", report)
 	}
 
 	return &mcp.CallToolResult{}, returnData, nil
