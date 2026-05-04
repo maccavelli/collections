@@ -6,17 +6,20 @@ import (
 	"os"
 	"strings"
 	"sync"
+
+	"mcp-server-sequential-thinking/internal/util"
 )
 
 // ThoughtData represents a single structured thinking step for the sequential thought process.
 type ThoughtData struct {
-	Thought               string  `json:"thought" jsonschema:"Your current thinking step"`
-	SelfCritique          string  `json:"selfCritique" jsonschema:"Explicit self-correction and rigorous evaluation of the current thought logic"`
-	ContradictionDetected bool    `json:"contradictionDetected" jsonschema:"Must be set to true if SelfCritique identifies a paradox, flaw, or assumption"`
-	ResolutionStrategy    *string `json:"resolutionStrategy,omitempty" jsonschema:"Mandatory step outlining how to fix the logic if the previous thought had a contradiction"`
-	NextThoughtNeeded     bool    `json:"nextThoughtNeeded" jsonschema:"Whether another thought step is needed"`
-	ThoughtNumber     int     `json:"thoughtNumber" jsonschema:"Current thought number (numeric value, e.g., 1, 2, 3)" jsonschema_extras:"minimum=1"`
-	TotalThoughts     int     `json:"totalThoughts" jsonschema:"Estimated total thoughts needed (numeric value, e.g., 5, 10)" jsonschema_extras:"minimum=1"`
+	util.UniversalBaseInput
+	Thought               string  `json:"thought" jsonschema:"[REQUIRED] Your current thinking step"`
+	SelfCritique          string  `json:"selfCritique" jsonschema:"[REQUIRED] Explicit self-correction and rigorous evaluation of the current thought logic"`
+	ContradictionDetected bool    `json:"contradictionDetected" jsonschema:"[REQUIRED] Must be set to true if SelfCritique identifies a paradox, flaw, or assumption"`
+	ResolutionStrategy    *string `json:"resolutionStrategy,omitempty" jsonschema:"Mandatory step outlining how to fix the logic ONLY if the previous thought had a contradiction"`
+	NextThoughtNeeded     bool    `json:"nextThoughtNeeded" jsonschema:"[REQUIRED] Whether another thought step is needed"`
+	ThoughtNumber     int     `json:"thoughtNumber" jsonschema:"[REQUIRED] Current thought number (numeric value, e.g., 1, 2, 3)" jsonschema_extras:"minimum=1"`
+	TotalThoughts     int     `json:"totalThoughts" jsonschema:"[REQUIRED] Estimated total thoughts needed (numeric value, e.g., 5, 10)" jsonschema_extras:"minimum=1"`
 	IsRevision        *bool   `json:"isRevision,omitempty" jsonschema:"Whether this revises previous thinking"`
 	RevisesThought    *int    `json:"revisesThought,omitempty" jsonschema:"Which thought is being reconsidered" jsonschema_extras:"minimum=1"`
 	BranchFromThought *int    `json:"branchFromThought,omitempty" jsonschema:"Branching point thought number" jsonschema_extras:"minimum=1"`
