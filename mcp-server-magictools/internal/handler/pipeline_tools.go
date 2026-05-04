@@ -1167,9 +1167,9 @@ func (h *OrchestratorHandler) handleQualityGate(ctx context.Context, req *mcp.Ca
 		// Check for go-refactor analysis completion.
 		refactorHistory := h.RecallClient.ListSessionsByFilter(ctx, args.ProjectPath, "go-refactor", "completed", 5)
 		if refactorHistory != "" {
-			checks["gorefactor_analysis"] = "✅ Go-refactor analysis completed"
+			checks["go-refactor_analysis"] = "✅ Go-refactor analysis completed"
 		} else {
-			checks["gorefactor_analysis"] = "⚠️ No completed go-refactor analysis found"
+			checks["go-refactor_analysis"] = "⚠️ No completed go-refactor analysis found"
 		}
 	} else {
 		checks["recall_connection"] = "❌ Recall client not available"
