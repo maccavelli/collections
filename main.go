@@ -19,7 +19,7 @@ var generateWithRetry = llm.GenerateWithRetry
 
 // Version is overwritten by build flags during the compilation process to represent
 // the current release version of the application.
-var Version = "3.1.4"
+var Version = "4.3.2"
 
 const (
 	// AppTitle is the name of the application used in help text and version output.

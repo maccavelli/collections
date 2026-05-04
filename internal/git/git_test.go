@@ -3,12 +3,12 @@ package git
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	git "github.com/go-git/go-git/v5"
 )
-
 
 func TestIsCommitMsgEmpty_Empty(t *testing.T) {
 	dir := t.TempDir()
@@ -135,10 +135,5 @@ func TestGatherInfo_MissingGit(t *testing.T) {
 }
 
 func contains(arr []string, s string) bool {
-	for _, item := range arr {
-		if item == s {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(arr, s)
 }

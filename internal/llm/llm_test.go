@@ -100,7 +100,7 @@ func (m *mockFailProvider) Generate(ctx context.Context, prompt string) (string,
 
 func TestOpenAIDiscover(t *testing.T) {
 	p := NewOpenAI("test-key", "gpt-4o")
-	if _, ok := interface{}(p).(ModelDiscoverer); ok {
+	if _, ok := any(p).(ModelDiscoverer); ok {
 		// Valid implementation
 	} else {
 		t.Error("OpenAI must implement ModelDiscoverer")
@@ -109,7 +109,7 @@ func TestOpenAIDiscover(t *testing.T) {
 
 func TestAnthropicDiscover(t *testing.T) {
 	p, _ := NewAnthropic("test-key", "claude-test")
-	if _, ok := interface{}(p).(ModelDiscoverer); ok {
+	if _, ok := any(p).(ModelDiscoverer); ok {
 		// Valid implementation
 	} else {
 		t.Error("Anthropic must implement ModelDiscoverer")

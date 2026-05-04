@@ -32,7 +32,7 @@ func (p *OpenAIProvider) Name() string { return "openai" }
 
 // Generate generates a commit message using the OpenAI chat completion API.
 func (p *OpenAIProvider) Generate(ctx context.Context, prompt string) (string, error) {
-	reqBody, _ := json.Marshal(map[string]interface{}{
+	reqBody, _ := json.Marshal(map[string]any{
 		"model": p.model,
 		"messages": []map[string]string{
 			{"role": "user", "content": prompt},
