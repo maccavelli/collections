@@ -40,8 +40,11 @@ func TestToolHandlers(t *testing.T) {
 
 	// Test ClarifyRequirements
 	res, _, err = h.ClarifyRequirements(ctx, req, ClarifyRequirementsArgs{
-		SessionID:    sessionID,
-		UserResponse: "Gap 1\nGap 2",
+		SessionID:  sessionID,
+		Thesis:     "thesis test",
+		Antithesis: "antithesis test",
+		Synthesis:  "synthesis test",
+		IsVetted:   true,
 	})
 	if err != nil || res.IsError {
 		t.Errorf("ClarifyRequirements failed: %v", err)

@@ -2,10 +2,12 @@
 package main
 
 import (
+	"io"
 	"log/slog"
 	"os"
 
 	"mcp-server-magicdev/cmd"
+	"mcp-server-magicdev/internal/logging"
 )
 
 // Version is injected at build time via ldflags.
@@ -13,8 +15,9 @@ var Version = "dev"
 
 func main() {
 	// Initialize structured JSON logger on stderr for MCP protocol compliance
-	// (stdout is reserved for the stdio transport).
-	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
+	// and mirror it to the in-memory LogBuffer for the get_internal_logs tool.
+	mw := io.MultiWriter(os.Stderr, logging.GlobalBuffer)
+	logger := slog.New(slog.NewJSONHandler(mw, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
 	}))
 	slog.SetDefault(logger)

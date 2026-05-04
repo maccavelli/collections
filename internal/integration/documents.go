@@ -21,7 +21,7 @@ import (
 	"github.com/ericmason/mdadf"
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing/object"
-	"github.com/go-git/go-git/v5/plumbing/transport/ssh"
+	"github.com/go-git/go-git/v5/plumbing/transport/http"
 	"github.com/klauspost/compress/zstd"
 	"github.com/spf13/viper"
 
@@ -47,11 +47,11 @@ func ProcessDocumentGeneration(title, markdown, repoPath, sessionID string, bp *
 	ctx := context.Background()
 
 	// 1. Jira Ticket Creation
-	jiraClient, err := v3.New(nil, viper.GetString("atlassian_url"))
+	jiraClient, err := v3.New(nil, viper.GetString("atlassian.url"))
 	if err != nil {
 		return fmt.Errorf("failed to create jira client: %w", err)
 	}
-	jiraClient.Auth.SetBasicAuth("", viper.GetString("atlassian_token"))
+	jiraClient.Auth.SetBasicAuth("", viper.GetString("atlassian.token"))
 
 	issuePayload := &models.IssueScheme{
 		Fields: &models.IssueFieldsScheme{
@@ -69,7 +69,7 @@ func ProcessDocumentGeneration(title, markdown, repoPath, sessionID string, bp *
 			totalPoints += points
 		}
 
-		storyPointsField := viper.GetString("jira_story_points_field")
+		storyPointsField := viper.GetString("atlassian.story_points_field")
 		if storyPointsField == "" {
 			storyPointsField = "customfield_10016" // Jira Cloud default
 		}
@@ -101,11 +101,11 @@ func ProcessDocumentGeneration(title, markdown, repoPath, sessionID string, bp *
 	}
 
 	// 2. Confluence Page Creation (Markdown -> ADF)
-	confluenceClient, err := confluence.New(nil, viper.GetString("atlassian_url"))
+	confluenceClient, err := confluence.New(nil, viper.GetString("atlassian.url"))
 	if err != nil {
 		return fmt.Errorf("failed to create confluence client: %w", err)
 	}
-	confluenceClient.Auth.SetBasicAuth("", viper.GetString("atlassian_token"))
+	confluenceClient.Auth.SetBasicAuth("", viper.GetString("atlassian.token"))
 
 	// Enrich markdown with Technical Implementation Roadmap section from Blueprint
 	enrichedMarkdown := markdown
@@ -291,17 +291,18 @@ func pushToGitLab(repoPath, title string, fileContent []byte) error {
 		return err
 	}
 
-	sshKeyPath := viper.GetString("ssh_private_key")
-	if sshKeyPath == "" {
-		return fmt.Errorf("ssh private key path not configured")
+	gitUser := viper.GetString("git.username")
+	gitToken := viper.GetString("git.token")
+	if gitUser == "" || gitToken == "" {
+		return fmt.Errorf("git_username and git_token must be configured for HTTPS push")
 	}
 
-	publicKeys, err := ssh.NewPublicKeysFromFile("git", sshKeyPath, "")
-	if err != nil {
-		return err
+	auth := &http.BasicAuth{
+		Username: gitUser,
+		Password: gitToken,
 	}
 
 	return r.Push(&git.PushOptions{
-		Auth: publicKeys,
+		Auth: auth,
 	})
 }

@@ -5,8 +5,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-
-	"github.com/denisbrodbeck/machineid"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -28,20 +26,24 @@ var serveCmd = &cobra.Command{
 			Version: Version,
 		}, nil)
 
-		// Load encrypted credentials into viper.
-		if _, err := config.LoadConfig(); err != nil {
-			slog.Warn("could not load encrypted config, proceeding without credentials", "err", err)
+		// Load YAML config and init fsnotify.
+		if err := config.LoadConfig(); err != nil {
+			slog.Warn("could not load magicdev.yaml config, proceeding with defaults", "err", err)
 		}
 
+		// Backward compatibility bindings for Kubernetes / Legacy environments
+		viper.BindEnv("atlassian.url", "ATLASSIAN_URL")
+		viper.BindEnv("atlassian.token", "ATLASSIAN_TOKEN")
+		viper.BindEnv("git.username", "GIT_USERNAME")
+		viper.BindEnv("git.token", "GIT_TOKEN")
+		viper.BindEnv("server.db_path", "MAGICDEV_DB_PATH")
+
 		// Security & Environment Parameters validation hook
-		if _, err := machineid.ID(); err != nil {
-			slog.Warn("Hardware UUID generation failed, AES-256-GCM salt generation may be compromised", "err", err)
+		if viper.GetString("atlassian.token") == "" || viper.GetString("atlassian.token") == "PLACEHOLDER_ATLASSIAN_TOKEN" {
+			slog.Warn("Atlassian integration missing token in magicdev.yaml")
 		}
-		if viper.GetString("atlassian_token") == "" {
-			slog.Warn("OAuth Token State validation failed: missing atlassian_token")
-		}
-		if viper.GetString("gitlab_https_token") == "" {
-			slog.Warn("GitLab HTTPS Token validation failed: missing gitlab_https_token")
+		if viper.GetString("git.token") == "" || viper.GetString("git.token") == "PLACEHOLDER_GIT_TOKEN" {
+			slog.Warn("Git integration missing token in magicdev.yaml")
 		}
 
 		store, err := db.InitStore()

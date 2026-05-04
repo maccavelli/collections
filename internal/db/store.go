@@ -3,9 +3,11 @@
 package db
 
 import (
-	"encoding/json"
+	json "github.com/go-json-experiment/json"
 	"fmt"
+	"path/filepath"
 
+	"github.com/spf13/viper"
 	"github.com/tidwall/buntdb"
 )
 
@@ -14,10 +16,16 @@ type Store struct {
 	DB *buntdb.DB
 }
 
-// InitStore opens an in-memory BuntDB instance. Use this for ephemeral
-// pipeline sessions that do not need to survive process restarts.
+// InitStore opens a BuntDB instance.
 func InitStore() (*Store, error) {
-	database, err := buntdb.Open(":memory:")
+	dbPath := viper.GetString("server.db_path")
+	if dbPath == "" {
+		dbPath = ":memory:"
+	} else if dbPath != ":memory:" {
+		dbPath = filepath.Clean(filepath.FromSlash(dbPath))
+	}
+
+	database, err := buntdb.Open(dbPath)
 	if err != nil {
 		return nil, err
 	}
