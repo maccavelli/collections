@@ -153,7 +153,7 @@ func (h *OrchestratorHandler) AlignTools(ctx context.Context, req *mcp.CallToolR
 				threshold = h.Config.ScoreThreshold
 			}
 
-			results, err = h.Store.SearchTools(ctx, args.Query, args.Category, args.ServerName, threshold, h.Config.ScoreFusionAlpha)
+			results, err = h.Store.SearchTools(ctx, args.Query, args.Category, args.ServerName, threshold, h.Config.ScoreFusionAlpha, db.DomainUserLand)
 
 			// ── Option 5: Pseudo-Relevance Feedback (PRF) ──
 			// If we got results, extract discriminative terms from top hits and
@@ -162,15 +162,27 @@ func (h *OrchestratorHandler) AlignTools(ctx context.Context, req *mcp.CallToolR
 				prfTerms := intelligence.ExtractPRFTerms(results, args.Query, 5)
 				if len(prfTerms) > 0 {
 					expandedQuery := args.Query + " " + strings.Join(prfTerms, " ")
-					expandedResults, expandErr := h.Store.SearchTools(ctx, expandedQuery, args.Category, args.ServerName, threshold, h.Config.ScoreFusionAlpha)
+					expandedResults, expandErr := h.Store.SearchTools(ctx, expandedQuery, args.Category, args.ServerName, threshold, h.Config.ScoreFusionAlpha, db.DomainUserLand)
 					if expandErr == nil && len(expandedResults) > 0 {
-						// Topic drift detection: if overlap drops below 50%, discard expansion.
+						// Topic drift detection: if overlap drops below 30%, discard expansion.
 						overlap := intelligence.ComputeResultOverlap(results, expandedResults)
-						if overlap >= 0.50 {
-							results = expandedResults
-							slog.Debug("align_tools: PRF expansion accepted", "terms", prfTerms, "overlap", overlap)
+						if overlap >= 0.30 {
+							var enriched []*db.ToolRecord
+							enriched = append(enriched, results...)
+							seen := make(map[string]bool)
+							for _, r := range results {
+								seen[r.URN] = true
+							}
+							for _, er := range expandedResults {
+								if !seen[er.URN] {
+									enriched = append(enriched, er)
+									seen[er.URN] = true
+								}
+							}
+							results = enriched
+							slog.Debug("align_tools: PRF expansion enriched", "terms", prfTerms, "overlap", overlap)
 						} else {
-							slog.Debug("align_tools: PRF expansion rejected (topic drift)", "overlap", overlap)
+							slog.Debug("align_tools: PRF expansion rejected (severe topic drift)", "overlap", overlap)
 						}
 					}
 				}
@@ -368,8 +380,14 @@ func (h *OrchestratorHandler) CallProxy(ctx context.Context, req *mcp.CallToolRe
 		BypassMinification bool           `json:"bypass_minification"`
 	}
 	if err := json.Unmarshal(req.Params.Arguments, &params); err != nil {
-		slog.Error("gateway: validation pre-check failed", "tool", "call_proxy", "error", err, "raw", string(req.Params.Arguments))
-		return nil, fmt.Errorf("failed to unmarshal arguments: %w", err)
+		// 🛡️ ZERO-TURN JSON REPAIR: Attempt structural recovery before rejection
+		repaired := ps.repairJSONHeuristic(string(req.Params.Arguments))
+		if errRetry := json.Unmarshal([]byte(repaired), &params); errRetry == nil {
+			slog.Info("gateway: zero-turn JSON repair successful", "tool", "call_proxy")
+		} else {
+			slog.Error("gateway: validation pre-check failed", "tool", "call_proxy", "error", err, "raw", string(req.Params.Arguments))
+			return nil, fmt.Errorf("failed to unmarshal arguments: %w", err)
+		}
 	}
 
 	server, name, urn, toolRecord, err := ps.ResolveURN(ctx, params.URN)
@@ -387,7 +405,10 @@ func (h *OrchestratorHandler) CallProxy(ctx context.Context, req *mcp.CallToolRe
 	if h.Config.ValidateProxyCalls {
 		if err := ps.ValidateArguments(ctx, urn, toolRecord, params.Arguments); err != nil {
 			slog.Warn("gateway: pre-flight firewall trapped hallucination", "tool", name, "error", err)
-			return nil, err
+			return &mcp.CallToolResult{
+				IsError: true,
+				Content: []mcp.Content{&mcp.TextContent{Text: err.Error()}},
+			}, nil
 		}
 	} else {
 		slog.Log(ctx, util.LevelTrace, "gateway: proxy validation disabled by config", "tool", name)
@@ -728,14 +749,18 @@ func (h *OrchestratorHandler) executeProxyPipeline(ctx context.Context, ps *Prox
 					go func(sessionID string, state map[string]any) {
 						bgCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 						defer cancel()
+						stateJSON, _ := json.Marshal(state)
+						projectID, _ := state["target"].(string)
 						args := map[string]any{
-							"domain": "session.meta",
-							"key":    sessionID,
-							"value":  state,
+							"server_id":  "magictools",
+							"project_id": projectID,
+							"session_id": sessionID,
+							"outcome":    "dag_state",
+							"state_data": string(stateJSON),
 						}
-						_, err := ps.ExecuteProxy(bgCtx, "recall", "upsert_session", args, 10*time.Second)
+						_, err := ps.ExecuteProxy(bgCtx, "recall", "save_sessions", args, 10*time.Second)
 						if err != nil {
-							slog.Error("gateway: failed to async commit DAG mutation to CSSA backplane", "error", err)
+							slog.Warn("gateway: failed to async commit DAG state to recall sessions", "error", err)
 						}
 					}(sid, snapshot)
 				}

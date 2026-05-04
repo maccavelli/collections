@@ -6,7 +6,7 @@ import (
 
 func TestCollisionTracker(t *testing.T) {
 	tracker := NewCollisionTracker(10)
-	
+
 	event := CollisionEvent{
 		Query:     "test query",
 		S1URN:     "server1:tool1",
@@ -16,15 +16,15 @@ func TestCollisionTracker(t *testing.T) {
 		Gap:       0.05,
 		Collision: true,
 	}
-	
+
 	tracker.Record(event)
 	tracker.Record(event)
-	
+
 	snapshot := tracker.Snapshot()
 	if len(snapshot.TopPairs) == 0 {
 		t.Fatal("expected top pairs")
 	}
-	
+
 	pair := snapshot.TopPairs[0]
 	if pair.Count != 2 {
 		t.Errorf("expected count 2, got %d", pair.Count)

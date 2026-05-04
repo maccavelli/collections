@@ -48,13 +48,10 @@ func (h *OrchestratorHandler) handleExecutePipeline(ctx context.Context, req *mc
 	}
 	_ = json.Unmarshal(req.Params.Arguments, &args)
 
-	if args.Target == "" || args.Intent == "" {
+	if args.Target == "" || args.Intent == "" || args.SessionID == "" {
 		res := &mcp.CallToolResult{}
-		res.Content = []mcp.Content{&mcp.TextContent{Text: "execute_pipeline requires 'target' and 'intent' parameters."}}
+		res.Content = []mcp.Content{&mcp.TextContent{Text: "execute_pipeline requires 'target', 'intent', and 'session_id' parameters."}}
 		return res, nil
-	}
-	if args.SessionID == "" {
-		args.SessionID = fmt.Sprintf("ep-%d", time.Now().UnixNano())
 	}
 
 	return h.freshPipeline(ctx, args.SessionID, args.Target, args.Intent, args.PlanHash, args.DryRun, args.TargetRoles)
@@ -90,41 +87,28 @@ func (h *OrchestratorHandler) freshPipeline(ctx context.Context, sessionID, targ
 	normalizedIntent := strings.ToLower(strings.TrimSpace(intent))
 	const preFilterThreshold = 0.05
 
-	brainstormRecords, _ := h.Store.SearchTools(ctx, normalizedIntent, "", "brainstorm", preFilterThreshold, h.Config.ScoreFusionAlpha)
-	goRefactorRecords, _ := h.Store.SearchTools(ctx, normalizedIntent, "", "go-refactor", preFilterThreshold, h.Config.ScoreFusionAlpha)
-	magictoolsRecords, _ := h.Store.SearchTools(ctx, normalizedIntent, "", "magictools", preFilterThreshold, h.Config.ScoreFusionAlpha)
+	rawRecords, _ := h.Store.SearchTools(ctx, normalizedIntent, "", "", preFilterThreshold, h.Config.ScoreFusionAlpha, db.DomainPipelineOrchestration)
 
-	pipelineRecords := make([]*db.ToolRecord, 0, len(brainstormRecords)+len(goRefactorRecords)+len(magictoolsRecords))
+	pipelineRecords := make([]*db.ToolRecord, 0, len(rawRecords))
 	seen := make(map[string]bool)
 
-	for _, r := range brainstormRecords {
-		if r != nil && !seen[r.URN] {
-			pipelineRecords = append(pipelineRecords, r)
-			seen[r.URN] = true
+	for _, r := range rawRecords {
+		if r == nil || seen[r.URN] {
+			continue
 		}
-	}
-	for _, r := range goRefactorRecords {
-		if r != nil && !seen[r.URN] {
-			// Exclude post-mutation validators from analysis-only DAGs.
-			// go_test_validation is a Phase 7 POST-EDIT tool — it only belongs
-			// in continuePipeline after MUTATOR stages have written files.
-			if r.URN == "go-refactor:go_test_validation" {
-				continue
-			}
-			pipelineRecords = append(pipelineRecords, r)
-			seen[r.URN] = true
+
+		// 🛡️ EXCLUSION GATE: Filter tools that are phase-locked or internal-only.
+		if r.URN == "go-refactor:go_test_validation" {
+			// Phase 7 POST-EDIT tool — only belongs in continuation phases.
+			continue
 		}
-	}
-	for _, r := range magictoolsRecords {
-		if r != nil && !seen[r.URN] {
-			// Only allow terminal/synthesizer magictools into the pipeline.
-			// Exclude internal orchestrator interceptors (validate_pipeline_step,
-			// cross_server_quality_gate) which are not code analysis tools.
-			if r.URN == "magictools:generate_audit_report" {
-				pipelineRecords = append(pipelineRecords, r)
-				seen[r.URN] = true
-			}
+		if r.Server == "magictools" && r.URN != "magictools:generate_audit_report" {
+			// Exclude internal orchestrator interceptors.
+			continue
 		}
+
+		pipelineRecords = append(pipelineRecords, r)
+		seen[r.URN] = true
 	}
 
 	// ── Structural Safety Net ──
@@ -239,6 +223,7 @@ func (h *OrchestratorHandler) freshPipeline(ctx context.Context, sessionID, targ
 	previousOutput := contextBuffer.String()
 	var results []stepResult
 	var socraticVerdict string
+	var socraticPillars []pillarResult
 	mutatorInjected := false
 
 	for i := 0; i < len(stages); i++ {
@@ -331,10 +316,11 @@ func (h *OrchestratorHandler) freshPipeline(ctx context.Context, sessionID, targ
 		if step.Role == "REPORTING" && !mutatorInjected {
 			mutatorInjected = true
 			hasFixes := analysisContainsFixes(previousOutput)
-			decision := shouldInjectMutators(socraticVerdict, previousOutput)
+			decision := shouldInjectMutators(socraticVerdict, previousOutput, socraticPillars)
 			slog.Info("execute_pipeline: MUTATOR gate evaluation",
 				"socratic_verdict", socraticVerdict,
 				"analysis_has_fixes", hasFixes,
+				"pillar_count", len(socraticPillars),
 				"decision", decision,
 				"session_id", sessionID)
 			if decision {
@@ -370,18 +356,24 @@ func (h *OrchestratorHandler) freshPipeline(ctx context.Context, sessionID, targ
 				}
 			}
 
-			// Autonomous run: explicitly seed recall to satisfy apply_vetted_edit integrity check
+			// Autonomous run: seed recall with approved status so apply_vetted_edit's
+			// integrity check (which lists sessions with outcome=approved and checks for
+			// plan_hash via strings.Contains) can find it.
 			if activePlanHash != "" && activePlanHash != "auto-approved-orchestrator-override" {
 				seedArgs := map[string]any{
-					"namespace":  "sessions",
 					"server_id":  "brainstorm",
+					"project_id": target,
 					"session_id": sessionID,
 					"outcome":    "approved",
-					"metadata": map[string]any{
-						"plan_hash": activePlanHash,
-					},
+					"state_data": fmt.Sprintf(`{"plan_hash":"%s","approved_by":"orchestrator_socratic_gate"}`, activePlanHash),
 				}
-				ps.ExecuteProxy(ctx, "recall", "upsert_session", seedArgs, 10*time.Second)
+				if _, seedErr := ps.ExecuteProxy(ctx, "recall", "save_sessions", seedArgs, 10*time.Second); seedErr != nil {
+					slog.Warn("execute_pipeline: failed to seed plan approval in recall",
+						"plan_hash", activePlanHash[:16]+"...", "error", seedErr)
+				} else {
+					slog.Info("execute_pipeline: plan_hash seeded as approved in recall",
+						"plan_hash", activePlanHash[:16]+"...", "session_id", sessionID)
+				}
 			}
 
 			mutResults := h.executeMutatorAST(ctx, ps, sessionID, target, activePlanHash, previousOutput)
@@ -415,15 +407,18 @@ func (h *OrchestratorHandler) freshPipeline(ctx context.Context, sessionID, targ
 		if strings.Contains(step.ToolName, "aporia") && sr.Status == "DONE" {
 			if v := extractSocraticVerdict(results, stages); v != nil {
 				socraticVerdict = v.Verdict
+				socraticPillars = v.Pillars
 				slog.Info("execute_pipeline: Socratic verdict captured",
-					"verdict", socraticVerdict, "session_id", sessionID)
+					"verdict", socraticVerdict,
+					"pillar_count", len(socraticPillars),
+					"session_id", sessionID)
 			}
 		}
 	}
 
 	// ── Post-Loop MUTATOR Fallback ──
 	// If no REPORTING stages existed in the DAG, check for MUTATOR injection here.
-	if !mutatorInjected && shouldInjectMutators(socraticVerdict, previousOutput) {
+	if !mutatorInjected && shouldInjectMutators(socraticVerdict, previousOutput, socraticPillars) {
 		slog.Info("execute_pipeline: post-loop MUTATOR injection (no REPORTING stages in DAG)",
 			"verdict", socraticVerdict, "session_id", sessionID)
 
@@ -452,18 +447,19 @@ func (h *OrchestratorHandler) freshPipeline(ctx context.Context, sessionID, targ
 					}
 				}
 
-				// Autonomous run: explicitly seed recall to satisfy apply_vetted_edit integrity check
+				// Autonomous run: seed recall with approved status for apply_vetted_edit integrity check.
 				if activePlanHash != "" && activePlanHash != "auto-approved-orchestrator-override" {
 					seedArgs := map[string]any{
-						"namespace":  "sessions",
 						"server_id":  "brainstorm",
+						"project_id": target,
 						"session_id": sessionID,
 						"outcome":    "approved",
-						"metadata": map[string]any{
-							"plan_hash": activePlanHash,
-						},
+						"state_data": fmt.Sprintf(`{"plan_hash":"%s","approved_by":"orchestrator_socratic_gate"}`, activePlanHash),
 					}
-					ps.ExecuteProxy(ctx, "recall", "upsert_session", seedArgs, 10*time.Second)
+					if _, seedErr := ps.ExecuteProxy(ctx, "recall", "save_sessions", seedArgs, 10*time.Second); seedErr != nil {
+						slog.Warn("execute_pipeline: failed to seed plan approval in recall",
+							"plan_hash", activePlanHash[:16]+"...", "error", seedErr)
+					}
 				}
 
 				mutResults := h.executeMutatorAST(ctx, ps, sessionID, target, activePlanHash, previousOutput)
@@ -744,6 +740,31 @@ func buildSchemaAwareArgs(store *db.Store, urn, sessionID, target, prevOutput st
 		}
 	}
 
+	// Auto-populate unknown required string properties.
+	// Tools like peer_review require 'focus' and 'component_design' that the
+	// orchestrator doesn't have specific knowledge of. Rather than failing with
+	// a schema validation error, populate them from the chained analysis context.
+	required := schemaRequired(store, urn)
+	for _, field := range required {
+		if _, alreadySet := args[field]; alreadySet {
+			continue
+		}
+		// Only auto-populate string-typed properties.
+		if propDef, ok := props[field]; ok {
+			if propMap, isMap := propDef.(map[string]any); isMap {
+				if propMap["type"] == "string" {
+					if prevOutput != "" {
+						args[field] = prevOutput
+					} else {
+						args[field] = target
+					}
+					slog.Debug("buildSchemaAwareArgs: auto-populated required field",
+						"urn", urn, "field", field)
+				}
+			}
+		}
+	}
+
 	return args
 }
 
@@ -758,6 +779,11 @@ func schemaProperties(store *db.Store, urn string) map[string]any {
 		return nil
 	}
 	schema := rec.InputSchema
+	// The sync pipeline stores schemas separately under SchemaHash to deduplicate.
+	// ToolRecord.InputSchema is typically nil — resolve via GetSchema fallback.
+	if schema == nil && rec.SchemaHash != "" {
+		schema, _ = store.GetSchema(rec.SchemaHash)
+	}
 	if schema == nil {
 		return nil
 	}
@@ -770,6 +796,41 @@ func schemaProperties(store *db.Store, urn string) map[string]any {
 		return nil
 	}
 	return props
+}
+
+// schemaRequired extracts the "required" array from a tool's InputSchema.
+// Returns nil if the store, tool, or schema structure is unavailable.
+func schemaRequired(store *db.Store, urn string) []string {
+	if store == nil {
+		return nil
+	}
+	rec, err := store.GetTool(urn)
+	if err != nil || rec == nil {
+		return nil
+	}
+	schema := rec.InputSchema
+	// Fallback: resolve schema from hash-addressed store.
+	if schema == nil && rec.SchemaHash != "" {
+		schema, _ = store.GetSchema(rec.SchemaHash)
+	}
+	if schema == nil {
+		return nil
+	}
+	reqRaw, ok := schema["required"]
+	if !ok {
+		return nil
+	}
+	reqSlice, ok := reqRaw.([]any)
+	if !ok {
+		return nil
+	}
+	result := make([]string, 0, len(reqSlice))
+	for _, r := range reqSlice {
+		if s, ok := r.(string); ok {
+			result = append(result, s)
+		}
+	}
+	return result
 }
 
 // Mutation budget constants. These hard ceilings prevent runaway pipeline

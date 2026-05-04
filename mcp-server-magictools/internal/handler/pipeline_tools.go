@@ -605,6 +605,29 @@ func resolveDynamicDAG(stages []PipelineStep, pipelineTools []*db.ToolRecord, in
 		}
 	}
 
+	// Ensure mandatory REPORTING node is always present in the DAG.
+	hasREPORTING := false
+	for _, s := range stages {
+		if s.ToolName == "brainstorm:generate_final_report" {
+			hasREPORTING = true
+			break
+		}
+	}
+	if !hasREPORTING {
+		reportURN := "brainstorm:generate_final_report"
+		if target, ok := registry[reportURN]; ok {
+			stages = append(stages, PipelineStep{
+				ToolName:       target.URN,
+				Role:           target.Role,
+				Phase:          target.Phase,
+				Purpose:        "Mandatory REPORTING Injection: Ensures final Socratic report generation.",
+				InputContract:  target.InputContract,
+				OutputContract: target.OutputContract,
+			})
+			slog.Info("resolveDynamicDAG: mandatory REPORTING injected", "urn", reportURN)
+		}
+	}
+
 	for {
 		addedNewNode := false
 

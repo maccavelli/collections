@@ -25,10 +25,10 @@ require (
 	github.com/chewxy/math32 v1.10.1 // indirect
 	github.com/clipperhouse/uax29/v2 v2.7.0 // indirect
 	github.com/containerd/console v1.0.5 // indirect
-	github.com/google/renameio v1.0.1 // indirect
 	github.com/gookit/color v1.6.0 // indirect
 	github.com/lithammer/fuzzysearch v1.1.8 // indirect
 	github.com/mattn/go-runewidth v0.0.20 // indirect
+	github.com/natefinch/atomic v1.0.1 // indirect
 	github.com/sergi/go-diff v1.4.0 // indirect
 	github.com/viterin/partial v1.1.0 // indirect
 	github.com/viterin/vek v0.4.2 // indirect
@@ -102,3 +102,5 @@ require (
 	golang.org/x/tools v0.43.0 // indirect
 	google.golang.org/protobuf v1.36.7 // indirect
 )
+
+replace github.com/coder/hnsw v0.6.1 => ./internal/forks/hnsw

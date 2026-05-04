@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+	"unicode/utf8"
 )
 
 // GenerateSessionID creates a high-entropy hex ID.
@@ -122,4 +123,62 @@ func CenterTruncate(s string, limit int) string {
 func IsStackTrace(s string) bool {
 	s = strings.ToLower(s)
 	return strings.Contains(s, "error") || strings.Contains(s, "at ") || strings.Contains(s, "panic") || strings.Contains(s, "traceback")
+}
+
+// LevenshteinDistance calculates the edit distance between two strings.
+func LevenshteinDistance(s, t string) int {
+	if s == t {
+		return 0
+	}
+	if len(s) == 0 {
+		return utf8.RuneCountInString(t)
+	}
+	if len(t) == 0 {
+		return utf8.RuneCountInString(s)
+	}
+
+	sRunes := []rune(s)
+	tRunes := []rune(t)
+	n := len(sRunes)
+	m := len(tRunes)
+
+	// Optimization: swap to ensure n <= m
+	if n > m {
+		sRunes, tRunes = tRunes, sRunes
+		n, m = m, n
+	}
+
+	row := make([]int, n+1)
+	for i := 0; i <= n; i++ {
+		row[i] = i
+	}
+
+	for j := 1; j <= m; j++ {
+		prev := j
+		for i := 1; i <= n; i++ {
+			cost := 1
+			if sRunes[i-1] == tRunes[j-1] {
+				cost = 0
+			}
+			current := minInt(row[i]+1, prev+1, row[i-1]+cost)
+			row[i-1] = prev
+			prev = current
+		}
+		row[n] = prev
+	}
+
+	return row[n]
+}
+
+func minInt(a, b, c int) int {
+	if a < b {
+		if a < c {
+			return a
+		}
+		return c
+	}
+	if b < c {
+		return b
+	}
+	return c
 }

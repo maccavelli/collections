@@ -77,7 +77,7 @@ func (c *LRUCache[K, V]) Values() []V {
 	if c.cache == nil {
 		return nil
 	}
-	
+
 	values := make([]V, 0, c.ll.Len())
 	for ele := c.ll.Front(); ele != nil; ele = ele.Next() {
 		values = append(values, ele.Value.(*entry[K, V]).value)

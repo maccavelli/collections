@@ -111,52 +111,52 @@ const (
 
 func TestQuickDeclCountCheck(t *testing.T) {
 	tests := []struct {
-		name      string
-		orig      []byte
-		mod       []byte
-		wantDecr  bool
-		wantOrig  int
-		wantMod   int
+		name     string
+		orig     []byte
+		mod      []byte
+		wantDecr bool
+		wantOrig int
+		wantMod  int
 	}{
 		{
-			name:      "no change",
-			orig:      []byte("package test\nfunc F() {}"),
-			mod:       []byte("package test\nfunc F() {}"),
-			wantDecr:  false,
-			wantOrig:  1,
-			wantMod:   1,
+			name:     "no change",
+			orig:     []byte("package test\nfunc F() {}"),
+			mod:      []byte("package test\nfunc F() {}"),
+			wantDecr: false,
+			wantOrig: 1,
+			wantMod:  1,
 		},
 		{
-			name:      "addition",
-			orig:      []byte("package test\nfunc F() {}"),
-			mod:       []byte("package test\nfunc F() {}\nfunc G() {}"),
-			wantDecr:  false,
-			wantOrig:  1,
-			wantMod:   2,
+			name:     "addition",
+			orig:     []byte("package test\nfunc F() {}"),
+			mod:      []byte("package test\nfunc F() {}\nfunc G() {}"),
+			wantDecr: false,
+			wantOrig: 1,
+			wantMod:  2,
 		},
 		{
-			name:      "removal",
-			orig:      []byte("package test\nfunc F() {}\nfunc G() {}"),
-			mod:       []byte("package test\nfunc F() {}"),
-			wantDecr:  true,
-			wantOrig:  2,
-			wantMod:   1,
+			name:     "removal",
+			orig:     []byte("package test\nfunc F() {}\nfunc G() {}"),
+			mod:      []byte("package test\nfunc F() {}"),
+			wantDecr: true,
+			wantOrig: 2,
+			wantMod:  1,
 		},
 		{
-			name:      "malformed original",
-			orig:      []byte("invalid"),
-			mod:       []byte("package test"),
-			wantDecr:  false,
-			wantOrig:  0,
-			wantMod:   0,
+			name:     "malformed original",
+			orig:     []byte("invalid"),
+			mod:      []byte("package test"),
+			wantDecr: false,
+			wantOrig: 0,
+			wantMod:  0,
 		},
 		{
-			name:      "malformed modified",
-			orig:      []byte("package test"),
-			mod:       []byte("invalid"),
-			wantDecr:  true,
-			wantOrig:  0,
-			wantMod:   0,
+			name:     "malformed modified",
+			orig:     []byte("package test"),
+			mod:      []byte("invalid"),
+			wantDecr: true,
+			wantOrig: 0,
+			wantMod:  0,
 		},
 	}
 
@@ -223,8 +223,8 @@ func Exported() {}
 			wantChanged: false,
 		},
 		{
-			name: "invalid source",
-			src: []byte(`invalid go code`),
+			name:        "invalid source",
+			src:         []byte(`invalid go code`),
 			wantChanged: false,
 		},
 	}
@@ -380,9 +380,9 @@ func TestHandleExecutePipeline_DryRun(t *testing.T) {
 
 	// Trigger fresh pipeline with DryRun=true
 	args := map[string]any{
-		"target":  tmpDir,
-		"intent":  "analyzer and planner for code refactor",
-		"dry_run": true,
+		"target":       tmpDir,
+		"intent":       "analyzer and planner for code refactor",
+		"dry_run":      true,
 		"target_roles": []string{"ANALYZER", "PLANNER"},
 	}
 	argsJSON, _ := json.Marshal(args)

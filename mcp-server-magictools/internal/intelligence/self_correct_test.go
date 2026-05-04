@@ -33,7 +33,7 @@ func TestSelfCorrectIntentOutcome(t *testing.T) {
 	if score <= 0.0 || score >= 1.0 {
 		t.Errorf("expected score in (0, 1) due to Laplace smoothing, got %f", score)
 	}
-	
+
 	// Record failure
 	RecordIntentOutcome(store, intent, tool, false)
 	score2 := GetIntentToolScore(store, intent, tool)
@@ -50,12 +50,12 @@ func TestExtractPRFTerms(t *testing.T) {
 			HighlightedDescription: "Search the <mark>internet</mark> using DuckDuckGo.",
 		},
 	}
-	
+
 	terms := ExtractPRFTerms(topHits, "search web", 5)
 	if len(terms) == 0 {
 		t.Fatal("expected PRF terms")
 	}
-	
+
 	// Check that common words are filtered and new words like "internet" or "duckduckgo" are found
 	found := false
 	for _, term := range terms {
@@ -72,12 +72,12 @@ func TestExtractPRFTerms(t *testing.T) {
 func TestComputeResultOverlap(t *testing.T) {
 	setA := []*db.ToolRecord{{URN: "A"}, {URN: "B"}}
 	setB := []*db.ToolRecord{{URN: "B"}, {URN: "C"}}
-	
+
 	overlap := ComputeResultOverlap(setA, setB)
 	if overlap != 0.5 {
 		t.Errorf("expected 0.5 overlap, got %f", overlap)
 	}
-	
+
 	overlap = ComputeResultOverlap(setA, setA)
 	if overlap != 1.0 {
 		t.Errorf("expected 1.0 overlap, got %f", overlap)
@@ -95,7 +95,7 @@ func TestClassifyError(t *testing.T) {
 		{"broken pipe", "SERVER_UNAVAILABLE"},
 		{"something else", "TOOL_ERROR"},
 	}
-	
+
 	for _, tt := range tests {
 		got := ClassifyError(tt.err)
 		if got != tt.want {
@@ -108,11 +108,11 @@ func TestFailureAnchorsNoVector(t *testing.T) {
 	// Verify that failure anchor functions don't panic when vector engine is nil
 	ctx := context.Background()
 	RecordFailureAnchor(ctx, "tool1", "intent1", "TIMEOUT")
-	
+
 	penalty := CheckFailureProximity(ctx, nil, "intent1", "tool1")
 	if penalty != 1.0 {
 		t.Errorf("expected penalty 1.0 when vector is offline, got %f", penalty)
 	}
-	
+
 	PruneFailureAnchors(nil, "tool1", 2.0)
 }

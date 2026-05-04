@@ -33,13 +33,65 @@ func NewProxyService(h *OrchestratorHandler) *ProxyService {
 // utilizing the pre-computed ZeroValues profile directly from the cached ToolRecord.
 // This executes in O(1) latency cleanly offloading formatting burdens from the LLM agent.
 func (ps *ProxyService) AutoCoerceArguments(record *db.ToolRecord, args map[string]any) {
-	if record == nil || record.ZeroValues == nil {
+	if record == nil {
 		return
 	}
 
-	for key, zeroVal := range record.ZeroValues {
-		if _, exists := args[key]; !exists {
-			args[key] = zeroVal
+	// 1. ZeroValues injection for completely missing fields
+	if record.ZeroValues != nil {
+		for key, zeroVal := range record.ZeroValues {
+			if _, exists := args[key]; !exists {
+				args[key] = zeroVal
+			}
+		}
+	}
+
+	// 2. Dynamic Type Coercion based on JSON schema types
+	if record.InputSchema != nil {
+		if props, ok := record.InputSchema["properties"].(map[string]any); ok {
+			for key, val := range args {
+				if propDef, exists := props[key].(map[string]any); exists {
+					if typ, hasTyp := propDef["type"].(string); hasTyp {
+						switch typ {
+						case "integer":
+							switch v := val.(type) {
+							case float64:
+								args[key] = int(v)
+							case string:
+								var i int
+								if _, err := fmt.Sscanf(v, "%d", &i); err == nil {
+									args[key] = i
+								}
+							}
+						case "number":
+							if str, ok := val.(string); ok {
+								var f float64
+								if _, err := fmt.Sscanf(str, "%f", &f); err == nil {
+									args[key] = f
+								}
+							}
+						case "string":
+							switch v := val.(type) {
+							case float64, int, bool:
+								args[key] = fmt.Sprintf("%v", v)
+							case string:
+								// 🛡️ ENUM BOUNDS SNAPPING: Automatically "snap" minor hallucinations
+								if enum, ok := propDef["enum"].([]any); ok && len(enum) > 0 {
+									snapped := ps.snapToEnum(v, enum)
+									if snapped != v {
+										slog.Info("gateway: enum snapped", "field", key, "original", v, "snapped", snapped)
+										args[key] = snapped
+									}
+								}
+							}
+						case "array":
+							if val == nil {
+								args[key] = []any{}
+							}
+						}
+					}
+				}
+			}
 		}
 	}
 }
@@ -116,6 +168,7 @@ func (ps *ProxyService) formatValidationError(baseErr error, hash string) error 
 	schemaBytes, _ := json.MarshalIndent(schemaMap, "", "  ")
 	return fmt.Errorf("[VALIDATION_ERROR]: Arguments do not match schema constraints: %v\n\nExpected Schema:\n```json\n%s\n```", baseErr, string(schemaBytes))
 }
+
 // ResolveURN parses and validates a tool URN, performing auto-resolution
 // if the initial URN doesn't match a known tool.
 // Returns the canonical server name, tool name, resolved URN, and the ToolRecord (if found).
@@ -142,7 +195,7 @@ func (ps *ProxyService) ResolveURN(ctx context.Context, inputURN string) (server
 	record, getErr := ps.Handler.Store.GetTool(urn)
 	if getErr != nil {
 		// Auto-resolution: search explicitly by name globally
-		suggestions, searchErr := ps.Handler.Store.SearchTools(ctx, tool, "", "", 0.0, ps.Handler.Config.ScoreFusionAlpha)
+		suggestions, searchErr := ps.Handler.Store.SearchTools(ctx, tool, "", "", 0.0, ps.Handler.Config.ScoreFusionAlpha, db.DomainSystem)
 		if searchErr != nil && searchErr.Error() != "No certain match" {
 			slog.Log(ctx, util.LevelTrace, "gateway: auto-resolve search logic partial error", "error", searchErr)
 		}
@@ -154,7 +207,7 @@ func (ps *ProxyService) ResolveURN(ctx context.Context, inputURN string) (server
 				}
 			}
 			// Attempt server-specific suggestion
-			serverSpecific, serverErr := ps.Handler.Store.SearchTools(ctx, tool, "", server, 0.0, ps.Handler.Config.ScoreFusionAlpha)
+			serverSpecific, serverErr := ps.Handler.Store.SearchTools(ctx, tool, "", server, 0.0, ps.Handler.Config.ScoreFusionAlpha, db.DomainSystem)
 			if serverErr == nil && len(serverSpecific) > 0 {
 				return "", "", "", nil, fmt.Errorf("tool URN %q not found. Did you mean %q?", inputURN, serverSpecific[0].URN)
 			}
@@ -419,4 +472,61 @@ func isZeroNumeric(v any) bool {
 		return n == 0
 	}
 	return false
+}
+// snapToEnum uses Levenshtein distance to automatically "snap" minor enum hallucinations
+// to valid schema bounds. This minimizes orchestrator retries for trivial mismatches.
+func (ps *ProxyService) snapToEnum(val string, enum []any) string {
+	if len(enum) == 0 {
+		return val
+	}
+	minDist := 100
+	bestMatch := val
+	lowerVal := strings.ToLower(val)
+
+	for _, e := range enum {
+		if s, ok := e.(string); ok {
+			if strings.EqualFold(s, val) {
+				return s // Perfect match (case-insensitive)
+			}
+			dist := util.LevenshteinDistance(lowerVal, strings.ToLower(s))
+			if dist < minDist {
+				minDist = dist
+				bestMatch = s
+			}
+		}
+	}
+
+	// Only snap if the distance is small (heuristic: distance <= 2 or < 30% of target length)
+	if minDist <= 2 || float64(minDist) < float64(len(bestMatch))*0.3 {
+		return bestMatch
+	}
+	return val
+}
+
+// repairJSONHeuristic attempts structural repairs on malformed JSON strings
+// before the final validation pass. Handle Markdown escapes and missing braces.
+func (ps *ProxyService) repairJSONHeuristic(input string) string {
+	trimmed := strings.TrimSpace(input)
+	if trimmed == "" {
+		return input
+	}
+
+	// 1. Handle Markdown code block escapes
+	if strings.HasPrefix(trimmed, "```json") {
+		trimmed = strings.TrimPrefix(trimmed, "```json")
+		trimmed = strings.TrimSuffix(trimmed, "```")
+	} else if strings.HasPrefix(trimmed, "```") {
+		trimmed = strings.TrimPrefix(trimmed, "```")
+		trimmed = strings.TrimSuffix(trimmed, "```")
+	}
+	trimmed = strings.TrimSpace(trimmed)
+
+	// 2. Repair missing closing braces
+	opens := strings.Count(trimmed, "{")
+	closes := strings.Count(trimmed, "}")
+	if opens > closes {
+		trimmed += strings.Repeat("}", opens-closes)
+	}
+
+	return trimmed
 }

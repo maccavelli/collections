@@ -7,22 +7,22 @@ import (
 func TestDAGTracker(t *testing.T) {
 	tracker := &DAGTracker{}
 	tracker.InitializePipeline("session-1", []string{"node1", "node2"}, 0.5, 10, 5)
-	
+
 	// Test depth
 	tracker.IncrementMutationDepth()
-	
+
 	// Test active node
 	tracker.UpdateActiveNode("node1", 100, 1000, 500, "HIT", "hash")
-	
+
 	// Test completion
 	tracker.CompleteNode("node1", true)
-	
+
 	// Test fault
 	tracker.RecordFault("node1", "RETRY", 1, 3, "fallback")
-	
+
 	// Test splice
 	tracker.SpliceNodes("node1", []string{"node3", "node4"})
-	
+
 	// Test snapshot
 	snapshot := tracker.Snapshot()
 	if snapshot["session_id"] != "session-1" {

@@ -33,7 +33,7 @@ func TestSyntheticIntents(t *testing.T) {
 	if results[0].URN != dag[0] {
 		t.Errorf("expected %s, got %s", dag[0], results[0].URN)
 	}
-	
+
 	// Test GetToolsByServer
 	// Index a normal tool first
 	doc := BleveToolDocument{
@@ -42,7 +42,7 @@ func TestSyntheticIntents(t *testing.T) {
 		Server: "server1",
 	}
 	si.IndexRecord(doc)
-	
+
 	urns, err := si.GetToolsByServer("server1", 10)
 	if err != nil {
 		t.Fatalf("GetToolsByServer failed: %v", err)
@@ -50,7 +50,7 @@ func TestSyntheticIntents(t *testing.T) {
 	if len(urns) != 1 || urns[0] != "server1:tool1" {
 		t.Errorf("unexpected urns: %v", urns)
 	}
-	
+
 	// Test SwapIndex
 	mapping := bleve.NewIndexMapping()
 	newIdx, _ := bleve.NewMemOnly(mapping)

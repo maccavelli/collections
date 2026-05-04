@@ -34,6 +34,18 @@ type CacheMetrics struct {
 	BleveDocs uint64
 }
 
+// SearchDomain defines the logical visibility scope for a tool search request.
+type SearchDomain string
+
+const (
+	// DomainUserLand: Mask brainstorm and go-refactor tools (Default for align_tools)
+	DomainUserLand SearchDomain = "user_land"
+	// DomainPipelineOrchestration: Search only brainstorm, go-refactor, and magictools synthesizers
+	DomainPipelineOrchestration SearchDomain = "pipeline_orchestration"
+	// DomainSystem: Search all tools without sharding (Diagnostics/Maintenance)
+	DomainSystem SearchDomain = "system"
+)
+
 // Store wraps BadgerDB and Bleve index
 type Store struct {
 	DB                *badger.DB
@@ -877,7 +889,7 @@ func ComputeZeroValues(schema map[string]any) map[string]any {
 
 // SearchTools performs Keyword search on tool names and descriptions using Bleve index with optional category domain filtering.
 // Results are re-ranked by blending BM25 relevance with usage frequency.
-func (s *Store) SearchTools(ctx context.Context, query string, category string, serverConstraint string, scoreThreshold float64, alpha float64) ([]*ToolRecord, error) {
+func (s *Store) SearchTools(ctx context.Context, query string, category string, serverConstraint string, scoreThreshold float64, alpha float64, domain SearchDomain) ([]*ToolRecord, error) {
 	if query == "" {
 		var results []*ToolRecord
 		err := s.DB.View(func(txn *badger.Txn) error {
@@ -916,7 +928,7 @@ func (s *Store) SearchTools(ctx context.Context, query string, category string, 
 		return results, err
 	}
 
-	searchResult, err := s.Index.Search(query, category, serverConstraint)
+	searchResult, err := s.Index.Search(query, category, serverConstraint, domain)
 	if err != nil {
 		return nil, err
 	}
@@ -932,7 +944,7 @@ func (s *Store) SearchTools(ctx context.Context, query string, category string, 
 	}
 
 	if len(searchResult.Hits) == 0 && len(vecResults) == 0 {
-		return s.SearchToolsFallback(query, category, serverConstraint)
+		return s.SearchToolsFallback(query, category, serverConstraint, domain)
 	}
 
 	// Build unified hit list with blended scores
@@ -949,12 +961,26 @@ func (s *Store) SearchTools(ctx context.Context, query string, category string, 
 
 	vectorScores := make(map[string]float64)
 	for _, vr := range vecResults {
-		// Domain isolation: Strip brainstorm and go-refactor unless explicitly targeted
-		if serverConstraint == "" {
-			if strings.HasPrefix(vr.Key, "brainstorm:") || strings.HasPrefix(vr.Key, "go-refactor:") {
+		// 🛡️ DOMAIN-AWARE SHARDING: Enforce strict visibility boundaries for vector results
+		switch domain {
+		case DomainUserLand:
+			// Mask brainstorm and go-refactor unless explicitly targeted
+			if serverConstraint == "" {
+				if strings.HasPrefix(vr.Key, "brainstorm:") || strings.HasPrefix(vr.Key, "go-refactor:") {
+					continue
+				}
+			}
+		case DomainPipelineOrchestration:
+			// Restrict to brainstorm, go-refactor, and magictools
+			isPipeline := strings.HasPrefix(vr.Key, "brainstorm:") || strings.HasPrefix(vr.Key, "go-refactor:") || strings.HasPrefix(vr.Key, "magictools:")
+			if !isPipeline {
 				continue
 			}
-		} else {
+		case DomainSystem:
+			// No sharding
+		}
+
+		if serverConstraint != "" {
 			if !strings.HasPrefix(vr.Key, serverConstraint+":") && vr.Key != serverConstraint {
 				continue
 			}
@@ -1061,7 +1087,7 @@ func (s *Store) SearchTools(ctx context.Context, query string, category string, 
 	}
 
 	if scoreThreshold > 0 && maxFusedScore < scoreThreshold {
-		fallback, err := s.SearchToolsFallback(query, category, serverConstraint)
+		fallback, err := s.SearchToolsFallback(query, category, serverConstraint, domain)
 		if err == nil && len(fallback) > 0 {
 			return fallback, nil
 		}
@@ -1225,7 +1251,7 @@ func (s *Store) SearchTools(ctx context.Context, query string, category string, 
 
 // SearchToolsFallback implements a pure linear substring scan across the BadgerDB key space.
 // Used exclusively as a fallback when the Bleve search index returns zero hits or misses the threshold.
-func (s *Store) SearchToolsFallback(query string, category string, serverConstraint string) ([]*ToolRecord, error) {
+func (s *Store) SearchToolsFallback(query string, category string, serverConstraint string, domain SearchDomain) ([]*ToolRecord, error) {
 	var results []*ToolRecord
 	queryLower := strings.ToLower(query)
 	categoryLower := strings.ToLower(category)
@@ -1248,9 +1274,20 @@ func (s *Store) SearchToolsFallback(query string, category string, serverConstra
 					if serverLower != "" && strings.ToLower(r.Server) != serverLower {
 						return nil
 					}
-					// 🛡️ ALIGN_TOOLS MASKING GUARD: Prevents native index bleed exposing internal pipeline boundaries
-					if serverLower == "" && (r.Server == "brainstorm" || r.Server == "go-refactor") && !strings.Contains(queryLower, r.Server+":") && !strings.Contains(queryLower, r.Server) {
-						return nil
+
+					// 🛡️ DOMAIN-AWARE SHARDING: Enforce strict visibility boundaries
+					switch domain {
+					case DomainUserLand:
+						if serverLower == "" && (r.Server == "brainstorm" || r.Server == "go-refactor") && !strings.Contains(queryLower, r.Server) {
+							return nil
+						}
+					case DomainPipelineOrchestration:
+						isPipeline := r.Server == "brainstorm" || r.Server == "go-refactor" || r.Server == "magictools"
+						if !isPipeline {
+							return nil
+						}
+					case DomainSystem:
+						// No sharding
 					}
 					// Apply Word-Split Substring Match (any word matches)
 					words := strings.Fields(queryLower)
@@ -1365,7 +1402,6 @@ func (s *Store) GetRawResource(id string) ([]byte, error) {
 	}
 	return util.Decompress(compressed)
 }
-
 
 // UpdateToolUsage increments the usage counter for a tool
 func (s *Store) UpdateToolUsage(urn string) {

@@ -1,8 +1,8 @@
 package dag
 
 import (
-	"testing"
 	"mcp-server-magictools/internal/db"
+	"testing"
 )
 
 func TestBM25Scorer(t *testing.T) {

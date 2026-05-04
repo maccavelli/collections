@@ -69,7 +69,14 @@ var stopWords = map[string]bool{
 	"have": true, "had": true, "not": true, "will": true, "can": true, "do": true,
 	"does": true, "did": true, "all": true, "each": true, "which": true, "when": true,
 	"there": true, "their": true, "them": true, "then": true, "than": true,
+
+	// Domain-specific TF-IDF cutoffs (highly frequent terms across all tool schemas)
 	"use": true, "used": true, "using": true, "tool": true, "tools": true,
+	"create": true, "update": true, "delete": true, "read": true, "file": true,
+	"directory": true, "system": true, "data": true, "string": true, "name": true,
+	"path": true, "list": true, "view": true, "edit": true, "run": true, "execute": true,
+	"search": true, "find": true, "query": true, "result": true, "results": true,
+	"get": true, "set": true, "add": true, "remove": true,
 }
 
 // ExtractPRFTerms extracts discriminative terms from the top-K search results'

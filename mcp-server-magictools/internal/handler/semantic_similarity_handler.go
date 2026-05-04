@@ -94,7 +94,7 @@ func (h *OrchestratorHandler) SemanticSimilarityAudit(ctx context.Context, req *
 	}
 
 	// Phase I: Get ALL tools
-	allTools, err := h.Store.SearchTools(ctx, "", "", "", 0, h.Config.ScoreFusionAlpha)
+	allTools, err := h.Store.SearchTools(ctx, "", "", "", 0, h.Config.ScoreFusionAlpha, db.DomainSystem)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list all tools: %w", err)
 	}
@@ -134,11 +134,11 @@ func (h *OrchestratorHandler) SemanticSimilarityAudit(ctx context.Context, req *
 						}
 					}
 				} else {
-					matches, err = h.Store.SearchTools(ctx, toolA.Description, toolA.Category, "", 0.7, h.Config.ScoreFusionAlpha)
+					matches, err = h.Store.SearchTools(ctx, toolA.Description, toolA.Category, "", 0.7, h.Config.ScoreFusionAlpha, db.DomainSystem)
 				}
 			} else {
 				// OFFLINE: Bleve Natural Linguistic Search
-				matches, err = h.Store.SearchTools(ctx, toolA.Description, toolA.Category, "", 0.7, h.Config.ScoreFusionAlpha)
+				matches, err = h.Store.SearchTools(ctx, toolA.Description, toolA.Category, "", 0.7, h.Config.ScoreFusionAlpha, db.DomainSystem)
 			}
 
 			if err != nil || len(matches) == 0 {
