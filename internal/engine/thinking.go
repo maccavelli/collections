@@ -14,8 +14,8 @@ import (
 type ThoughtData struct {
 	util.UniversalBaseInput
 	Thought               string  `json:"thought" jsonschema:"[REQUIRED] Your current thinking step"`
-	SelfCritique          string  `json:"selfCritique" jsonschema:"[REQUIRED] Explicit self-correction and rigorous evaluation of the current thought logic"`
-	ContradictionDetected bool    `json:"contradictionDetected" jsonschema:"[REQUIRED] Must be set to true if SelfCritique identifies a paradox, flaw, or assumption"`
+	SelfCritique          string  `json:"selfCritique,omitempty" jsonschema:"Explicit self-correction and rigorous evaluation of the current thought logic"`
+	ContradictionDetected bool    `json:"contradictionDetected,omitempty" jsonschema:"Must be set to true if SelfCritique identifies a paradox, flaw, or assumption"`
 	ResolutionStrategy    *string `json:"resolutionStrategy,omitempty" jsonschema:"Mandatory step outlining how to fix the logic ONLY if the previous thought had a contradiction"`
 	NextThoughtNeeded     bool    `json:"nextThoughtNeeded" jsonschema:"[REQUIRED] Whether another thought step is needed"`
 	ThoughtNumber     int     `json:"thoughtNumber" jsonschema:"[REQUIRED] Current thought number (numeric value, e.g., 1, 2, 3)" jsonschema_extras:"minimum=1"`
