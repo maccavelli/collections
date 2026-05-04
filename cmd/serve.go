@@ -1,7 +1,9 @@
+// Package cmd implements the Cobra command tree for the MagicDev MCP server.
 package cmd
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -15,35 +17,30 @@ import (
 var serveCmd = &cobra.Command{
 	Use:   "serve",
 	Short: "Start the MagicDev MCP server",
-	Run: func(cmd *cobra.Command, args []string) {
+	RunE: func(cmd *cobra.Command, args []string) error {
 		slog.Info("starting magicdev MCP server")
 
-		// Create MCP server
+		// Create MCP server.
 		s := mcp.NewServer(&mcp.Implementation{
 			Name:    "magicdev",
-			Version: "1.0.0",
+			Version: Version,
 		}, nil)
 
-		// Initialize Config
+		// Load encrypted credentials into viper.
 		if _, err := config.LoadConfig(); err != nil {
 			slog.Warn("could not load encrypted config, proceeding without credentials", "err", err)
 		}
 
-		// Initialize DB
 		store, err := db.InitStore()
 		if err != nil {
-			slog.Error("failed to initialize session store", "err", err)
-			return
+			return fmt.Errorf("failed to initialize session store: %w", err)
 		}
 		defer store.Close()
 
-		// Register Tools
 		handler.RegisterTools(s, store)
 
-		// Start server
-		if err := s.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
-			slog.Error("server error", "err", err)
-		}
+		slog.Info("MCP server ready", "version", Version)
+		return s.Run(context.Background(), &mcp.StdioTransport{})
 	},
 }
 

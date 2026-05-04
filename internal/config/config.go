@@ -1,3 +1,5 @@
+// Package config handles AES-256-GCM encrypted credential storage using
+// hardware-derived keys. Decrypted values are loaded into viper for global access.
 package config
 
 import (

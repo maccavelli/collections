@@ -1,3 +1,6 @@
+// Package integration implements the Atlassian (Jira/Confluence) and GitLab
+// integration layer for the MagicDev pipeline. It produces enriched documents
+// from Blueprint data and pushes them to external systems.
 package integration
 
 import (
@@ -6,7 +9,10 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
+	"runtime"
+	"strings"
 	"time"
 
 	"github.com/ctreminiom/go-atlassian/v2/confluence"
@@ -18,18 +24,26 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/transport/ssh"
 	"github.com/klauspost/compress/zstd"
 	"github.com/spf13/viper"
+
+	"mcp-server-magicdev/internal/db"
 )
 
+// HybridMarkdown is the Git-committed artifact combining Jira metadata,
+// Blueprint enrichment data, and Zstd-compressed markdown payload.
 type HybridMarkdown struct {
 	Metadata struct {
-		JiraID      string `json:"jira_id"`
-		ProjectStep string `json:"step"`
-		Compression string `json:"compression"`
+		JiraID             string          `json:"jira_id"`
+		ProjectStep        string          `json:"step"`
+		Compression        string          `json:"compression"`
+		DependencyManifest []db.Dependency `json:"dependency_manifest,omitzero"`
+		AporiaResolutions  []string        `json:"aporia_resolutions,omitzero"`
 	} `json:"metadata"`
 	Payload string `json:"payload_b64"`
 }
 
-func ProcessDocumentGeneration(title, markdown, repoPath, sessionID string) error {
+// ProcessDocumentGeneration creates Jira task, Confluence page, and Hybrid Markdown Git commits.
+// When bp is non-nil, the Blueprint data enriches all three outputs.
+func ProcessDocumentGeneration(title, markdown, repoPath, sessionID string, bp *db.Blueprint, aporias []string) error {
 	ctx := context.Background()
 
 	// 1. Jira Ticket Creation
@@ -41,14 +55,48 @@ func ProcessDocumentGeneration(title, markdown, repoPath, sessionID string) erro
 
 	issuePayload := &models.IssueScheme{
 		Fields: &models.IssueFieldsScheme{
-			Summary: title,
-			Project: &models.ProjectScheme{Key: "PROJ"},
+			Summary:   title,
+			Project:   &models.ProjectScheme{Key: "PROJ"},
 			IssueType: &models.IssueTypeScheme{Name: "Task"},
 		},
 	}
-	issue, _, _ := jiraClient.Issue.Create(ctx, issuePayload, nil)
+
+	// Populate story points from Blueprint complexity scores if available
+	var customFields *models.CustomFields
+	if bp != nil && len(bp.ComplexityScores) > 0 {
+		totalPoints := 0
+		for _, points := range bp.ComplexityScores {
+			totalPoints += points
+		}
+
+		storyPointsField := viper.GetString("jira_story_points_field")
+		if storyPointsField == "" {
+			storyPointsField = "customfield_10016" // Jira Cloud default
+		}
+
+		customFields = &models.CustomFields{}
+		if err := customFields.Number(storyPointsField, float64(totalPoints)); err != nil {
+			slog.Warn("generate_documents: failed to set story points custom field", "error", err)
+		} else {
+			slog.Info("generate_documents: setting story points from blueprint",
+				"field", storyPointsField,
+				"total_points", totalPoints,
+			)
+		}
+	}
+
+	issue, resp, jiraErr := jiraClient.Issue.Create(ctx, issuePayload, customFields)
 	jiraID := "UNKNOWN"
-	if issue != nil {
+	if jiraErr != nil {
+		status := 0
+		if resp != nil {
+			status = resp.StatusCode
+		}
+		slog.Warn("generate_documents: jira issue creation failed",
+			"error", jiraErr,
+			"status", status,
+		)
+	} else if issue != nil {
 		jiraID = issue.Key
 	}
 
@@ -59,13 +107,25 @@ func ProcessDocumentGeneration(title, markdown, repoPath, sessionID string) erro
 	}
 	confluenceClient.Auth.SetBasicAuth("", viper.GetString("atlassian_token"))
 
+	// Enrich markdown with Technical Implementation Roadmap section from Blueprint
+	enrichedMarkdown := markdown
+	if bp != nil {
+		enrichedMarkdown = appendRoadmapSection(markdown, bp)
+	}
+
+	// Normalize line endings for Windows
+	enrichedMarkdown = normalizeLineEndings(enrichedMarkdown)
+
 	// Convert Markdown to ADF
-	adfDoc, err := mdadf.Convert(markdown)
+	adfDoc, err := mdadf.Convert(enrichedMarkdown)
 	if err != nil {
 		return fmt.Errorf("failed to convert markdown to ADF: %w", err)
 	}
 
-	adfBytes, _ := json.Marshal(adfDoc)
+	adfBytes, err := json.Marshal(adfDoc)
+	if err != nil {
+		return fmt.Errorf("failed to marshal ADF document: %w", err)
+	}
 
 	contentPayload := &models.ContentScheme{
 		Type:  "page",
@@ -78,11 +138,20 @@ func ProcessDocumentGeneration(title, markdown, repoPath, sessionID string) erro
 			},
 		},
 	}
-	
-	_, _, _ = confluenceClient.Content.Create(ctx, contentPayload)
 
-	// 3. Generate Hybrid Markdown
-	hybrid, err := generateHybridMarkdown(jiraID, markdown)
+	if _, resp, err := confluenceClient.Content.Create(ctx, contentPayload); err != nil {
+		status := 0
+		if resp != nil {
+			status = resp.StatusCode
+		}
+		slog.Warn("generate_documents: confluence page creation failed",
+			"error", err,
+			"status", status,
+		)
+	}
+
+	// 3. Generate Hybrid Markdown with enriched metadata
+	hybrid, err := generateHybridMarkdown(jiraID, enrichedMarkdown, bp, aporias)
 	if err != nil {
 		return err
 	}
@@ -100,7 +169,63 @@ func ProcessDocumentGeneration(title, markdown, repoPath, sessionID string) erro
 	return nil
 }
 
-func generateHybridMarkdown(jiraID, markdown string) (*HybridMarkdown, error) {
+// appendRoadmapSection adds a "Technical Implementation Roadmap" section to the markdown.
+func appendRoadmapSection(markdown string, bp *db.Blueprint) string {
+	var b strings.Builder
+	b.WriteString(markdown)
+	b.WriteString("\n\n---\n\n## Technical Implementation Roadmap\n\n")
+
+	if len(bp.ImplementationStrategy) > 0 {
+		b.WriteString("### Strategy Mapping\n\n")
+		b.WriteString("| Requirement | Pattern |\n")
+		b.WriteString("|---|---|\n")
+		for req, pattern := range bp.ImplementationStrategy {
+			b.WriteString(fmt.Sprintf("| %s | %s |\n", req, pattern))
+		}
+		b.WriteString("\n")
+	}
+
+	if len(bp.DependencyManifest) > 0 {
+		b.WriteString("### Dependency Manifest\n\n")
+		b.WriteString("| Package | Version | Ecosystem |\n")
+		b.WriteString("|---|---|---|\n")
+		for _, dep := range bp.DependencyManifest {
+			b.WriteString(fmt.Sprintf("| %s | %s | %s |\n", dep.Name, dep.Version, dep.Ecosystem))
+		}
+		b.WriteString("\n")
+	}
+
+	if len(bp.ComplexityScores) > 0 {
+		b.WriteString("### Complexity Estimation\n\n")
+		totalPoints := 0
+		for feature, points := range bp.ComplexityScores {
+			b.WriteString(fmt.Sprintf("- **%s**: %d SP\n", feature, points))
+			totalPoints += points
+		}
+		b.WriteString(fmt.Sprintf("\n**Total:** %d story points\n\n", totalPoints))
+	}
+
+	if len(bp.AporiaTraceability) > 0 {
+		b.WriteString("### Aporia Traceability\n\n")
+		for contradiction, resolution := range bp.AporiaTraceability {
+			b.WriteString(fmt.Sprintf("- **%s** → %s\n", contradiction, resolution))
+		}
+	}
+
+	return b.String()
+}
+
+// normalizeLineEndings converts LF to CRLF on Windows for markdown bodies.
+func normalizeLineEndings(body string) string {
+	if runtime.GOOS == "windows" {
+		// Avoid double-converting existing CRLF
+		body = strings.ReplaceAll(body, "\r\n", "\n")
+		body = strings.ReplaceAll(body, "\n", "\r\n")
+	}
+	return body
+}
+
+func generateHybridMarkdown(jiraID, markdown string, bp *db.Blueprint, aporias []string) (*HybridMarkdown, error) {
 	var buf bytes.Buffer
 	enc, err := zstd.NewWriter(&buf, zstd.WithEncoderLevel(zstd.SpeedDefault))
 	if err != nil {
@@ -120,6 +245,15 @@ func generateHybridMarkdown(jiraID, markdown string) (*HybridMarkdown, error) {
 	hybrid.Metadata.JiraID = jiraID
 	hybrid.Metadata.ProjectStep = "Finalized Design"
 	hybrid.Metadata.Compression = "zstd"
+
+	// Enrich metadata from Blueprint
+	if bp != nil {
+		hybrid.Metadata.DependencyManifest = bp.DependencyManifest
+	}
+	if len(aporias) > 0 {
+		hybrid.Metadata.AporiaResolutions = aporias
+	}
+
 	hybrid.Payload = b64Payload
 
 	return hybrid, nil
