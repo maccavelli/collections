@@ -1,3 +1,4 @@
+// Package engine provides functionality for the engine subsystem.
 package engine
 
 // DefaultStandards contains the hardcoded Tier 3 fallback rules for the go-refactor

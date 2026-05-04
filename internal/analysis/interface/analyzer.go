@@ -1,3 +1,4 @@
+// Package interfaceanalysis provides functionality for the interfaceanalysis subsystem.
 package interfaceanalysis
 
 import (
@@ -27,10 +28,12 @@ type Tool struct {
 	Engine *engine.Engine
 }
 
+// Name performs the Name operation.
 func (t *Tool) Name() string {
 	return "go_interface_discovery"
 }
 
+// Register performs the Register operation.
 func (t *Tool) Register(s util.SessionProvider) {
 	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
@@ -44,10 +47,12 @@ type ImplementationTool struct {
 	Engine *engine.Engine
 }
 
+// Name performs the Name operation.
 func (t *ImplementationTool) Name() string {
 	return "find_interface_implementations"
 }
 
+// Register performs the Register operation.
 func (t *ImplementationTool) Register(s util.SessionProvider) {
 	t.server = s.MCPServer()
 	util.HardenedAddTool(s, &mcp.Tool{
@@ -62,10 +67,12 @@ func Register(eng *engine.Engine) {
 	registry.Global.Register(&ImplementationTool{Engine: eng})
 }
 
+// DiscoveryInput defines the DiscoveryInput structure.
 type DiscoveryInput struct {
 	models.UniversalPipelineInput
 }
 
+// Handle performs the Handle operation.
 func (t *Tool) Handle(ctx context.Context, req *mcp.CallToolRequest, input DiscoveryInput) (*mcp.CallToolResult, any, error) {
 	var session *engine.Session
 
@@ -144,10 +151,12 @@ func (t *Tool) Handle(ctx context.Context, req *mcp.CallToolRequest, input Disco
 	}, nil
 }
 
+// ImplementationInput defines the ImplementationInput structure.
 type ImplementationInput struct {
 	models.UniversalPipelineInput
 }
 
+// ImplementationMatch defines the ImplementationMatch structure.
 type ImplementationMatch struct {
 	PkgPath string `json:"PkgPath"`
 	Name    string `json:"Name"`
@@ -155,6 +164,7 @@ type ImplementationMatch struct {
 	Line    int    `json:"Line"`
 }
 
+// Handle performs the Handle operation.
 func (t *ImplementationTool) Handle(ctx context.Context, req *mcp.CallToolRequest, input ImplementationInput) (*mcp.CallToolResult, any, error) {
 	var session *engine.Session
 
@@ -250,6 +260,7 @@ func (t *ImplementationTool) Handle(ctx context.Context, req *mcp.CallToolReques
 	}, nil
 }
 
+// FindImplementations performs the FindImplementations operation.
 func (t *ImplementationTool) FindImplementations(ctx context.Context, req *mcp.CallToolRequest, interfaceName, searchPkg string) ([]ImplementationMatch, error) {
 	// 1. Resolve Target Interface
 	pkgs, err := loader.LoadPackages(ctx, searchPkg, loader.DefaultMode)
@@ -357,6 +368,7 @@ type interfaceSuggestion struct {
 	Implementors []ImplementationMatch `json:"Implementors,omitempty"`
 }
 
+// DiscoverSharedInterfaces performs the DiscoverSharedInterfaces operation.
 func DiscoverSharedInterfaces(ctx context.Context, pkgPath string) ([]interfaceSuggestion, error) {
 	pkgs, err := loader.LoadPackages(ctx, pkgPath, loader.DefaultMode)
 	if err != nil {

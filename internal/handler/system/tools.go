@@ -1,3 +1,4 @@
+// Package system provides functionality for the system subsystem.
 package system
 
 import (
@@ -25,6 +26,7 @@ type LogBuffer struct {
 
 var secretRegex = regexp.MustCompile(`(?i)(token_|sk_|key_|secret_)[a-zA-Z0-9_-]+`)
 
+// Write performs the Write operation.
 func (lb *LogBuffer) Write(p []byte) (n int, err error) {
 	lb.mu.Lock()
 	defer lb.mu.Unlock()
@@ -53,6 +55,7 @@ func (lb *LogBuffer) Write(p []byte) (n int, err error) {
 	return n, nil
 }
 
+// String performs the String operation.
 func (lb *LogBuffer) String() string {
 	lb.mu.Lock()
 	defer lb.mu.Unlock()
@@ -64,10 +67,12 @@ type GetInternalLogsTool struct {
 	Buffer *LogBuffer
 }
 
+// Name performs the Name operation.
 func (t *GetInternalLogsTool) Name() string {
 	return "get_internal_logs"
 }
 
+// Register performs the Register operation.
 func (t *GetInternalLogsTool) Register(s util.SessionProvider) {
 	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
@@ -75,11 +80,13 @@ func (t *GetInternalLogsTool) Register(s util.SessionProvider) {
 	}, t.Handle)
 }
 
+// LogsInput defines the LogsInput structure.
 type LogsInput struct {
 	SessionID string `json:"session_id,omitempty" jsonschema:"CSSA backend storage pipeline correlation ID."`
-	MaxLines  int    `json:"max_lines" jsonschema:"Max log lines to return (default 25)."`
+	MaxLines  int    `json:"max_lines,omitempty" jsonschema:"Max log lines to return (default 25)."`
 }
 
+// Handle performs the Handle operation.
 func (t *GetInternalLogsTool) Handle(_ context.Context, _ *mcp.CallToolRequest, input LogsInput) (*mcp.CallToolResult, any, error) {
 	isOrchestrator := os.Getenv("MCP_ORCHESTRATOR_OWNED") == "true"
 	if isOrchestrator {

@@ -1,3 +1,4 @@
+// Package pruner provides functionality for the pruner subsystem.
 package pruner
 
 import (
@@ -21,10 +22,12 @@ type Tool struct {
 	Engine *engine.Engine
 }
 
+// Name performs the Name operation.
 func (t *Tool) Name() string {
 	return "go_dead_code_pruner"
 }
 
+// Register performs the Register operation.
 func (t *Tool) Register(s util.SessionProvider) {
 	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
@@ -37,10 +40,12 @@ func Register(eng *engine.Engine) {
 	registry.Global.Register(&Tool{Engine: eng})
 }
 
+// PruneInput defines the PruneInput structure.
 type PruneInput struct {
 	models.UniversalPipelineInput
 }
 
+// Handle performs the Handle operation.
 func (t *Tool) Handle(ctx context.Context, req *mcp.CallToolRequest, input PruneInput) (*mcp.CallToolResult, any, error) {
 	var session *engine.Session
 
@@ -132,6 +137,7 @@ type DeadCodeResult struct {
 	UnusedVariables []string `json:"UnusedVariables"`
 }
 
+// PruneDeadCode performs the PruneDeadCode operation.
 func PruneDeadCode(ctx context.Context, pkgPath string) (*DeadCodeResult, error) {
 	res, err := loader.Discover(ctx, pkgPath)
 	if err != nil {

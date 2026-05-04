@@ -1,3 +1,4 @@
+// Package memory provides functionality for the memory subsystem.
 package memory
 
 import (

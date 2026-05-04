@@ -1,3 +1,4 @@
+// Package astutil provides functionality for the astutil subsystem.
 package astutil
 
 import (
@@ -22,10 +23,12 @@ type Tool struct {
 	Engine *engine.Engine
 }
 
+// Name performs the Name operation.
 func (t *Tool) Name() string {
 	return "go_interface_tool"
 }
 
+// Register performs the Register operation.
 func (t *Tool) Register(s util.SessionProvider) {
 	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
@@ -38,6 +41,7 @@ func Register(eng *engine.Engine) {
 	registry.Global.Register(&Tool{Engine: eng})
 }
 
+// InterfaceInput defines the InterfaceInput structure.
 type InterfaceInput struct {
 	models.UniversalPipelineInput
 	Pkg        string  `json:"pkg" jsonschema:"The package path"`
@@ -45,6 +49,7 @@ type InterfaceInput struct {
 	IfaceName  *string `json:"ifaceName,omitempty" jsonschema:"The name of the interface to check against (optional). If omitted, extracts a new interface from the struct."`
 }
 
+// Handle performs the Handle operation.
 func (t *Tool) Handle(ctx context.Context, req *mcp.CallToolRequest, input InterfaceInput) (*mcp.CallToolResult, any, error) {
 	var session *engine.Session
 
@@ -152,6 +157,7 @@ func (t *Tool) Handle(ctx context.Context, req *mcp.CallToolRequest, input Inter
 	}, nil
 }
 
+// Analysis defines the Analysis structure.
 type Analysis struct {
 	StructName     string   `json:"StructName"`
 	InterfaceName  string   `json:"InterfaceName"`

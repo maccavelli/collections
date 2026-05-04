@@ -1,3 +1,4 @@
+// Package staging provides functionality for the staging subsystem.
 package staging
 
 import (

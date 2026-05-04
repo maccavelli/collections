@@ -1,3 +1,4 @@
+// Package contextanalysis provides functionality for the contextanalysis subsystem.
 package contextanalysis
 
 import (
@@ -22,10 +23,12 @@ type Tool struct {
 	Engine *engine.Engine
 }
 
+// Name performs the Name operation.
 func (t *Tool) Name() string {
 	return "go_context_analyzer"
 }
 
+// Register performs the Register operation.
 func (t *Tool) Register(s util.SessionProvider) {
 	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
@@ -38,10 +41,12 @@ func Register(eng *engine.Engine) {
 	registry.Global.Register(&Tool{Engine: eng})
 }
 
+// ContextInput defines the ContextInput structure.
 type ContextInput struct {
 	models.UniversalPipelineInput
 }
 
+// Handle performs the Handle operation.
 func (t *Tool) Handle(ctx context.Context, req *mcp.CallToolRequest, input ContextInput) (*mcp.CallToolResult, any, error) {
 	var session *engine.Session
 
@@ -129,6 +134,7 @@ func (t *Tool) Handle(ctx context.Context, req *mcp.CallToolRequest, input Conte
 	}, nil
 }
 
+// Finding defines the Finding structure.
 type Finding struct {
 	File      string `json:"File"`
 	Line      int    `json:"Line"`
@@ -136,6 +142,7 @@ type Finding struct {
 	Rationale string `json:"Rationale"`
 }
 
+// AnalyzeContext performs the AnalyzeContext operation.
 func AnalyzeContext(ctx context.Context, pkgPath string) ([]Finding, error) {
 	pkgs, err := loader.LoadPackages(ctx, pkgPath, loader.DefaultMode)
 	if err != nil {

@@ -1,3 +1,4 @@
+// Package loader provides functionality for the loader subsystem.
 package loader
 
 import (

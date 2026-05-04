@@ -1,3 +1,4 @@
+// Package graph provides functionality for the graph subsystem.
 package graph
 
 import (
@@ -20,10 +21,12 @@ type Tool struct {
 	Engine *engine.Engine
 }
 
+// Name performs the Name operation.
 func (t *Tool) Name() string {
 	return "go_package_cycler"
 }
 
+// Register performs the Register operation.
 func (t *Tool) Register(s util.SessionProvider) {
 	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
@@ -36,10 +39,12 @@ func Register(eng *engine.Engine) {
 	registry.Global.Register(&Tool{Engine: eng})
 }
 
+// CyclerInput defines the CyclerInput structure.
 type CyclerInput struct {
 	models.UniversalPipelineInput
 }
 
+// Handle performs the Handle operation.
 func (t *Tool) Handle(ctx context.Context, req *mcp.CallToolRequest, input CyclerInput) (*mcp.CallToolResult, any, error) {
 	var session *engine.Session
 

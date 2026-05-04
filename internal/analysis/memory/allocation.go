@@ -1,3 +1,4 @@
+// Package memory provides functionality for the memory subsystem.
 package memory
 
 import (
@@ -25,6 +26,9 @@ func DetectAllocationIssues(pkgs []*packages.Package) []Finding {
 				funcName := fn.Name.Name
 				detectAppendInLoop(pkg, fn.Body, funcName, false, &findings)
 				detectSprintfConcatenation(pkg, fn.Body, funcName, &findings)
+				detectByteSliceConversions(pkg, fn.Body, funcName, &findings)
+				detectMissingCapacity(pkg, fn.Body, funcName, false, &findings)
+				detectBufferAllocations(pkg, fn.Body, funcName, &findings)
 				return true
 			})
 		}
@@ -213,4 +217,181 @@ func isPureStringConcatFormat(format string, argCount int) bool {
 		verbCount++
 	}
 	return cleaned == "" && verbCount == argCount
+}
+
+// detectByteSliceConversions finds []byte(stringVar) casts which cause heap allocations.
+func detectByteSliceConversions(pkg *packages.Package, body *ast.BlockStmt, funcName string, findings *[]Finding) {
+	ast.Inspect(body, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		// Look for []byte(...)
+		arrayType, ok := call.Fun.(*ast.ArrayType)
+		if !ok || arrayType.Len != nil {
+			return true
+		}
+		ident, ok := arrayType.Elt.(*ast.Ident)
+		if !ok || ident.Name != "byte" {
+			return true
+		}
+
+		pos := pkg.Fset.Position(call.Pos())
+		*findings = append(*findings, Finding{
+			File:        pos.Filename,
+			Line:        pos.Line,
+			Function:    funcName,
+			Category:    "allocation",
+			Severity:    "MEDIUM",
+			Pattern:     "zero_copy_violation",
+			Description: "[]byte(string) conversion detected — causes unnecessary heap allocation.",
+			Suggestion:  "If reading, use strings.NewReader(). If raw casting, consider unsafe.Slice(unsafe.StringData(str), len(str)) in Go 1.20+.",
+		})
+		return true
+	})
+}
+
+// detectMissingCapacity finds make([]T, 0) or make(map[K]V) inside loops that lack initial capacity.
+func detectMissingCapacity(pkg *packages.Package, body *ast.BlockStmt, funcName string, inLoop bool, findings *[]Finding) {
+	for _, stmt := range body.List {
+		switch s := stmt.(type) {
+		case *ast.ForStmt:
+			if s.Body != nil {
+				detectMissingCapacity(pkg, s.Body, funcName, true, findings)
+			}
+		case *ast.RangeStmt:
+			if s.Body != nil {
+				detectMissingCapacity(pkg, s.Body, funcName, true, findings)
+			}
+		case *ast.AssignStmt:
+			if inLoop {
+				for _, rhs := range s.Rhs {
+					if call, ok := rhs.(*ast.CallExpr); ok {
+						checkMakeCapacity(pkg, call, funcName, findings)
+					}
+				}
+			}
+		case *ast.DeclStmt:
+			if inLoop {
+				if genDecl, ok := s.Decl.(*ast.GenDecl); ok && genDecl.Tok == token.VAR {
+					for _, spec := range genDecl.Specs {
+						if vs, ok := spec.(*ast.ValueSpec); ok {
+							for _, val := range vs.Values {
+								if call, ok := val.(*ast.CallExpr); ok {
+									checkMakeCapacity(pkg, call, funcName, findings)
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+func checkMakeCapacity(pkg *packages.Package, call *ast.CallExpr, funcName string, findings *[]Finding) {
+	ident, ok := call.Fun.(*ast.Ident)
+	if !ok || ident.Name != "make" || len(call.Args) == 0 {
+		return
+	}
+
+	switch call.Args[0].(type) {
+	case *ast.MapType:
+		if len(call.Args) < 2 {
+			pos := pkg.Fset.Position(call.Pos())
+			*findings = append(*findings, Finding{
+				File:        pos.Filename,
+				Line:        pos.Line,
+				Function:    funcName,
+				Category:    "allocation",
+				Severity:    "HIGH",
+				Pattern:     "missing_map_capacity",
+				Description: "make(map[K]V) called inside loop without capacity — causes continuous rehashing.",
+				Suggestion:  "Provide an estimated initial capacity: make(map[K]V, expectedSize).",
+			})
+		}
+	case *ast.ArrayType:
+		if len(call.Args) == 2 {
+			if basicLit, ok := call.Args[1].(*ast.BasicLit); ok && basicLit.Value == "0" {
+				pos := pkg.Fset.Position(call.Pos())
+				*findings = append(*findings, Finding{
+					File:        pos.Filename,
+					Line:        pos.Line,
+					Function:    funcName,
+					Category:    "allocation",
+					Severity:    "HIGH",
+					Pattern:     "missing_slice_capacity",
+					Description: "make([]T, 0) called inside loop without capacity — causes continuous backing array reallocations.",
+					Suggestion:  "Provide an estimated initial capacity: make([]T, 0, expectedCap).",
+				})
+			}
+		}
+	}
+}
+
+// detectBufferAllocations finds new bytes.Buffer inside functions indicating missing sync.Pool.
+func detectBufferAllocations(pkg *packages.Package, body *ast.BlockStmt, funcName string, findings *[]Finding) {
+	ast.Inspect(body, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+
+		if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
+			if ident, ok := sel.X.(*ast.Ident); ok && ident.Name == "bytes" && sel.Sel.Name == "NewBuffer" {
+				addBufferFinding(pkg, call, funcName, findings)
+			}
+		} else if isNewCall(call, "bytes", "Buffer") || isNewCall(call, "strings", "Builder") {
+			addBufferFinding(pkg, call, funcName, findings)
+		}
+
+		return true
+	})
+
+	// Also detect var b bytes.Buffer
+	ast.Inspect(body, func(n ast.Node) bool {
+		decl, ok := n.(*ast.DeclStmt)
+		if !ok {
+			return true
+		}
+		if genDecl, ok := decl.Decl.(*ast.GenDecl); ok && genDecl.Tok == token.VAR {
+			for _, spec := range genDecl.Specs {
+				if vs, ok := spec.(*ast.ValueSpec); ok {
+					if sel, ok := vs.Type.(*ast.SelectorExpr); ok {
+						if ident, ok := sel.X.(*ast.Ident); ok && ident.Name == "bytes" && sel.Sel.Name == "Buffer" {
+							addBufferFinding(pkg, decl, funcName, findings)
+						}
+					}
+				}
+			}
+		}
+		return true
+	})
+}
+
+func isNewCall(call *ast.CallExpr, pkgName, typeName string) bool {
+	ident, ok := call.Fun.(*ast.Ident)
+	if !ok || ident.Name != "new" || len(call.Args) != 1 {
+		return false
+	}
+	sel, ok := call.Args[0].(*ast.SelectorExpr)
+	if !ok {
+		return false
+	}
+	pIdent, ok := sel.X.(*ast.Ident)
+	return ok && pIdent.Name == pkgName && sel.Sel.Name == typeName
+}
+
+func addBufferFinding(pkg *packages.Package, node ast.Node, funcName string, findings *[]Finding) {
+	pos := pkg.Fset.Position(node.Pos())
+	*findings = append(*findings, Finding{
+		File:        pos.Filename,
+		Line:        pos.Line,
+		Function:    funcName,
+		Category:    "allocation",
+		Severity:    "MEDIUM",
+		Pattern:     "dynamic_buffer_allocation",
+		Description: "Dynamic bytes.Buffer or strings.Builder allocation detected — may cause GC pressure in high-throughput handlers.",
+		Suggestion:  "Consider utilizing a sync.Pool for buffer reuse if this is a hot path.",
+	})
 }

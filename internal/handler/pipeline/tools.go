@@ -1,3 +1,4 @@
+// Package pipeline provides functionality for the pipeline subsystem.
 package pipeline
 
 import (
@@ -36,10 +37,12 @@ type GeneratePlanTool struct {
 	Engine *engine.Engine
 }
 
+// Name performs the Name operation.
 func (t *GeneratePlanTool) Name() string {
 	return "generate_implementation_plan"
 }
 
+// Register performs the Register operation.
 func (t *GeneratePlanTool) Register(s util.SessionProvider) {
 	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
@@ -47,10 +50,12 @@ func (t *GeneratePlanTool) Register(s util.SessionProvider) {
 	}, t.Handle)
 }
 
+// GeneratePlanInput defines the GeneratePlanInput structure.
 type GeneratePlanInput struct {
 	models.UniversalPipelineInput
 }
 
+// Handle performs the Handle operation.
 func (t *GeneratePlanTool) Handle(ctx context.Context, _ *mcp.CallToolRequest, input GeneratePlanInput) (*mcp.CallToolResult, any, error) {
 	isOrchestrator := os.Getenv("MCP_ORCHESTRATOR_OWNED") == "true"
 	recallAvailable := isOrchestrator && t.Engine != nil && t.Engine.ExternalClient != nil && t.Engine.ExternalClient.RecallEnabled()
@@ -132,6 +137,27 @@ func (t *GeneratePlanTool) Handle(ctx context.Context, _ *mcp.CallToolRequest, i
 
 	planText := sb.String()
 	planHash := fmt.Sprintf("%x", sha256.Sum256([]byte(planText)))
+
+	// Telemetry Artifact Fan-out
+	go func(content string, sID string) {
+		if sID == "" {
+			return
+		}
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			return
+		}
+		basePath := filepath.Join(homeDir, ".gemini", "antigravity", "brain", sID)
+		if err := os.MkdirAll(basePath, 0755); err != nil {
+			return
+		}
+		mdPath := filepath.Join(basePath, "implementation_plan.md")
+		_ = os.WriteFile(mdPath, []byte(content), 0644)
+
+		jsonPath := mdPath + ".metadata.json"
+		metaContent := `{"artifactType": "ARTIFACT_TYPE_IMPLEMENTATION_PLAN", "summary": "Implementation Plan automatically surfaced from pipeline telemetry.", "requestFeedback": false, "isArtifact": true}`
+		_ = os.WriteFile(jsonPath, []byte(metaContent), 0644)
+	}(planText, input.SessionID)
 
 	// Store in session metadata.
 	if session.Metadata == nil {
@@ -219,10 +245,12 @@ type ApplyVettedEditTool struct {
 	Engine *engine.Engine
 }
 
+// Name performs the Name operation.
 func (t *ApplyVettedEditTool) Name() string {
 	return "apply_vetted_edit"
 }
 
+// Register performs the Register operation.
 func (t *ApplyVettedEditTool) Register(s util.SessionProvider) {
 	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
@@ -230,6 +258,7 @@ func (t *ApplyVettedEditTool) Register(s util.SessionProvider) {
 	}, t.Handle)
 }
 
+// ApplyEditInput defines the ApplyEditInput structure.
 type ApplyEditInput struct {
 	models.UniversalPipelineInput
 }
@@ -239,6 +268,7 @@ type ApplyEditInput struct {
 // SHA-256 hashing, gofmt formatting, and AST parsing operations.
 const maxPayloadBytes = 2 << 20 // 2MB
 
+// Handle performs the Handle operation.
 func (t *ApplyVettedEditTool) Handle(ctx context.Context, _ *mcp.CallToolRequest, input ApplyEditInput) (*mcp.CallToolResult, any, error) {
 	if input.Context == "" {
 		res := &mcp.CallToolResult{}

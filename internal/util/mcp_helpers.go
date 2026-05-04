@@ -1,3 +1,4 @@
+// Package util provides functionality for the util subsystem.
 package util
 
 import (
@@ -21,12 +22,16 @@ import (
 
 var globalToolMu sync.Mutex
 
+// NopReadCloser defines the NopReadCloser structure.
 type NopReadCloser struct{ io.Reader }
 
+// Close performs the Close operation.
 func (n NopReadCloser) Close() error { return nil }
 
+// NopWriteCloser defines the NopWriteCloser structure.
 type NopWriteCloser struct{ io.Writer }
 
+// Close performs the Close operation.
 func (n NopWriteCloser) Close() error { return nil }
 
 // Pagination provides standard bounding for standalone tool execution constraints.
@@ -50,19 +55,23 @@ func (p *Pagination) Apply(length int) (start, end int) {
 	return start, end
 }
 
+// SessionProvider defines the SessionProvider structure.
 type SessionProvider interface {
 	MCPServer() *mcp.Server
 	Session() *mcp.ServerSession
 }
 
+// MockSessionProvider defines the MockSessionProvider structure.
 type MockSessionProvider struct {
 	Server *mcp.Server
 }
 
+// MCPServer performs the MCPServer operation.
 func (m *MockSessionProvider) MCPServer() *mcp.Server {
 	return m.Server
 }
 
+// Session performs the Session operation.
 func (m *MockSessionProvider) Session() *mcp.ServerSession {
 	return nil
 }

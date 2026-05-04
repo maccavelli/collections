@@ -1,3 +1,4 @@
+// Package pipeline provides functionality for the pipeline subsystem.
 package pipeline
 
 import (
@@ -21,10 +22,12 @@ type GoTestValidationTool struct {
 	Engine *engine.Engine
 }
 
+// Name performs the Name operation.
 func (t *GoTestValidationTool) Name() string {
 	return "go_test_validation"
 }
 
+// Register performs the Register operation.
 func (t *GoTestValidationTool) Register(s util.SessionProvider) {
 	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
@@ -32,10 +35,12 @@ func (t *GoTestValidationTool) Register(s util.SessionProvider) {
 	}, t.Handle)
 }
 
+// GoTestInput defines the GoTestInput structure.
 type GoTestInput struct {
 	models.UniversalPipelineInput
 }
 
+// Handle performs the Handle operation.
 func (t *GoTestValidationTool) Handle(ctx context.Context, _ *mcp.CallToolRequest, input GoTestInput) (*mcp.CallToolResult, any, error) {
 	isOrchestrator := os.Getenv("MCP_ORCHESTRATOR_OWNED") == "true"
 	recallAvailable := isOrchestrator && t.Engine != nil && t.Engine.ExternalClient != nil && t.Engine.ExternalClient.RecallEnabled()

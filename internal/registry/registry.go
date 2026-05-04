@@ -1,3 +1,4 @@
+// Package registry provides functionality for the registry subsystem.
 package registry
 
 import "mcp-server-go-refactor/internal/util"
