@@ -395,18 +395,18 @@ func RegisterTools(s *mcp.Server, store *db.Store) {
 	}, h.EvaluateIdea)
 
 	mcp.AddTool(s, &mcp.Tool{
-		Name:        "clarify_requirements",
-		Description: "[PHASE: 2] Performs Socratic analysis to fill gaps in the idea. If conflicts exist, this will return an error instructing you to ask the user questions. [REQUIRES: evaluate_idea] [Routing Tags: analyze, clarify]",
-	}, h.ClarifyRequirements)
-
-	mcp.AddTool(s, &mcp.Tool{
 		Name:        "ingest_standards",
-		Description: "[PHASE: 3] Pulls in applicable architectural standards for the project. [REQUIRES: clarify_requirements]",
+		Description: "[PHASE: 2] Pulls in applicable architectural standards for the project and fetches their content. [REQUIRES: evaluate_idea]",
 	}, h.IngestStandards)
 
 	mcp.AddTool(s, &mcp.Tool{
+		Name:        "clarify_requirements",
+		Description: "[PHASE: 3] Performs Socratic analysis to fill gaps in the idea AGAINST the ingested standards. If conflicts exist, this will return an error instructing you to ask the user questions. [REQUIRES: ingest_standards] [Routing Tags: analyze, clarify]",
+	}, h.ClarifyRequirements)
+
+	mcp.AddTool(s, &mcp.Tool{
 		Name:        "critique_design",
-		Description: "[PHASE: 4] Vets the proposed architecture against the ingested standards. [REQUIRES: ingest_standards]",
+		Description: "[PHASE: 4] Vets the proposed architecture against the ingested standards. [REQUIRES: clarify_requirements]",
 	}, h.CritiqueDesign)
 
 	mcp.AddTool(s, &mcp.Tool{

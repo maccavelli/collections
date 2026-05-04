@@ -48,9 +48,23 @@ agent:
 
 # Server Diagnostics
 server:
-  # Set the database persistence path. ":memory:" provides ephemeral storage.
-  # Use an absolute path (e.g., "/opt/magicdev/state.db") to persist sessions.
-  db_path: ":memory:"
+  # Set the database persistence path. Leave blank to use OS default cache dir.
+  db_path: ""
+
+# Baseline Architectural Standards
+standards:
+  node:
+    - "https://raw.githubusercontent.com/goldbergyoni/nodebestpractices/master/README.md"
+    - "https://raw.githubusercontent.com/goldbergyoni/nodebestpractices/master/sections/projectstructre/readme.md"
+    - "https://raw.githubusercontent.com/goldbergyoni/nodebestpractices/master/sections/errorhandling/readme.md"
+    - "https://raw.githubusercontent.com/goldbergyoni/nodebestpractices/master/sections/security/readme.md"
+    - "https://raw.githubusercontent.com/goldbergyoni/nodebestpractices/master/sections/production/readme.md"
+  dotnet:
+    - "https://raw.githubusercontent.com/dotnet/docs/main/docs/csharp/fundamentals/coding-style/coding-conventions.md"
+    - "https://raw.githubusercontent.com/dotnet/docs/main/docs/standard/design-guidelines/index.md"
+    - "https://raw.githubusercontent.com/dotnet/docs/main/docs/core/testing/unit-testing-best-practices.md"
+    - "https://raw.githubusercontent.com/dotnet/docs/main/docs/standard/security/index.md"
+    - "https://raw.githubusercontent.com/dotnet/docs/main/docs/architecture/microservices/index.md"
 `
 
 // ConfigPath returns the absolute path to the magicdev.yaml file.
