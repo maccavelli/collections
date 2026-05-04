@@ -43,7 +43,7 @@ type OrchestratorHandler struct {
 	toolsMu          sync.RWMutex                         // Protects InternalTools from concurrent access
 	schemaCache      sync.Map                             // 🛡️ PERF: SchemaHash -> *jsonschema.Schema (compiled, reusable)
 	AlignCache       *lru.Cache[string, []*db.ToolRecord] // 🛡️ PERF: LRU cache for align_tools intents
-	ActiveToolsLRU   *util.LRUCache[string, *mcp.Tool]    // 🛡️ SYSTEM PROMPT: Bounds dynamic context window tools to max 20
+	ActiveToolsLRU   *util.S3FIFOCache[string, *mcp.Tool] // 🛡️ SYSTEM PROMPT: Bounds dynamic context window tools to max 20
 	Server           *mcp.Server                          // 🛡️ NOTIFICATIONS: Used to fire list_changed to IDE
 }
 
@@ -61,7 +61,7 @@ func NewHandler(store *db.Store, registry *client.WarmRegistry, cfg *config.Conf
 		InternalTools:    make([]*InternalTool, 0),
 		loopbackHandlers: make(map[string]mcp.ToolHandler),
 		AlignCache:       alignCache,
-		ActiveToolsLRU:   util.NewLRUCache[string, *mcp.Tool](20),
+		ActiveToolsLRU:   util.NewS3FIFOCache[string, *mcp.Tool](20),
 	}
 
 	// 🛡️ NATIVE REGISTRY LOADING: Pre-populate internal tools from the static inventory.

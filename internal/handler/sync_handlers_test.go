@@ -18,7 +18,7 @@ func TestSyncEcosystem(t *testing.T) {
 
 	req := &mcp.CallToolRequest{
 		Params: &mcp.CallToolParamsRaw{
-			Name: "sync_ecosystem",
+			Name:      "sync_ecosystem",
 			Arguments: json.RawMessage(`{}`),
 		},
 	}
@@ -42,7 +42,7 @@ func TestSyncServer(t *testing.T) {
 
 	req := &mcp.CallToolRequest{
 		Params: &mcp.CallToolParamsRaw{
-			Name: "sync_server",
+			Name:      "sync_server",
 			Arguments: json.RawMessage(`{"name": "magictools"}`),
 		},
 	}
@@ -65,7 +65,7 @@ func TestSleepServers(t *testing.T) {
 
 	req := &mcp.CallToolRequest{
 		Params: &mcp.CallToolParamsRaw{
-			Name: "sleep_servers",
+			Name:      "sleep_servers",
 			Arguments: json.RawMessage(`{}`),
 		},
 	}
@@ -88,7 +88,7 @@ func TestWakeServers(t *testing.T) {
 
 	req := &mcp.CallToolRequest{
 		Params: &mcp.CallToolParamsRaw{
-			Name: "wake_servers",
+			Name:      "wake_servers",
 			Arguments: json.RawMessage(`{}`),
 		},
 	}
@@ -112,7 +112,7 @@ func TestReloadServers(t *testing.T) {
 	// 1. Test full reload
 	req := &mcp.CallToolRequest{
 		Params: &mcp.CallToolParamsRaw{
-			Name: "reload_servers",
+			Name:      "reload_servers",
 			Arguments: json.RawMessage(`{}`),
 		},
 	}
@@ -129,7 +129,7 @@ func TestReloadServers(t *testing.T) {
 	// 2. Test selective reload (empty list is fine)
 	req = &mcp.CallToolRequest{
 		Params: &mcp.CallToolParamsRaw{
-			Name: "reload_servers",
+			Name:      "reload_servers",
 			Arguments: json.RawMessage(`{"names": "test-server"}`),
 		},
 	}

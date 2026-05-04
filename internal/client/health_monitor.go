@@ -526,45 +526,48 @@ func (m *WarmRegistry) WriteSnapshot(flush bool, dashboardScores map[string]any,
 	// 🛡️ DYNAMIC TELEMETRY SYNTHESIS: Generate requested dashboards from available metrics
 	scoringFactors := []map[string]any{}
 	volatilityIndex := []map[string]any{}
-	
+
 	for _, cardAny := range scoresPayload {
 		if card, ok := cardAny.(map[string]any); ok {
 			urn, _ := card["URN"].(string)
-			
+
 			numF := func(k string) float64 {
 				if v, ok := card[k]; ok {
 					switch n := v.(type) {
-					case float64: return n
-					case int: return float64(n)
-					case int64: return float64(n)
+					case float64:
+						return n
+					case int:
+						return float64(n)
+					case int64:
+						return float64(n)
 					}
 				}
 				return 0.0
 			}
-			
+
 			faults := numF("Faults")
 			deltaAll := numF("DeltaAll")
 			calls := numF("Calls")
-			
+
 			if faults > 0 {
 				scoringFactors = append(scoringFactors, map[string]any{
-					"category": "Fault Recovery",
-					"count": int64(faults),
+					"category":    "Fault Recovery",
+					"count":       int64(faults),
 					"impact_type": "Penalty",
 				})
-				
+
 				volScore := faults*0.5 + calls*0.1
 				if volScore > 1.0 {
 					volatilityIndex = append(volatilityIndex, map[string]any{
 						"score": volScore,
-						"URN": urn,
+						"URN":   urn,
 					})
 				}
 			}
 			if deltaAll > 0 {
 				scoringFactors = append(scoringFactors, map[string]any{
-					"category": "Trending Alignment",
-					"count": int64(1),
+					"category":    "Trending Alignment",
+					"count":       int64(1),
 					"impact_type": "Reward",
 				})
 			}

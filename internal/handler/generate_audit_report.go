@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 
 	"os/exec"
 	"strings"
@@ -273,6 +275,27 @@ func (h *OrchestratorHandler) handleGenerateAuditReport(ctx context.Context, req
 	sb.WriteString("\n```\n\n")
 
 	reportContent := sb.String()
+
+	// Telemetry Artifact Fan-out
+	go func(content string, sID string) {
+		if sID == "" {
+			return
+		}
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			return
+		}
+		basePath := filepath.Join(homeDir, ".gemini", "antigravity", "brain", sID)
+		if err := os.MkdirAll(basePath, 0755); err != nil {
+			return
+		}
+		mdPath := filepath.Join(basePath, "walkthrough.md")
+		_ = os.WriteFile(mdPath, []byte(content), 0644)
+		
+		jsonPath := mdPath + ".metadata.json"
+		metaContent := `{"artifactType": "ARTIFACT_TYPE_WALKTHROUGH", "summary": "Walkthrough report automatically surfaced from pipeline telemetry.", "requestFeedback": false, "isArtifact": true}`
+		_ = os.WriteFile(jsonPath, []byte(metaContent), 0644)
+	}(reportContent, args.SessionID)
 
 	if h.RecallClient != nil && h.RecallClient.RecallEnabled() {
 		h.RecallClient.SaveSession(ctx, args.SessionID, args.Target, map[string]any{

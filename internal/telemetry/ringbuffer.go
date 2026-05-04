@@ -15,8 +15,8 @@ import (
 )
 
 const (
-	RingTotalSize   = 32 * 1024 * 1024 // 32MB
-	RingHeaderSize  = 16 * 1024        // 16KB header
+	RingTotalSize   = 128 * 1024 * 1024 // 128MB
+	RingHeaderSize  = 64 * 1024         // 64KB header (gauge snapshot area)
 	RingPayloadSize = RingTotalSize - RingHeaderSize
 )
 
@@ -103,7 +103,7 @@ func (r *RingBuffer) WriteGauges(v any) error {
 		return err
 	}
 	if len(b) > RingHeaderSize-16 {
-		return fmt.Errorf("gauge payload exceeds 16KB limit")
+		return fmt.Errorf("gauge payload exceeds %dKB limit", (RingHeaderSize-16)/1024)
 	}
 
 	r.mu.Lock()

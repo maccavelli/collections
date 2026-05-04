@@ -142,26 +142,48 @@ func TestShouldInjectMutators(t *testing.T) {
 		name     string
 		verdict  string
 		output   string
+		pillars  []pillarResult
 		expected bool
 	}{
-		{"ADOPT with fixes", "ADOPT", "suggest_fixes found 3 issues that should be changed", true},
-		{"ADOPT without fixes", "ADOPT", "no issues found in the codebase", false},
-		{"APPROVE with fixes", "APPROVE", "suggest_fixes found issues that should be changed", true},
-		{"APPROVE without fixes", "APPROVE", "no issues found in the codebase", false},
-		{"ADOPT_WITH_MITIGATION with fixes", "ADOPT_WITH_MITIGATION", "recommend refactor for clarity", true},
-		{"REJECT with fixes", "REJECT", "suggest_fixes found issues that should be changed", false},
-		{"REVIEW with fixes", "REVIEW", "suggest_fixes found issues that should be changed", false},
-		{"APORIA with fixes", "APORIA", "should be changed and modernized", false},
-		{"empty verdict", "", "suggest_fixes found issues", false},
-		{"ADOPT with recommendation", "ADOPT", "recommendation: replace deprecated API", true},
-		{"ADOPT with refactor signal", "ADOPT", "this code should be refactored for clarity", true},
+		{"ADOPT with fixes", "ADOPT", "suggest_fixes found 3 issues that should be changed", nil, true},
+		{"ADOPT without fixes", "ADOPT", "no issues found in the codebase", nil, false},
+		{"APPROVE with fixes", "APPROVE", "suggest_fixes found issues that should be changed", nil, true},
+		{"APPROVE without fixes", "APPROVE", "no issues found in the codebase", nil, false},
+		{"ADOPT_WITH_MITIGATION with fixes", "ADOPT_WITH_MITIGATION", "recommend refactor for clarity", nil, true},
+		{"REJECT with fixes but no pillars", "REJECT", "suggest_fixes found issues that should be changed", nil, false},
+		{"REVIEW with fixes", "REVIEW", "suggest_fixes found issues that should be changed", nil, false},
+		{"APORIA with fixes", "APORIA", "should be changed and modernized", nil, false},
+		{"empty verdict", "", "suggest_fixes found issues", nil, false},
+		{"ADOPT with recommendation", "ADOPT", "recommendation: replace deprecated API", nil, true},
+		{"ADOPT with refactor signal", "ADOPT", "this code should be refactored for clarity", nil, true},
+		// Majority-vote override: REJECT but majority of pillars voted ADOPT
+		{"REJECT majority ADOPT pillars", "REJECT", "suggest_fixes found issues that should be changed", []pillarResult{
+			{Name: "Type Safety", Resolution: "APORIA"},
+			{Name: "Modernization", Resolution: "ADOPT"},
+			{Name: "Modularization", Resolution: "ADOPT"},
+			{Name: "Error Handling", Resolution: "ADOPT"},
+			{Name: "Testing", Resolution: "ADOPT"},
+			{Name: "Documentation", Resolution: "ADOPT"},
+		}, true},
+		// REJECT with majority non-ADOPT pillars — should stay blocked
+		{"REJECT majority APORIA pillars", "REJECT", "suggest_fixes found issues that should be changed", []pillarResult{
+			{Name: "Type Safety", Resolution: "APORIA"},
+			{Name: "Modernization", Resolution: "APORIA"},
+			{Name: "Modularization", Resolution: "APORIA"},
+			{Name: "Error Handling", Resolution: "ADOPT"},
+		}, false},
+		// REJECT with even split — should stay blocked (need strict majority)
+		{"REJECT even split pillars", "REJECT", "suggest_fixes found issues that should be changed", []pillarResult{
+			{Name: "Type Safety", Resolution: "APORIA"},
+			{Name: "Modernization", Resolution: "ADOPT"},
+		}, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := shouldInjectMutators(tt.verdict, tt.output)
+			got := shouldInjectMutators(tt.verdict, tt.output, tt.pillars)
 			if got != tt.expected {
-				t.Errorf("shouldInjectMutators(%q, %q) = %v, want %v",
-					tt.verdict, tt.output, got, tt.expected)
+				t.Errorf("shouldInjectMutators(%q, %q, pillars=%d) = %v, want %v",
+					tt.verdict, tt.output, len(tt.pillars), got, tt.expected)
 			}
 		})
 	}
@@ -224,8 +246,8 @@ func TestBuildPipelineResultWithArtifacts(t *testing.T) {
 	}
 	artifactURIs := map[string]string{
 		"implementation_plan": "mcp://magictools/raw/pipeline_ep-test_plan",
-		"audit_report":       "mcp://magictools/raw/pipeline_ep-test_audit",
-		"step_summary":       "mcp://magictools/raw/pipeline_ep-test_summary",
+		"audit_report":        "mcp://magictools/raw/pipeline_ep-test_audit",
+		"step_summary":        "mcp://magictools/raw/pipeline_ep-test_summary",
 	}
 
 	result := buildPipelineResultWithArtifacts(results, "COMPLETED", nil, "ep-test", artifactURIs)

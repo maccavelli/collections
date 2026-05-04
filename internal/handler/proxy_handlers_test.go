@@ -44,7 +44,7 @@ func TestAlignTools(t *testing.T) {
 	// 1. Test basic search
 	req := &mcp.CallToolRequest{
 		Params: &mcp.CallToolParamsRaw{
-			Name: "align_tools",
+			Name:      "align_tools",
 			Arguments: json.RawMessage(`{"query": "search"}`),
 		},
 	}
@@ -74,7 +74,7 @@ func TestAlignTools(t *testing.T) {
 	// 2. Test server filtering
 	req = &mcp.CallToolRequest{
 		Params: &mcp.CallToolParamsRaw{
-			Name: "align_tools",
+			Name:      "align_tools",
 			Arguments: json.RawMessage(`{"query": "refactor", "server_name": "test"}`),
 		},
 	}

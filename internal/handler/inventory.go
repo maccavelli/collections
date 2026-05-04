@@ -306,7 +306,8 @@ var InternalToolsInventoryJSON = []byte(`
       },
       "required": [
         "target",
-        "intent"
+        "intent",
+        "session_id"
       ]
     }
   },

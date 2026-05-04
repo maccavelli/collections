@@ -42,7 +42,7 @@ func TestSemanticSimilarityAudit(t *testing.T) {
 
 	req := &mcp.CallToolRequest{
 		Params: &mcp.CallToolParamsRaw{
-			Name: "semantic_similarity",
+			Name:      "semantic_similarity",
 			Arguments: json.RawMessage(`{}`),
 		},
 	}

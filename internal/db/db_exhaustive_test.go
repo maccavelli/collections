@@ -16,7 +16,7 @@ func TestStoreExhaustive(t *testing.T) {
 
 	s.SaveTool(&ToolRecord{URN: "test:foo", Name: "foo", Category: "system"})
 	s.GetTool("test:foo")
-	s.SearchTools(context.Background(), "foo", "system", "", 0.0, 0.5)
+	s.SearchTools(context.Background(), "foo", "system", "", 0.0, 0.5, DomainSystem)
 	s.GetCategories()
 	s.AnalyzeIntent(context.Background(), "foo")
 	s.SaveSchema("hash1", map[string]any{"type": "string"})

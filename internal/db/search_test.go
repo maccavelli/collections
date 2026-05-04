@@ -1,8 +1,8 @@
 package db
 
 import (
-	"os"
 	"context"
+	"os"
 	"testing"
 )
 
@@ -42,19 +42,19 @@ func TestSearchEvolution(t *testing.T) {
 	}
 
 	// 1. Exact ID match (Boosted)
-	results, _ := store.SearchTools(context.Background(), "urn:ddg:search", "", "", 0.0, 0.5)
+	results, _ := store.SearchTools(context.Background(), "urn:ddg:search", "", "", 0.0, 0.5, DomainSystem)
 	if len(results) == 0 || results[0].URN != "urn:ddg:search" {
 		t.Errorf("Expected exact URN match, got %+v", results)
 	}
 
 	// 2. Fuzzy match (1 typo)
-	results, _ = store.SearchTools(context.Background(), "ddg serch", "", "", 0.0, 0.5)
+	results, _ = store.SearchTools(context.Background(), "ddg serch", "", "", 0.0, 0.5, DomainSystem)
 	if len(results) == 0 || results[0].URN != "urn:ddg:search" {
 		t.Errorf("Expected fuzzy match for 'ddg serch', got %+v", results)
 	}
 
 	// 3. Intent match
-	results, _ = store.SearchTools(context.Background(), "locate information", "", "", 0.0, 0.5)
+	results, _ = store.SearchTools(context.Background(), "locate information", "", "", 0.0, 0.5, DomainSystem)
 	if len(results) == 0 || results[0].URN != "urn:ddg:search" {
 		t.Errorf("Expected intent match for 'locate', got %+v", results)
 	}
@@ -62,13 +62,13 @@ func TestSearchEvolution(t *testing.T) {
 	// 4. HIERARCHICAL ROUTING: Scoped Search (Boosted OR)
 	// Query "find" matches both DDG and LS via intent.
 	// We scoped to 'search', so DDG should be the TOP result even if other relevant tools are present.
-	results, _ = store.SearchTools(context.Background(), "find", "search", "", 0.0, 0.5)
+	results, _ = store.SearchTools(context.Background(), "find", "search", "", 0.0, 0.5, DomainSystem)
 	if len(results) == 0 || results[0].URN != "urn:ddg:search" {
 		t.Errorf("Expected top match for 'find' in 'search' to be DDG, got %+v", results)
 	}
 
 	// Scope to 'filesystem' should return LS as the TOP result.
-	results, _ = store.SearchTools(context.Background(), "find", "filesystem", "", 0.0, 0.5)
+	results, _ = store.SearchTools(context.Background(), "find", "filesystem", "", 0.0, 0.5, DomainSystem)
 	if len(results) == 0 || results[0].URN != "urn:filesystem:ls" {
 		t.Errorf("Expected top match for 'find' in 'filesystem' to be LS, got %+v", results)
 	}

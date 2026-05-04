@@ -83,7 +83,7 @@ func (h *OrchestratorHandler) QueryStandards(ctx context.Context, req *mcp.CallT
 	if e == nil || !e.VectorEnabled() {
 		if h.RecallClient != nil && h.RecallClient.RecallEnabled() {
 			standardsText := h.RecallClient.SearchStandards(ctx, input.Query, "", "", 5)
-			
+
 			envelope := map[string]any{
 				"metadata": map[string]any{
 					"query":  input.Query,

@@ -209,7 +209,7 @@ func NewSearchIndex(dbPath string) (*SearchIndex, error) {
 }
 
 // Search performs a multi-stage ranked search with usage-weighted scoring.
-func (si *SearchIndex) Search(queryStr string, category string, serverConstraint string) (*bleve.SearchResult, error) {
+func (si *SearchIndex) Search(queryStr string, category string, serverConstraint string, domain SearchDomain) (*bleve.SearchResult, error) {
 	// 1. Exact Match (TermQuery on Keyword fields) - High Boost
 	exactUrnQuery := bleve.NewTermQuery(queryStr)
 	exactUrnQuery.SetField("urn")
@@ -320,8 +320,24 @@ func (si *SearchIndex) Search(queryStr string, category string, serverConstraint
 	boostWrapper.AddShould(highUsageQuery)
 	finalQuery = boostWrapper
 
-	// 🛡️ ALIGN_TOOLS MASKING GUARD: Prevents native index bleed exposing internal pipeline boundaries
-	if serverConstraint == "" && !strings.Contains(queryStr, "brainstorm:") && !strings.Contains(queryStr, "go-refactor:") && !strings.Contains(queryStr, "brainstorm") && !strings.Contains(queryStr, "go-refactor") {
+	// 🛡️ DOMAIN-AWARE SHARDING: Enforce strict visibility boundaries
+	switch domain {
+	case DomainUserLand:
+		// Mask brainstorm and go-refactor unless explicitly targeted by URN/Name
+		if serverConstraint == "" && !strings.Contains(queryStr, "brainstorm") && !strings.Contains(queryStr, "go-refactor") {
+			bq := bleve.NewBooleanQuery()
+			bq.AddMust(finalQuery)
+
+			q1 := bleve.NewTermQuery("brainstorm")
+			q1.SetField("server")
+			q2 := bleve.NewTermQuery("go-refactor")
+			q2.SetField("server")
+
+			bq.AddMustNot(q1, q2)
+			finalQuery = bq
+		}
+	case DomainPipelineOrchestration:
+		// Restrict ONLY to brainstorm, go-refactor, and magictools synthesizers
 		bq := bleve.NewBooleanQuery()
 		bq.AddMust(finalQuery)
 
@@ -329,9 +345,14 @@ func (si *SearchIndex) Search(queryStr string, category string, serverConstraint
 		q1.SetField("server")
 		q2 := bleve.NewTermQuery("go-refactor")
 		q2.SetField("server")
+		q3 := bleve.NewTermQuery("magictools")
+		q3.SetField("server")
 
-		bq.AddMustNot(q1, q2)
+		dis := bleve.NewDisjunctionQuery(q1, q2, q3)
+		bq.AddMust(dis)
 		finalQuery = bq
+	case DomainSystem:
+		// No sharding, show all tools natively
 	}
 
 	// 5. HIERARCHICAL ROUTING: Strict Intent Sharding natively replacing generic confidence gaps

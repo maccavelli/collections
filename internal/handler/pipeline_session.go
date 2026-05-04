@@ -236,17 +236,51 @@ var acceptedVerdicts = map[string]bool{
 }
 
 // shouldInjectMutators determines whether MUTATOR stages should be dynamically
-// injected into the pipeline based on the Socratic Trifecta verdict and the
-// accumulated analysis output. This replaces the old HITL pause gate.
+// injected into the pipeline based on the Socratic Trifecta verdict, the
+// accumulated analysis output, and per-pillar resolutions.
 //
 // MUTATOR injection requires BOTH conditions:
-//   - The Socratic verdict is in the accepted set (critics approved the proposed changes)
-//   - The analysis output contains actionable fix proposals
-func shouldInjectMutators(socraticVerdict string, analysisOutput string) bool {
-	if !acceptedVerdicts[socraticVerdict] {
+//  1. The Socratic verdict is in the accepted set, OR the aggregate verdict is
+//     REJECT but a strict majority of individual pillars resolved to ADOPT
+//     (majority-vote override — prevents one contested pillar from vetoing the
+//     entire pipeline).
+//  2. The analysis output contains actionable fix proposals.
+func shouldInjectMutators(socraticVerdict string, analysisOutput string, pillars []pillarResult) bool {
+	if !analysisContainsFixes(analysisOutput) {
 		return false
 	}
-	return analysisContainsFixes(analysisOutput)
+
+	// Fast path: aggregate verdict is accepted.
+	if acceptedVerdicts[socraticVerdict] {
+		return true
+	}
+
+	// Majority-vote override: when the aggregate verdict is REJECT but individual
+	// pillars show a majority voted ADOPT, permit mutations. This prevents a single
+	// contested pillar (APORIA) from vetoing an otherwise approved pipeline.
+	if socraticVerdict == "REJECT" && len(pillars) > 0 {
+		adoptCount := 0
+		for _, p := range pillars {
+			slog.Debug("shouldInjectMutators: pillar check",
+				"name", p.Name, "resolution", p.Resolution)
+			if p.Resolution == "ADOPT" || p.Resolution == "ADOPT_WITH_MITIGATION" {
+				adoptCount++
+			}
+		}
+		slog.Info("shouldInjectMutators: majority-vote evaluation",
+			"verdict", socraticVerdict,
+			"adopt_count", adoptCount,
+			"total_pillars", len(pillars),
+			"threshold", len(pillars)/2)
+		if adoptCount > len(pillars)/2 {
+			slog.Info("shouldInjectMutators: majority-vote override APPROVED",
+				"adopt_count", adoptCount,
+				"total_pillars", len(pillars))
+			return true
+		}
+	}
+
+	return false
 }
 
 // intentRequiresMutation checks if the user's intent signals a desire for code changes.
