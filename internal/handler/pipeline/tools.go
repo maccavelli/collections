@@ -88,7 +88,7 @@ func (t *GeneratePlanTool) Handle(ctx context.Context, _ *mcp.CallToolRequest, i
 			"query": "implementation patterns Go best practices code quality guidelines",
 			"limit": 15,
 		})
-		history = t.Engine.LoadCrossSessionFromRecall(ctx, "gorefactor", input.Target)
+		history = t.Engine.LoadCrossSessionFromRecall(ctx, "go-refactor", input.Target)
 	}
 
 	// Build structured plan.

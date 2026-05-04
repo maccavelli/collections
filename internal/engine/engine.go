@@ -327,7 +327,7 @@ func (e *Engine) PublishSessionToRecall(ctx context.Context, sessionID, projectI
 		nonce = fmt.Sprintf("%d", time.Now().UnixNano())
 	}
 	args := map[string]any{
-		"server_id":     "gorefactor",
+		"server_id":     "go-refactor",
 		"project_id":    projectID,
 		"outcome":       outcome,
 		"session_id":    nonce,
