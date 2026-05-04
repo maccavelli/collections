@@ -1,3 +1,4 @@
+// Package memory provides functionality for the memory subsystem.
 package memory
 
 import (
@@ -43,6 +44,7 @@ func DetectResourceLeaks(pkgs []*packages.Package) []Finding {
 				funcName := fn.Name.Name
 				analyzeResourceLeaks(pkg, fn.Body, funcName, &findings)
 				detectDeferInLoop(pkg, fn.Body, funcName, false, &findings)
+				detectTimeAfterLeak(pkg, fn.Body, funcName, false, &findings)
 				return true
 			})
 		}
@@ -225,4 +227,58 @@ func isHTTPResponseCall(sel *ast.SelectorExpr) bool {
 		}
 	}
 	return false
+}
+
+// detectTimeAfterLeak finds time.After() used inside loops which causes memory leaks.
+func detectTimeAfterLeak(pkg *packages.Package, body *ast.BlockStmt, funcName string, inLoop bool, findings *[]Finding) {
+	for _, stmt := range body.List {
+		switch s := stmt.(type) {
+		case *ast.ForStmt:
+			if s.Body != nil {
+				detectTimeAfterLeak(pkg, s.Body, funcName, true, findings)
+			}
+		case *ast.RangeStmt:
+			if s.Body != nil {
+				detectTimeAfterLeak(pkg, s.Body, funcName, true, findings)
+			}
+		case *ast.SelectStmt:
+			if inLoop {
+				ast.Inspect(s.Body, func(n ast.Node) bool {
+					call, ok := n.(*ast.CallExpr)
+					if !ok {
+						return true
+					}
+					if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
+						if ident, ok := sel.X.(*ast.Ident); ok && ident.Name == "time" && sel.Sel.Name == "After" {
+							pos := pkg.Fset.Position(call.Pos())
+							*findings = append(*findings, Finding{
+								File:        pos.Filename,
+								Line:        pos.Line,
+								Function:    funcName,
+								Category:    "resource_leak",
+								Severity:    "HIGH",
+								Pattern:     "time_after_leak",
+								Description: "time.After() used inside a loop/select — the underlying timer is not garbage collected until it fires.",
+								Suggestion:  "Use time.NewTimer() outside the loop and call Reset() and Stop() to avoid memory leaks.",
+							})
+						}
+					}
+					return true
+				})
+			}
+		case *ast.IfStmt:
+			if s.Body != nil {
+				detectTimeAfterLeak(pkg, s.Body, funcName, inLoop, findings)
+			}
+			if s.Else != nil {
+				if block, ok := s.Else.(*ast.BlockStmt); ok {
+					detectTimeAfterLeak(pkg, block, funcName, inLoop, findings)
+				}
+			}
+		case *ast.SwitchStmt:
+			if s.Body != nil {
+				detectTimeAfterLeak(pkg, s.Body, funcName, inLoop, findings)
+			}
+		}
+	}
 }

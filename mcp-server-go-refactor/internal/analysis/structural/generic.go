@@ -1,3 +1,4 @@
+// Package structural provides functionality for the structural subsystem.
 package structural
 
 import (

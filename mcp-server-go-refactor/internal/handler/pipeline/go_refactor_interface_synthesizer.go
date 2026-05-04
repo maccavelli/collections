@@ -1,3 +1,4 @@
+// Package pipeline provides functionality for the pipeline subsystem.
 package pipeline
 
 import (
@@ -13,14 +14,17 @@ import (
 	"mcp-server-go-refactor/internal/util"
 )
 
+// InterfaceSynthesizerTool defines the InterfaceSynthesizerTool structure.
 type InterfaceSynthesizerTool struct {
 	Engine *engine.Engine
 }
 
+// Name performs the Name operation.
 func (t *InterfaceSynthesizerTool) Name() string {
 	return "go_refactor_interface_synthesizer"
 }
 
+// Register performs the Register operation.
 func (t *InterfaceSynthesizerTool) Register(s util.SessionProvider) {
 	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
@@ -28,10 +32,12 @@ func (t *InterfaceSynthesizerTool) Register(s util.SessionProvider) {
 	}, t.Handle)
 }
 
+// InterfaceSynthesizerInput defines the InterfaceSynthesizerInput structure.
 type InterfaceSynthesizerInput struct {
 	models.UniversalPipelineInput
 }
 
+// Handle performs the Handle operation.
 func (t *InterfaceSynthesizerTool) Handle(ctx context.Context, _ *mcp.CallToolRequest, input InterfaceSynthesizerInput) (*mcp.CallToolResult, any, error) {
 	if input.Target == "" {
 		res := &mcp.CallToolResult{}

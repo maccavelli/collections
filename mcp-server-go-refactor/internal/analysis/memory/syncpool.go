@@ -1,3 +1,4 @@
+// Package memory provides functionality for the memory subsystem.
 package memory
 
 import (
@@ -23,6 +24,7 @@ func DetectSyncPoolIssues(pkgs []*packages.Package) []Finding {
 
 				funcName := fn.Name.Name
 				detectPoolGetWithoutReset(pkg, fn.Body, funcName, &findings)
+				detectMissingPools(pkg, fn.Body, funcName, &findings)
 				return true
 			})
 		}
@@ -179,4 +181,35 @@ func isPoolPutCall(call *ast.CallExpr) bool {
 		return false
 	}
 	return sel.Sel.Name == "Put"
+}
+
+// detectMissingPools finds large composite literals inside high-throughput handlers.
+func detectMissingPools(pkg *packages.Package, body *ast.BlockStmt, funcName string, findings *[]Finding) {
+	// Only run on known high-throughput handler names.
+	if funcName != "Handle" && funcName != "ServeHTTP" && funcName != "Process" {
+		return
+	}
+
+	ast.Inspect(body, func(n ast.Node) bool {
+		comp, ok := n.(*ast.CompositeLit)
+		if !ok {
+			return true
+		}
+
+		// If it's a struct composite literal with many elements, it's a large allocation.
+		if len(comp.Elts) >= 4 {
+			pos := pkg.Fset.Position(comp.Pos())
+			*findings = append(*findings, Finding{
+				File:        pos.Filename,
+				Line:        pos.Line,
+				Function:    funcName,
+				Category:    "sync_pool",
+				Severity:    "LOW",
+				Pattern:     "missing_sync_pool_for_struct",
+				Description: "Large struct allocated inside a high-throughput handler without sync.Pool.",
+				Suggestion:  "Consider utilizing a sync.Pool for this struct to reduce GC pressure on hot paths.",
+			})
+		}
+		return true
+	})
 }

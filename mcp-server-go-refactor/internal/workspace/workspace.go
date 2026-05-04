@@ -1,3 +1,4 @@
+// Package workspace provides functionality for the workspace subsystem.
 package workspace
 
 import (

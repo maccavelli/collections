@@ -1,3 +1,4 @@
+// Package memory provides functionality for the memory subsystem.
 package memory
 
 import (
@@ -37,10 +38,12 @@ type Tool struct {
 	Engine *engine.Engine
 }
 
+// Name performs the Name operation.
 func (t *Tool) Name() string {
 	return "go_memory_analyzer"
 }
 
+// Register performs the Register operation.
 func (t *Tool) Register(s util.SessionProvider) {
 	util.HardenedAddTool(s, &mcp.Tool{
 		Name: t.Name(),
@@ -65,6 +68,7 @@ type MemoryInput struct {
 	models.UniversalPipelineInput
 }
 
+// Handle performs the Handle operation.
 func (t *Tool) Handle(ctx context.Context, _ *mcp.CallToolRequest, input MemoryInput) (*mcp.CallToolResult, any, error) {
 	var session *engine.Session
 
@@ -132,14 +136,14 @@ func (t *Tool) Handle(ctx context.Context, _ *mcp.CallToolRequest, input MemoryI
 
 		// Pillar metrics for brainstorm learning.
 		session.Metadata["pillar_metrics"] = map[string]any{
-			"pillar":              "memory_safety",
-			"goroutine_leaks":    len(result.GoroutineLeaks),
-			"resource_leaks":     len(result.ResourceLeaks),
-			"allocation_issues":  len(result.AllocationIssues),
-			"escape_hints":       len(result.EscapeHints),
-			"sync_pool_issues":   len(result.SyncPoolIssues),
-			"modern_patterns":    len(result.ModernPatterns),
-			"total_findings":     total,
+			"pillar":            "memory_safety",
+			"goroutine_leaks":   len(result.GoroutineLeaks),
+			"resource_leaks":    len(result.ResourceLeaks),
+			"allocation_issues": len(result.AllocationIssues),
+			"escape_hints":      len(result.EscapeHints),
+			"sync_pool_issues":  len(result.SyncPoolIssues),
+			"modern_patterns":   len(result.ModernPatterns),
+			"total_findings":    total,
 		}
 
 		if total > 0 {

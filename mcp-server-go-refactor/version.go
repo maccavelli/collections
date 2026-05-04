@@ -1,3 +1,4 @@
+// Package main provides functionality for the main subsystem.
 package main
 
 import (
@@ -6,7 +7,7 @@ import (
 )
 
 // Version is the current version of the Go Refactor MCP server.
-var Version = "v4.2.10"
+var Version = "v4.3.2"
 
 func printVersion() {
 	fmt.Fprintf(os.Stderr, "mcp-server-go-refactor version %s\n", Version)

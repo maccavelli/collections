@@ -1,3 +1,4 @@
+// Package dependency provides functionality for the dependency subsystem.
 package dependency
 
 import (
@@ -24,10 +25,12 @@ type Tool struct {
 	Engine *engine.Engine
 }
 
+// Name performs the Name operation.
 func (t *Tool) Name() string {
 	return "go_dependency_impact"
 }
 
+// Register performs the Register operation.
 func (t *Tool) Register(s util.SessionProvider) {
 	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
@@ -40,10 +43,12 @@ func Register(eng *engine.Engine) {
 	registry.Global.Register(&Tool{Engine: eng})
 }
 
+// ImpactInput defines the ImpactInput structure.
 type ImpactInput struct {
 	models.UniversalPipelineInput
 }
 
+// Handle performs the Handle operation.
 func (t *Tool) Handle(ctx context.Context, _ *mcp.CallToolRequest, input ImpactInput) (*mcp.CallToolResult, any, error) {
 	pkg := input.Target
 	var session *engine.Session

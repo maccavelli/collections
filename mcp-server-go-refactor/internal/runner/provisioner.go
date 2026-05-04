@@ -1,3 +1,4 @@
+// Package runner provides functionality for the runner subsystem.
 package runner
 
 import (

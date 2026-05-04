@@ -1,3 +1,4 @@
+// Package dstutil provides functionality for the dstutil subsystem.
 package dstutil
 
 import (
