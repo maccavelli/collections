@@ -450,7 +450,7 @@ func (rs *MCPRecallServer) handleRecallRecent(ctx context.Context, req *mcp.Call
 	return rs.formatResults("Recent Context Memories", req, results)
 }
 
-func (rs *MCPRecallServer) handleList(ctx context.Context, req *mcp.CallToolRequest, args ListMemoriesInput) (*mcp.CallToolResult, any, error) {
+func (rs *MCPRecallServer) handleList(ctx context.Context, req *mcp.CallToolRequest, _ ListMemoriesInput) (*mcp.CallToolResult, any, error) {
 	keys, err := rs.store.ListKeys(ctx)
 	if err != nil {
 		return &mcp.CallToolResult{
@@ -503,7 +503,7 @@ func (rs *MCPRecallServer) handleListSessions(ctx context.Context, req *mcp.Call
 	return rs.formatResults("Analytic Session Dataset", req, sessions)
 }
 
-func (rs *MCPRecallServer) handleGetSessions(ctx context.Context, req *mcp.CallToolRequest, args GetSessionsInput) (*mcp.CallToolResult, any, error) {
+func (rs *MCPRecallServer) handleGetSessions(ctx context.Context, _ *mcp.CallToolRequest, args GetSessionsInput) (*mcp.CallToolResult, any, error) {
 
 	// Direct key lookup takes precedence.
 	if args.Key != "" {

@@ -4,18 +4,21 @@ import (
 	"context"
 	"fmt"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"mcp-server-recall/internal/util"
 )
 
 // UniversalSearchInput defines parameters for multi-domain search.
 type UniversalSearchInput struct {
-	Namespace  string `json:"namespace" jsonschema:"Target domain. One of: memories, sessions, standards, projects, ecosystem."`
-	Query      string `json:"query" jsonschema:"Free-text search query mapping BM25."`
-	Package    string `json:"package,omitempty" jsonschema:"Scoping constraint for AST analysis."`
-	SymbolType string `json:"symbol_type,omitempty" jsonschema:"Filter by func, struct, interface."`
-	Interface  string `json:"interface,omitempty" jsonschema:"Implements interface restriction."`
-	Receiver   string `json:"receiver,omitempty" jsonschema:"Method receiver constraint."`
-	Domain     string `json:"domain,omitempty" jsonschema:"Domain boundary (e.g., auth, api)."`
-	Category   string `json:"category,omitempty" jsonschema:"Category metric limit (used over memory spaces)."`
+	util.UniversalBaseInput
+
+	Namespace    string `json:"namespace,omitempty" jsonschema:"Target domain. One of: memories, sessions, standards, projects, ecosystem. Defaults to ecosystem."`
+	Query        string `json:"query" jsonschema:"Free-text search query mapping BM25."`
+	Package      string `json:"package,omitempty" jsonschema:"Scoping constraint for AST analysis."`
+	SymbolType   string `json:"symbol_type,omitempty" jsonschema:"Filter by func, struct, interface."`
+	Interface    string `json:"interface,omitempty" jsonschema:"Implements interface restriction."`
+	Receiver     string `json:"receiver,omitempty" jsonschema:"Method receiver constraint."`
+	Domain       string `json:"domain,omitempty" jsonschema:"Domain boundary (e.g., auth, api)."`
+	Category     string `json:"category,omitempty" jsonschema:"Category metric limit (used over memory spaces)."`
 	Tag          string `json:"tag,omitempty" jsonschema:"Label mapping constraint."`
 	Limit        int    `json:"limit,omitempty" jsonschema:"Result bounds."`
 	ProjectID    string `json:"project_id,omitempty"`
@@ -26,6 +29,8 @@ type UniversalSearchInput struct {
 
 // UniversalListInput defines parameters for multi-domain enumeration.
 type UniversalListInput struct {
+	util.UniversalBaseInput
+
 	Namespace       string `json:"namespace" jsonschema:"Target domain. One of: memories, sessions, standards, projects, categories, standards_categories, project_categories."`
 	Package         string `json:"package,omitempty"`
 	SymbolType      string `json:"symbol_type,omitempty"`
@@ -40,6 +45,8 @@ type UniversalListInput struct {
 
 // UniversalGetInput defines parameters for exact key retrieval across domains.
 type UniversalGetInput struct {
+	util.UniversalBaseInput
+
 	Namespace string `json:"namespace" jsonschema:"Target domain. One of: memories, sessions, standards, projects, ecosystem."`
 	Key       string `json:"key,omitempty" jsonschema:"The discrete key to retrieve."`
 	SessionID string `json:"session_id,omitempty" jsonschema:"Session trace ID for partial match lookups over session boundaries."`
@@ -47,12 +54,16 @@ type UniversalGetInput struct {
 
 // UniversalHarvestInput defines parameters for AST extraction.
 type UniversalHarvestInput struct {
+	util.UniversalBaseInput
+
 	Namespace  string `json:"namespace" jsonschema:"Target domain. One of: projects, standards."`
 	TargetPath string `json:"target_path" jsonschema:"Absolute OS directory path to recursively harvest Go source from."`
 }
 
 // UniversalDeleteInput defines parameters for explicit node destruction.
 type UniversalDeleteInput struct {
+	util.UniversalBaseInput
+
 	Namespace      string `json:"namespace" jsonschema:"Target domain. One of: memories, standards, projects."`
 	Key            string `json:"key,omitempty"`
 	Category       string `json:"category,omitempty"`
@@ -61,8 +72,10 @@ type UniversalDeleteInput struct {
 	All            bool   `json:"all,omitempty" jsonschema:"Set to true to explicitly confirm deletion of ALL records in the specified namespace or category."`
 }
 
-
 func (rs *MCPRecallServer) handleUniversalSearch(ctx context.Context, req *mcp.CallToolRequest, input UniversalSearchInput) (*mcp.CallToolResult, any, error) {
+	if input.Namespace == "" {
+		input.Namespace = "ecosystem"
+	}
 	switch input.Namespace {
 	case "memories":
 		return rs.handleSearch(ctx, req, SearchMemoriesInput{
@@ -173,5 +186,3 @@ func (rs *MCPRecallServer) handleUniversalDelete(ctx context.Context, req *mcp.C
 		return nil, nil, fmt.Errorf("invalid namespace for delete binding: %s", input.Namespace)
 	}
 }
-
-

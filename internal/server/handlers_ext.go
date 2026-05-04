@@ -4,9 +4,8 @@ import (
 	"context"
 
 	"fmt"
-	"strings"
 	"mcp-server-recall/internal/memory"
-
+	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )

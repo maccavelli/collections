@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"iter"
 
 	"github.com/dgraph-io/badger/v4"
 )
@@ -101,6 +102,53 @@ func (s *MemoryStore) DeleteByCategory(ctx context.Context, category string) (in
 	return len(ids), nil
 }
 
+// scanByCategorySeq yields memory-domain records for a given category directly
+// from a BadgerDB view transaction using Go 1.23+ range-over-function iterators.
+// This creates a zero-allocation hot path by bypassing slice buffers.
+func (s *MemoryStore) scanByCategorySeq(ctx context.Context, category string) iter.Seq2[string, []byte] {
+	return func(yield func(string, []byte) bool) {
+		catPrefix := fmt.Appendf(nil, "_idx:cat:%s:", strings.ToLower(category))
+
+		_ = s.db.View(func(txn *badger.Txn) error {
+			it := txn.NewIterator(badger.DefaultIteratorOptions)
+			defer it.Close()
+
+			for it.Seek(catPrefix); it.ValidForPrefix(catPrefix); it.Next() {
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				default:
+				}
+
+				var originalKey string
+				var payload []byte
+
+				_ = it.Item().Value(func(kVal []byte) error {
+					originalKey = string(kVal)
+					item, err := txn.Get(kVal)
+					if err != nil {
+						return nil
+					}
+					return item.Value(func(v []byte) error {
+						// Filter and yield memory records natively
+						if rec, err := migrateRecord(v); err == nil && rec.Domain == DomainMemories && rec.Category == category {
+							payload = append([]byte(nil), v...)
+						}
+						return nil
+					})
+				})
+
+				if len(payload) > 0 {
+					if !yield(originalKey, payload) {
+						return nil // Caller broke the loop
+					}
+				}
+			}
+			return nil
+		})
+	}
+}
+
 // DeleteDomain purges all records that match the exact domain string.
 func (s *MemoryStore) DeleteDomain(ctx context.Context, domain string) (int, error) {
 	s.mu.Lock()
@@ -172,7 +220,6 @@ func (s *MemoryStore) DeleteDomain(ctx context.Context, domain string) (int, err
 	return len(ids), nil
 }
 
-
 // DeleteBatch performs a single transaction badger deletion pass.
 func (s *MemoryStore) DeleteBatch(ctx context.Context, keys []string) error {
 	s.mu.Lock()
@@ -221,7 +268,7 @@ func (s *MemoryStore) deleteNoLockTxn(txn *badger.Txn, key string) error {
 		return err
 	}
 	s.deleteRecordIndices(txn, key, rec)
-	
+
 	if rec != nil {
 		switch rec.Domain {
 		case DomainMemories:
@@ -234,7 +281,7 @@ func (s *MemoryStore) deleteNoLockTxn(txn *badger.Txn, key string) error {
 			s.projectsCount.Add(-1)
 		}
 	}
-	
+
 	return txn.Delete([]byte(key))
 }
 

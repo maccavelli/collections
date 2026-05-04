@@ -1,9 +1,12 @@
 package memory
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"time"
+
+	"github.com/klauspost/compress/zstd"
 )
 
 // Domain constants for namespace separation.
@@ -12,6 +15,12 @@ const (
 	DomainStandards = "standards"
 	DomainSessions  = "sessions"
 	DomainProjects  = "projects"
+)
+
+var (
+	zstdEncoder, _ = zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedFastest))
+	zstdDecoder, _ = zstd.NewReader(nil, zstd.WithDecoderConcurrency(0))
+	zstdMagic      = []byte{0x28, 0xb5, 0x2f, 0xfd}
 )
 
 // Record represents a single atomic entry in the memory store with metadata.
@@ -39,6 +48,16 @@ type SearchResult struct {
 	Snippets    []string `json:"snippets,omitempty"`
 }
 
+// marshalRecord centralizes the serialization and Zstd compression of a Record.
+func marshalRecord(rec *Record) ([]byte, error) {
+	data, err := json.Marshal(rec)
+	if err != nil {
+		return nil, err
+	}
+	// Compress the JSON byte slice natively (returns compressed bytes with magic header)
+	return zstdEncoder.EncodeAll(data, make([]byte, 0, len(data))), nil
+}
+
 // migrateRecord converts legacy string formats to the new Record struct if needed.
 // Infers Domain from Category for backward compatibility with pre-domain records.
 func migrateRecord(data []byte) (*Record, error) {
@@ -46,6 +65,15 @@ func migrateRecord(data []byte) (*Record, error) {
 }
 
 func migrateRecordCtx(ctx context.Context, data []byte) (*Record, error) {
+	// Transparently handle Zstd-compressed records by sniffing the magic bytes
+	if bytes.HasPrefix(data, zstdMagic) {
+		var err error
+		data, err = zstdDecoder.DecodeAll(data, nil)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	var rec Record
 	if err := json.Unmarshal(data, &rec); err == nil && rec.Content != "" {
 		// Infer Domain for records written before the Domain field existed.

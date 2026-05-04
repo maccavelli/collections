@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sync"
+	"iter"
 
 	"github.com/blevesearch/bleve/v2"
 	"github.com/blevesearch/bleve/v2/mapping"
@@ -425,6 +426,59 @@ func (e *BleveEngine) SearchScoped(ctx context.Context, q string, categories []s
 	}
 
 	return hits, nil
+}
+
+// SearchScopedSeq provides a zero-allocation iterator over Bleve search hits.
+func (e *BleveEngine) SearchScopedSeq(ctx context.Context, q string, categories []string, requiredTags []string, limit int) iter.Seq2[string, float64] {
+	return func(yield func(string, float64) bool) {
+		if q == "" {
+			return
+		}
+
+		e.mu.RLock()
+		defer e.mu.RUnlock()
+
+		bq := e.buildQuery(q)
+		conj := bleve.NewConjunctionQuery(bq)
+
+		if len(categories) > 0 {
+			var catQueries []query.Query
+			for _, cat := range categories {
+				mq := bleve.NewMatchQuery(cat)
+				mq.SetField("category")
+				catQueries = append(catQueries, mq)
+			}
+			conj.AddQuery(bleve.NewDisjunctionQuery(catQueries...))
+		}
+
+		for _, tag := range requiredTags {
+			tq := bleve.NewMatchQuery(tag)
+			tq.SetField("tags")
+			conj.AddQuery(tq)
+		}
+
+		searchLimit := limit
+		if searchLimit <= 0 {
+			searchLimit = 100
+		}
+
+		req := bleve.NewSearchRequestOptions(conj, searchLimit, 0, false)
+		res, err := e.index.Search(req)
+		if err != nil || len(res.Hits) == 0 {
+			return
+		}
+
+		maxScore := res.Hits[0].Score
+		if maxScore <= 0 {
+			maxScore = 1.0
+		}
+
+		for _, h := range res.Hits {
+			if !yield(h.ID, h.Score/maxScore) {
+				return
+			}
+		}
+	}
 }
 
 // bleveSearch runs a Bleve query across content (boosted), category, and tags.

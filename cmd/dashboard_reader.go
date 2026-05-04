@@ -22,10 +22,10 @@ func ReadDashboardSnapshot() (map[string]any, []TelemetryLog, error) {
 		// Just return empty maps if no DB or telemetry file exists yet to avoid crashing the view
 		return make(map[string]any), []TelemetryLog{{Msg: "Awaiting daemon telemetry sync..."}}, nil
 	}
-	
+
 	// Normally we would parse binary fragments from the ring buffer
 	var snapshot map[string]any
-	
+
 	var logs []TelemetryLog
 	lines := strings.Split(string(b), "\n")
 	if len(lines) > 0 {
@@ -33,7 +33,7 @@ func ReadDashboardSnapshot() (map[string]any, []TelemetryLog, error) {
 		if firstLine != "" && strings.HasPrefix(firstLine, "{") {
 			json.Unmarshal([]byte(firstLine), &snapshot)
 		}
-		
+
 		for i := 1; i < len(lines); i++ {
 			l := strings.TrimSpace(lines[i])
 			if l != "" {
@@ -44,7 +44,7 @@ func ReadDashboardSnapshot() (map[string]any, []TelemetryLog, error) {
 			}
 		}
 	}
-	
+
 	if snapshot == nil {
 		snapshot = make(map[string]any)
 	}
