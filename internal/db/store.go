@@ -3,10 +3,11 @@
 package db
 
 import (
-	json "github.com/go-json-experiment/json"
 	"fmt"
+	"os"
 	"path/filepath"
 
+	json "github.com/go-json-experiment/json"
 	"github.com/spf13/viper"
 	"github.com/tidwall/buntdb"
 )
@@ -20,9 +21,19 @@ type Store struct {
 func InitStore() (*Store, error) {
 	dbPath := viper.GetString("server.db_path")
 	if dbPath == "" {
-		dbPath = ":memory:"
+		cacheDir, err := os.UserCacheDir()
+		if err != nil {
+			cacheDir = os.TempDir()
+		}
+		dbPath = filepath.Join(cacheDir, "mcp-server-magicdev", "session.db")
 	} else if dbPath != ":memory:" {
 		dbPath = filepath.Clean(filepath.FromSlash(dbPath))
+	}
+
+	if dbPath != ":memory:" {
+		if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
+			return nil, err
+		}
 	}
 
 	database, err := buntdb.Open(dbPath)
