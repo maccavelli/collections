@@ -27,12 +27,16 @@ type Blueprint struct {
 type SessionState struct {
 	SessionID         string            `json:"session_id"`
 	TechStack         string            `json:"tech_stack"`
-	Standards         []string          `json:"standards"`                       // dynamically ingested rules
+	Standards         []string          `json:"standards,omitzero"`             // dynamically ingested rules
 	StepStatus        map[string]string `json:"step_status"`                    // tracking progress
 	CurrentStep       string            `json:"current_step,omitzero"`
 	FinalSpec         string            `json:"final_spec,omitzero"`            // Golden Copy from finalize_requirements
 	AporiaResolutions []string          `json:"aporia_resolutions,omitzero"`    // contradictions found during clarify
 	Blueprint         *Blueprint        `json:"blueprint,omitzero"`
+	IsVetted          bool              `json:"is_vetted,omitzero"`
+	Tensions          []string          `json:"tensions,omitzero"`
+	StandardsSnapshot string            `json:"standards_snapshot,omitzero"`
+	TechMapping       map[string]string `json:"tech_mapping,omitzero"`
 }
 
 // NewSessionState initializes a fresh session with zeroed collections
@@ -43,5 +47,7 @@ func NewSessionState(sessionID string) *SessionState {
 		Standards:         make([]string, 0),
 		StepStatus:        make(map[string]string),
 		AporiaResolutions: make([]string, 0),
+		Tensions:          make([]string, 0),
+		TechMapping:       make(map[string]string),
 	}
 }
