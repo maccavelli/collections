@@ -1,25 +1,59 @@
-// Package config handles AES-256-GCM encrypted credential storage using
-// hardware-derived keys. Decrypted values are loaded into viper for global access.
+// Package config handles magicdev.yaml loading, default template generation,
+// and fsnotify hot-reloading for the MagicDev pipeline.
 package config
 
 import (
-	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/viper"
 )
 
-// Config represents the application configuration.
-type Config struct {
-	AtlassianURL   string `json:"atlassian_url" mapstructure:"atlassian_url"`
-	AtlassianToken string `json:"atlassian_token" mapstructure:"atlassian_token"`
-	GitLabToken    string `json:"gitlab_token" mapstructure:"gitlab_token"`
-	SSHPrivateKey  string `json:"ssh_private_key" mapstructure:"ssh_private_key"`
-}
+const DefaultConfigTemplate = `# ==============================================================================
+# MagicDev Server Configuration
+# ==============================================================================
 
-// ConfigPath returns the absolute path to the config.enc file.
+# Integration: Atlassian (Jira & Confluence)
+atlassian:
+  # The base URL for your Atlassian Cloud instance.
+  # Example: https://your-domain.atlassian.net
+  url: "PLACEHOLDER_ATLASSIAN_URL"
+  
+  # An API token for Atlassian Cloud.
+  # Required to create tickets and post documentation.
+  token: "PLACEHOLDER_ATLASSIAN_TOKEN"
+  
+  # Custom field ID for Story Points in your Jira instance (if applicable).
+  story_points_field: "customfield_10016"
+
+# Integration: Git (GitHub / GitLab)
+git:
+  # Your git service username.
+  username: "PLACEHOLDER_GIT_USERNAME"
+  
+  # A personal access token for committing documents to Git over HTTPS.
+  token: "PLACEHOLDER_GIT_TOKEN"
+  
+  # Default target branch for pushing generated artifacts.
+  default_branch: "main"
+
+# Core Agent Settings
+agent:
+  # The default tech stack assumed when analyzing requirements (e.g., .NET, Node)
+  default_stack: ".NET"
+
+# Server Diagnostics
+server:
+  # Set the database persistence path. ":memory:" provides ephemeral storage.
+  # Use an absolute path (e.g., "/opt/magicdev/state.db") to persist sessions.
+  db_path: ":memory:"
+`
+
+// ConfigPath returns the absolute path to the magicdev.yaml file.
 func ConfigPath() (string, error) {
 	dir, err := os.UserConfigDir()
 	if err != nil {
@@ -29,56 +63,84 @@ func ConfigPath() (string, error) {
 	if err := os.MkdirAll(magicDir, 0700); err != nil {
 		return "", err
 	}
-	return filepath.Join(magicDir, "config.enc"), nil
+	return filepath.Join(magicDir, "magicdev.yaml"), nil
 }
 
-// SaveEncrypted saves the configuration to disk, encrypted with the hardware key.
-func SaveEncrypted(cfg *Config) error {
+// EnsureConfig checks if the config exists, creating it with the default template if it doesn't.
+// It returns true if it had to create a new file.
+func EnsureConfig() (bool, error) {
+	path, err := ConfigPath()
+	if err != nil {
+		return false, err
+	}
+
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		if err := os.WriteFile(path, []byte(DefaultConfigTemplate), 0600); err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+	return false, nil
+}
+
+// LoadConfig reads the magicdev.yaml config file and initializes the fsnotify watcher.
+func LoadConfig() error {
 	path, err := ConfigPath()
 	if err != nil {
 		return err
 	}
 
-	data, err := json.Marshal(cfg)
+	viper.SetConfigFile(path)
+	viper.SetConfigType("yaml")
+
+	if err := viper.ReadInConfig(); err != nil {
+		return fmt.Errorf("failed to read config file: %w", err)
+	}
+
+	// Setup fsnotify hot reloading
+	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
-		return err
+		slog.Warn("failed to create fsnotify watcher, hot-reload disabled", "error", err)
+		return nil // Non-fatal
 	}
 
-	encrypted, err := Encrypt(string(data))
-	if err != nil {
-		return err
+	go func() {
+		for {
+			select {
+			case event, ok := <-watcher.Events:
+				if !ok {
+					return
+				}
+				// We care about Write or Create events on the magicdev.yaml file
+				isWrite := event.Op&fsnotify.Write == fsnotify.Write
+				isCreate := event.Op&fsnotify.Create == fsnotify.Create
+				
+				if (isWrite || isCreate) && filepath.Base(event.Name) == "magicdev.yaml" {
+					slog.Info("config file changed, reloading...", "file", event.Name)
+					if err := viper.ReadInConfig(); err != nil {
+						slog.Error("failed to hot-reload config", "error", err)
+					}
+				}
+			case err, ok := <-watcher.Errors:
+				if !ok {
+					return
+				}
+				slog.Error("fsnotify watcher error", "error", err)
+			}
+		}
+	}()
+
+	// Windows locks files heavily; watch the directory instead. Linux/Mac watch the file directly.
+	if runtime.GOOS == "windows" {
+		watchDir := filepath.Dir(path)
+		if err := watcher.Add(watchDir); err != nil {
+			slog.Warn("failed to watch config directory", "dir", watchDir, "error", err)
+		}
+	} else {
+		if err := watcher.Add(path); err != nil {
+			slog.Warn("failed to watch config file", "file", path, "error", err)
+		}
 	}
 
-	return os.WriteFile(path, []byte(encrypted), 0600)
-}
-
-// LoadConfig reads the encrypted config file, decrypts it, and loads it into Viper.
-func LoadConfig() (*Config, error) {
-	path, err := ConfigPath()
-	if err != nil {
-		return nil, err
-	}
-
-	encrypted, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-
-	decrypted, err := Decrypt(string(encrypted))
-	if err != nil {
-		return nil, fmt.Errorf("failed to decrypt config: %w", err)
-	}
-
-	var cfg Config
-	if err := json.Unmarshal([]byte(decrypted), &cfg); err != nil {
-		return nil, fmt.Errorf("failed to parse decrypted config: %w", err)
-	}
-
-	// Bind to Viper for global access
-	viper.Set("atlassian_url", cfg.AtlassianURL)
-	viper.Set("atlassian_token", cfg.AtlassianToken)
-	viper.Set("gitlab_token", cfg.GitLabToken)
-	viper.Set("ssh_private_key", cfg.SSHPrivateKey)
-
-	return &cfg, nil
+	return nil
 }

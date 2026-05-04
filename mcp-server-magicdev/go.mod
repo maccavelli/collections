@@ -6,12 +6,15 @@ require (
 	github.com/ctreminiom/go-atlassian/v2 v2.12.0
 	github.com/denisbrodbeck/machineid v1.0.1
 	github.com/ericmason/mdadf v0.1.2
+	github.com/fsnotify/fsnotify v1.10.1
 	github.com/go-git/go-git/v5 v5.18.0
+	github.com/go-json-experiment/json v0.0.0-20260430182902-b6187a392ed4
 	github.com/klauspost/compress v1.18.6
 	github.com/modelcontextprotocol/go-sdk v1.6.0
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0
 	github.com/tidwall/buntdb v1.3.2
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
@@ -21,7 +24,6 @@ require (
 	github.com/cloudflare/circl v1.6.3 // indirect
 	github.com/cyphar/filepath-securejoin v0.4.1 // indirect
 	github.com/emirpasic/gods v1.18.1 // indirect
-	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/go-git/gcfg v1.5.1-0.20230307220236-3a3c6141e376 // indirect
 	github.com/go-git/go-billy/v5 v5.8.0 // indirect
 	github.com/go-viper/mapstructure/v2 v2.4.0 // indirect

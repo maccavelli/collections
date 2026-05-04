@@ -1,22 +1,31 @@
+// Package handler provides functionality for the handler subsystem.
 package handler
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
+	"net/http"
+	"os"
 	"strings"
+
+	json "github.com/go-json-experiment/json"
+	"github.com/go-json-experiment/json/jsontext"
+	"github.com/spf13/viper"
 
 	"github.com/denisbrodbeck/machineid"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"mcp-server-magicdev/internal/config"
 	"mcp-server-magicdev/internal/db"
 	"mcp-server-magicdev/internal/integration"
+	"mcp-server-magicdev/internal/logging"
 )
 
 // jsonResult formats output variables into a JSON-like string for the agent.
 func jsonResult(hint string, data map[string]any) (*mcp.CallToolResult, any, error) {
-	b, _ := json.MarshalIndent(data, "", "  ")
+	b, _ := json.Marshal(data, jsontext.WithIndent("  "))
 	msg := fmt.Sprintf("```json\n%s\n```\n\n%s", string(b), hint)
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{
@@ -45,137 +54,232 @@ func errorResult(msg string) (*mcp.CallToolResult, any, error) {
 	}, nil, nil
 }
 
+// EvaluateIdeaArgs defines the EvaluateIdeaArgs structure.
 type EvaluateIdeaArgs struct {
-	RawIdea     string `json:"raw_idea" description:"The raw idea" jsonschema:"required"`
-	TargetStack string `json:"target_stack" description:"The technology stack (.NET or Node)" jsonschema:"required"`
+	RawIdea     string `json:"raw_idea" jsonschema:"The raw software idea or feature request"`
+	TargetStack string `json:"target_stack" jsonschema:"The technology stack (.NET or Node)"`
+	SessionID   string `json:"session_id,omitempty" jsonschema:"Optional. Provide the existing session ID if refining the idea after Socratic questioning."`
 }
 
+// ClarifyRequirementsArgs defines the ClarifyRequirementsArgs structure.
 type ClarifyRequirementsArgs struct {
-	SessionID    string `json:"session_id" description:"The session ID" jsonschema:"required"`
-	UserResponse string `json:"user_response" description:"Socratic gaps and findings" jsonschema:"required"`
+	SessionID  string `json:"session_id" jsonschema:"The active session ID returned by evaluate_idea"`
+	Thesis     string `json:"thesis" jsonschema:"Thesis architect output: Identified requirement base"`
+	Antithesis string `json:"antithesis" jsonschema:"Antithesis skeptic output: Gaps and Socratic questions to resolve"`
+	Synthesis  string `json:"synthesis" jsonschema:"Aporia engine synthesis determining final resolution"`
+	IsVetted   bool   `json:"is_vetted" jsonschema:"Final result determined by Aporia Engine. If false, tool triggers an error."`
 }
 
+// IngestStandardsArgs defines the IngestStandardsArgs structure.
 type IngestStandardsArgs struct {
-	SessionID string `json:"session_id" description:"The session ID" jsonschema:"required"`
-	SourceURL string `json:"source_url" description:"The standard source URL"`
-	FilePath  string `json:"file_path" description:"The standard file path"`
+	SessionID string `json:"session_id" jsonschema:"The active session ID"`
+	SourceURL string `json:"source_url,omitempty" jsonschema:"The standard source URL"`
+	FilePath  string `json:"file_path,omitempty" jsonschema:"The standard file path"`
 }
 
+// CritiqueDesignArgs defines the CritiqueDesignArgs structure.
 type CritiqueDesignArgs struct {
-	SessionID  string `json:"session_id" description:"The session ID" jsonschema:"required"`
-	StrictMode bool   `json:"strict_mode" description:"Whether to use strict mode" jsonschema:"required"`
+	SessionID  string `json:"session_id" jsonschema:"The active session ID"`
+	StrictMode bool   `json:"strict_mode" jsonschema:"Whether to use strict mode"`
 }
 
+// FinalizeRequirementsArgs defines the FinalizeRequirementsArgs structure.
 type FinalizeRequirementsArgs struct {
-	SessionID         string `json:"session_id" description:"The session ID" jsonschema:"required"`
-	ApprovalSignature string `json:"approval_signature" description:"The approval signature" jsonschema:"required"`
+	SessionID         string `json:"session_id" jsonschema:"The active session ID"`
+	ApprovalSignature string `json:"approval_signature" jsonschema:"The approval signature"`
 }
 
+// BlueprintImplementationArgs defines the BlueprintImplementationArgs structure.
 type BlueprintImplementationArgs struct {
-	SessionID         string `json:"session_id" description:"The session ID" jsonschema:"required"`
-	PatternPreference string `json:"pattern_preference" description:"The pattern preference" jsonschema:"required"`
+	SessionID         string `json:"session_id" jsonschema:"The active session ID"`
+	PatternPreference string `json:"pattern_preference" jsonschema:"The pattern preference"`
 }
 
+// GenerateDocumentsArgs defines the GenerateDocumentsArgs structure.
 type GenerateDocumentsArgs struct {
-	SessionID    string `json:"session_id" description:"The session ID" jsonschema:"required"`
-	Title        string `json:"title" description:"Document title" jsonschema:"required"`
-	Markdown     string `json:"markdown" description:"Markdown spec" jsonschema:"required"`
-	TargetBranch string `json:"target_branch" description:"Target git branch" jsonschema:"required"`
+	SessionID    string `json:"session_id" jsonschema:"The active session ID"`
+	Title        string `json:"title" jsonschema:"Document title"`
+	Markdown     string `json:"markdown" jsonschema:"Markdown spec"`
+	TargetBranch string `json:"target_branch" jsonschema:"Target git branch"`
 }
 
+// CompleteDesignArgs defines the CompleteDesignArgs structure.
 type CompleteDesignArgs struct {
-	SessionID string `json:"session_id" description:"The session ID" jsonschema:"required"`
+	SessionID string `json:"session_id" jsonschema:"The active session ID"`
 }
 
+// UpdateConfigArgs defines the UpdateConfigArgs structure.
+type UpdateConfigArgs struct {
+	Key   string `json:"key" jsonschema:"Configuration key to update (e.g. 'atlassian.token')"`
+	Value string `json:"value" jsonschema:"New value to set"`
+}
+
+// GetInternalLogsArgs defines the arguments for fetching logs.
+type GetInternalLogsArgs struct {
+	MaxLines int `json:"max_lines" jsonschema:"Max log lines to return (default 25)."`
+}
+
+// ToolHandler defines the ToolHandler structure.
 type ToolHandler struct {
 	store *db.Store
 }
 
+// EvaluateIdea performs the EvaluateIdea operation.
 func (h *ToolHandler) EvaluateIdea(ctx context.Context, req *mcp.CallToolRequest, args EvaluateIdeaArgs) (*mcp.CallToolResult, any, error) {
-	// Generate a unique session ID
-	id, _ := machineid.ID()
-	sessionID := fmt.Sprintf("session-%s", id[:8])
+	var session *db.SessionState
+	var sessionID string
 
-	session := db.NewSessionState(sessionID)
+	if args.SessionID != "" {
+		s, err := h.store.LoadSession(args.SessionID)
+		if err == nil && s != nil {
+			session = s
+			sessionID = args.SessionID
+			// Reset downstream state for the new iteration
+			session.IsVetted = false
+			session.Tensions = []string{}
+			session.AporiaResolutions = []string{}
+			session.StepStatus["evaluate_idea"] = "COMPLETED"
+			// Clear later steps if they existed
+			delete(session.StepStatus, "clarify_requirements")
+			delete(session.StepStatus, "ingest_standards")
+			delete(session.StepStatus, "critique_design")
+			delete(session.StepStatus, "finalize_requirements")
+			delete(session.StepStatus, "blueprint_implementation")
+			delete(session.StepStatus, "generate_documents")
+		}
+	}
+
+	if session == nil {
+		// Generate a unique session ID
+		id, _ := machineid.ID()
+		sessionID = fmt.Sprintf("session-%s", id[:8])
+		session = db.NewSessionState(sessionID)
+		session.OriginalIdea = args.RawIdea
+		session.StepStatus["evaluate_idea"] = "COMPLETED"
+	}
+
+	session.RefinedIdea = args.RawIdea
 	session.TechStack = args.TargetStack
-	session.StepStatus["evaluate_idea"] = "COMPLETED"
 	session.CurrentStep = "evaluate_idea"
 
 	if err := h.store.SaveSession(session); err != nil {
 		return errorResult(err.Error())
 	}
-	
-	hint := "Next, call 'clarify_requirements' to refine the scope."
+
+	stackKey := strings.ToLower(args.TargetStack)
+	if stackKey == ".net" {
+		stackKey = "dotnet"
+	}
+	baselineURLs := viper.GetStringSlice("standards." + stackKey)
+
+	hint := "Next, call 'ingest_standards' to pull in applicable project standards."
+	if len(baselineURLs) > 0 {
+		hint = fmt.Sprintf("Before proceeding to clarify_requirements, you MUST call 'ingest_standards' for each of the following baseline URLs:\n- %s\n\nOnce all baseline standards are ingested, proceed to 'clarify_requirements'.", strings.Join(baselineURLs, "\n- "))
+	}
+
 	return jsonResult(hint, map[string]any{
 		"session_id":     sessionID,
 		"scope_boundary": args.RawIdea,
 	})
 }
 
+// ClarifyRequirements performs the ClarifyRequirements operation.
 func (h *ToolHandler) ClarifyRequirements(ctx context.Context, req *mcp.CallToolRequest, args ClarifyRequirementsArgs) (*mcp.CallToolResult, any, error) {
 	session, err := h.store.LoadSession(args.SessionID)
 	if err != nil || session == nil {
 		return errorResult("session not found")
 	}
 
-	if args.UserResponse != "" {
-		for _, line := range strings.Split(args.UserResponse, "\n") {
-			if trimmed := strings.TrimSpace(line); trimmed != "" {
-				session.AporiaResolutions = append(session.AporiaResolutions, trimmed)
-				session.Tensions = append(session.Tensions, trimmed) // Track unresolved tensions
-			}
+	session.IsVetted = args.IsVetted
+
+	if !args.IsVetted {
+		session.Tensions = append(session.Tensions, args.Antithesis)
+		if err := h.store.SaveSession(session); err != nil {
+			return errorResult(err.Error())
 		}
+
+		msg := fmt.Sprintf("SOCRATIC CONFLICT DETECTED: You must prompt the user with the following questions and await their answers. Once answered, re-run 'clarify_requirements' with the updated synthesis.\n\nQuestions:\n%s", args.Antithesis)
+		return errorResult(msg)
 	}
 
+	session.Tensions = []string{}
+	session.AporiaResolutions = append(session.AporiaResolutions, args.Synthesis)
 	session.StepStatus["clarify_requirements"] = "COMPLETED"
 	session.CurrentStep = "clarify_requirements"
+
 	if err := h.store.SaveSession(session); err != nil {
 		return errorResult(err.Error())
 	}
-	
+
 	hint := "Next, call 'ingest_standards' to pull in applicable project standards."
 	return jsonResult(hint, map[string]any{
-		"thesis":           "Identified requirement base",
-		"antithesis":       "Gaps and clarifications",
-		"aporia_conflicts": session.Tensions,
+		"thesis":           args.Thesis,
+		"antithesis":       args.Antithesis,
+		"aporia_synthesis": args.Synthesis,
+		"is_vetted":        true,
 	})
 }
 
+// IngestStandards performs the IngestStandards operation.
 func (h *ToolHandler) IngestStandards(ctx context.Context, req *mcp.CallToolRequest, args IngestStandardsArgs) (*mcp.CallToolResult, any, error) {
 	standard := args.SourceURL
+	isURL := true
 	if args.FilePath != "" {
 		standard = args.FilePath
+		isURL = false
 	}
-	if err := h.store.AppendStandard(args.SessionID, standard); err != nil {
+
+	var content []byte
+	var err error
+
+	if isURL {
+		resp, errHTTP := http.Get(standard)
+		if errHTTP != nil {
+			return errorResult(fmt.Sprintf("failed to fetch standard from URL: %v", errHTTP))
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode >= 400 {
+			return errorResult(fmt.Sprintf("failed to fetch standard from URL, status code: %d", resp.StatusCode))
+		}
+		content, err = io.ReadAll(resp.Body)
+	} else {
+		content, err = os.ReadFile(standard)
+	}
+
+	if err != nil {
+		return errorResult(fmt.Sprintf("failed to read standard content: %v", err))
+	}
+
+	textContent := string(content)
+
+	if err := h.store.AppendStandard(args.SessionID, textContent); err != nil {
 		return errorResult(err.Error())
 	}
-	
-	hint := "Next, call 'critique_design' to vet the architecture against the standards."
-	return jsonResult(hint, map[string]any{
-		"standards_blob": standard,
-		"rule_checksum":  fmt.Sprintf("sha256-%d", len(standard)),
-	})
+
+	hint := "Standard ingested successfully. You may ingest another, or proceed to 'clarify_requirements' to evaluate the idea against these ingested standards."
+	return textResult(fmt.Sprintf("%s\n\n=== STANDARD CONTENT START ===\n%s\n=== STANDARD CONTENT END ===\n\n%s", standard, textContent, hint))
 }
 
+// CritiqueDesign performs the CritiqueDesign operation.
 func (h *ToolHandler) CritiqueDesign(ctx context.Context, req *mcp.CallToolRequest, args CritiqueDesignArgs) (*mcp.CallToolResult, any, error) {
 	session, err := h.store.LoadSession(args.SessionID)
 	if err != nil || session == nil {
 		return errorResult("session not found")
 	}
-	
+
 	session.IsVetted = true
 	session.Tensions = []string{} // Clear tensions simulating resolution
 	if args.StrictMode {
 		// Enforce strict logic if needed
 		slog.Info("Strict mode enabled for vetting")
 	}
-	
+
 	session.StepStatus["critique_design"] = "COMPLETED"
 	session.CurrentStep = "critique_design"
 	if err := h.store.SaveSession(session); err != nil {
 		return errorResult(err.Error())
 	}
-	
+
 	hint := "Next, call 'finalize_requirements' to generate the golden copy."
 	return jsonResult(hint, map[string]any{
 		"is_vetted":    true,
@@ -183,6 +287,7 @@ func (h *ToolHandler) CritiqueDesign(ctx context.Context, req *mcp.CallToolReque
 	})
 }
 
+// FinalizeRequirements performs the FinalizeRequirements operation.
 func (h *ToolHandler) FinalizeRequirements(ctx context.Context, req *mcp.CallToolRequest, args FinalizeRequirementsArgs) (*mcp.CallToolResult, any, error) {
 	session, err := h.store.LoadSession(args.SessionID)
 	if err != nil || session == nil {
@@ -195,7 +300,7 @@ func (h *ToolHandler) FinalizeRequirements(ctx context.Context, req *mcp.CallToo
 	if err := h.store.SaveSession(session); err != nil {
 		return errorResult(err.Error())
 	}
-	
+
 	hint := "Next, call 'blueprint_implementation' to generate the technical mapping."
 	return jsonResult(hint, map[string]any{
 		"golden_copy_json": args.ApprovalSignature,
@@ -203,6 +308,7 @@ func (h *ToolHandler) FinalizeRequirements(ctx context.Context, req *mcp.CallToo
 	})
 }
 
+// BlueprintImplementation performs the BlueprintImplementation operation.
 func (h *ToolHandler) BlueprintImplementation(ctx context.Context, req *mcp.CallToolRequest, args BlueprintImplementationArgs) (*mcp.CallToolResult, any, error) {
 	session, err := h.store.LoadSession(args.SessionID)
 	if err != nil || session == nil {
@@ -219,7 +325,7 @@ func (h *ToolHandler) BlueprintImplementation(ctx context.Context, req *mcp.Call
 		},
 		ComplexityScores: map[string]int{"featureA": 5},
 	}
-	
+
 	if session.TechMapping == nil {
 		session.TechMapping = make(map[string]string)
 	}
@@ -241,28 +347,25 @@ func (h *ToolHandler) BlueprintImplementation(ctx context.Context, req *mcp.Call
 	})
 }
 
+// GenerateDocuments performs the GenerateDocuments operation.
 func (h *ToolHandler) GenerateDocuments(ctx context.Context, req *mcp.CallToolRequest, args GenerateDocumentsArgs) (*mcp.CallToolResult, any, error) {
 	session, err := h.store.LoadSession(args.SessionID)
 	if err != nil || session == nil {
 		return errorResult("session not found")
 	}
-	
+
 	session.CurrentStep = "generate_documents"
 	if err := h.store.SaveSession(session); err != nil {
 		return errorResult(err.Error())
 	}
 
-	var bp *db.Blueprint
-	var aporias []string
-	if session != nil {
-		bp = session.Blueprint
-		aporias = session.AporiaResolutions
-	}
+	bp := session.Blueprint
+	aporias := session.AporiaResolutions
 
 	if err := integration.ProcessDocumentGeneration(args.Title, args.Markdown, args.TargetBranch, args.SessionID, bp, aporias); err != nil {
 		return errorResult(err.Error())
 	}
-	
+
 	hint := "Next, wrap up with 'complete_design'."
 	return jsonResult(hint, map[string]any{
 		"jira_key":       "DEV-1234",
@@ -271,6 +374,7 @@ func (h *ToolHandler) GenerateDocuments(ctx context.Context, req *mcp.CallToolRe
 	})
 }
 
+// CompleteDesign performs the CompleteDesign operation.
 func (h *ToolHandler) CompleteDesign(ctx context.Context, req *mcp.CallToolRequest, args CompleteDesignArgs) (*mcp.CallToolResult, any, error) {
 	if err := h.store.DeleteSession(args.SessionID); err != nil {
 		slog.Warn("complete_design: session cleanup failed", "error", err, "session_id", args.SessionID)
@@ -281,46 +385,83 @@ func (h *ToolHandler) CompleteDesign(ctx context.Context, req *mcp.CallToolReque
 	})
 }
 
+// RegisterTools performs the RegisterTools operation.
 func RegisterTools(s *mcp.Server, store *db.Store) {
 	h := &ToolHandler{store: store}
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "evaluate_idea",
-		Description: "Detects stack (.NET/Node) and initializes session in BuntDB.",
+		Description: "[PHASE: 1] Initializes a new MagicDev session for the provided software idea. Returns a session_id that MUST be used in all subsequent steps. [Routing Tags: initialize, bootstrap]",
 	}, h.EvaluateIdea)
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "clarify_requirements",
-		Description: "Socratic analysis to fill gaps. Updates BuntDB metadata with aporia resolutions.",
+		Description: "[PHASE: 2] Performs Socratic analysis to fill gaps in the idea. If conflicts exist, this will return an error instructing you to ask the user questions. [REQUIRES: evaluate_idea] [Routing Tags: analyze, clarify]",
 	}, h.ClarifyRequirements)
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "ingest_standards",
-		Description: "Stores fetched standards directly into the BuntDB session state.",
+		Description: "[PHASE: 3] Pulls in applicable architectural standards for the project. [REQUIRES: clarify_requirements]",
 	}, h.IngestStandards)
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "critique_design",
-		Description: "Fetches the ingested standards from BuntDB and evaluates the design against them.",
+		Description: "[PHASE: 4] Vets the proposed architecture against the ingested standards. [REQUIRES: ingest_standards]",
 	}, h.CritiqueDesign)
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "finalize_requirements",
-		Description: "Consolidates design into a Golden Copy JSON spec. Persists the finalized spec to BuntDB.",
+		Description: "[PHASE: 5] Consolidates the vetted design into a Golden Copy JSON spec. [REQUIRES: critique_design]",
 	}, h.FinalizeRequirements)
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "blueprint_implementation",
-		Description: "Generates a technical implementation blueprint using the finalized requirements and ingested standards.",
+		Description: "[PHASE: 6] Generates a technical implementation blueprint mapping the design to structural patterns. [REQUIRES: finalize_requirements]",
 	}, h.BlueprintImplementation)
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "generate_documents",
-		Description: "Creates Jira task, Confluence page (ADF), and Hybrid Markdown Git commits. Consumes Blueprint data from the session.",
+		Description: "[PHASE: 7] Syncs the finalized blueprint and specifications to Jira, Confluence, and Git. [REQUIRES: blueprint_implementation]",
 	}, h.GenerateDocuments)
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "complete_design",
-		Description: "Final handoff summary and session cleanup.",
+		Description: "[PHASE: 8] Wraps up the session and provides a final handoff summary. [REQUIRES: generate_documents]",
 	}, h.CompleteDesign)
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "update_config",
+		Description: "Surgically updates a configuration value in magicdev.yaml while preserving all comments.",
+	}, h.UpdateConfig)
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "get_internal_logs",
+		Description: "[ROLE: DIAGNOSTIC] SYSTEM LOG INSPECTOR: Provides access to system logs and bug debugging trails for troubleshooting and auditing AI decision-making steps.",
+	}, h.GetInternalLogs)
+}
+
+// GetInternalLogs returns the tail lines of the in-memory server logs.
+func (h *ToolHandler) GetInternalLogs(ctx context.Context, req *mcp.CallToolRequest, args GetInternalLogsArgs) (*mcp.CallToolResult, any, error) {
+	maxLines := 25
+	if args.MaxLines > 0 {
+		maxLines = args.MaxLines
+	}
+	
+	logs := logging.TailLines(logging.GlobalBuffer.String(), maxLines)
+	return textResult(logs)
+}
+
+// UpdateConfig performs the UpdateConfig operation safely modifying yaml nodes.
+func (h *ToolHandler) UpdateConfig(ctx context.Context, req *mcp.CallToolRequest, args UpdateConfigArgs) (*mcp.CallToolResult, any, error) {
+	if err := config.UpdateConfigKey(args.Key, args.Value); err != nil {
+		return errorResult(fmt.Sprintf("Failed to update config key %q: %v", args.Key, err))
+	}
+	
+	slog.Info("config updated via MCP tool", "key", args.Key)
+	
+	hint := fmt.Sprintf("Successfully updated configuration key '%s'. fsnotify should hot-reload this immediately.", args.Key)
+	return jsonResult(hint, map[string]any{
+		"updated_key": args.Key,
+		"status":      "SUCCESS",
+	})
 }

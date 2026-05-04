@@ -27,6 +27,8 @@ type Blueprint struct {
 type SessionState struct {
 	SessionID         string            `json:"session_id"`
 	TechStack         string            `json:"tech_stack"`
+	OriginalIdea      string            `json:"original_idea,omitzero"`
+	RefinedIdea       string            `json:"refined_idea,omitzero"`
 	Standards         []string          `json:"standards,omitzero"`             // dynamically ingested rules
 	StepStatus        map[string]string `json:"step_status"`                    // tracking progress
 	CurrentStep       string            `json:"current_step,omitzero"`
@@ -44,10 +46,7 @@ type SessionState struct {
 func NewSessionState(sessionID string) *SessionState {
 	return &SessionState{
 		SessionID:         sessionID,
-		Standards:         make([]string, 0),
 		StepStatus:        make(map[string]string),
-		AporiaResolutions: make([]string, 0),
-		Tensions:          make([]string, 0),
 		TechMapping:       make(map[string]string),
 	}
 }

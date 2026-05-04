@@ -82,8 +82,8 @@ func TestProcessDocumentGenerationErrors(t *testing.T) {
 
 func TestProcessDocumentGenerationNetworkFails(t *testing.T) {
 	// Temporarily set valid-looking URLs that will fail to connect
-	viper.Set("atlassian_url", "http://127.0.0.1:0")
-	viper.Set("atlassian_token", "dummy")
+	viper.Set("atlassian.url", "http://127.0.0.1:0")
+	viper.Set("atlassian.token", "dummy")
 	
 	bp := &db.Blueprint{
 		ComplexityScores: map[string]int{"feature1": 5},
