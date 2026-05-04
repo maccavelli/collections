@@ -60,7 +60,7 @@ func (t *Tool) Handle(ctx context.Context, req *mcp.CallToolRequest, input Conte
 		session = t.Engine.LoadSession(ctx, input.Target)
 
 		if recallAvailable {
-			if history := t.Engine.LoadCrossSessionFromRecall(ctx, "gorefactor", input.Target); history != "" {
+			if history := t.Engine.LoadCrossSessionFromRecall(ctx, "go-refactor", input.Target); history != "" {
 				if session.Metadata == nil {
 					session.Metadata = make(map[string]any)
 				}

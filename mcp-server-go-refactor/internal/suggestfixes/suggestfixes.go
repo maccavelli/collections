@@ -71,7 +71,7 @@ func (t *Tool) Handle(ctx context.Context, _ *mcp.CallToolRequest, input Suggest
 	if t.Engine != nil {
 		// Load historical fix suggestions for this package to detect recurring patterns.
 		if recallAvailable {
-			if history := t.Engine.LoadCrossSessionFromRecall(ctx, "gorefactor", input.Target); history != "" {
+			if history := t.Engine.LoadCrossSessionFromRecall(ctx, "go-refactor", input.Target); history != "" {
 				if session.Metadata == nil {
 					session.Metadata = make(map[string]any)
 				}

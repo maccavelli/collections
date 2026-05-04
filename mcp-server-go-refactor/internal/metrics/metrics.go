@@ -79,7 +79,7 @@ func (t *Tool) Handle(ctx context.Context, req *mcp.CallToolRequest, input Compl
 			}
 
 			// Phase 2: Load historical complexity metrics for Delta-tracking pass-throughs.
-			if history := t.Engine.LoadCrossSessionFromRecall(ctx, "gorefactor", input.Target); history != "" {
+			if history := t.Engine.LoadCrossSessionFromRecall(ctx, "go-refactor", input.Target); history != "" {
 				session.Metadata["historical_complexity"] = history
 			}
 
