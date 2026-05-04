@@ -128,12 +128,12 @@ func (t *GenerateReportTool) Handle(ctx context.Context, req *mcp.CallToolReques
 
 			// Attempt to aggregate go-refactor data for the same project.
 			// If go-refactor was also run, merge its output into the report.
-			grData, grErr := t.Engine.ExternalClient.AggregateSessionFromRecall(ctx, "gorefactor", input.SessionID)
+			grData, grErr := t.Engine.ExternalClient.AggregateSessionFromRecall(ctx, "go-refactor", input.SessionID)
 			if grErr == nil && len(grData) > 0 {
-				sessionData["_gorefactor"] = grData
+				sessionData["_go-refactor"] = grData
 				mode = "consolidated-combined"
 				slog.Info("generate_final_report: merged go-refactor data into combined report",
-					"gorefactor_keys", len(grData),
+					"go-refactor_keys", len(grData),
 				)
 			} else {
 				slog.Info("generate_final_report: no go-refactor data found, single-server report",
@@ -208,9 +208,9 @@ func (t *GenerateReportTool) Handle(ctx context.Context, req *mcp.CallToolReques
 	}
 
 	delete(reportData, "artifacts")
-	if grClone, ok := reportData["_gorefactor"].(map[string]any); ok {
+	if grClone, ok := reportData["_go-refactor"].(map[string]any); ok {
 		delete(grClone, "artifacts")
-		reportData["_gorefactor"] = grClone
+		reportData["_go-refactor"] = grClone
 	}
 
 	// Conflict resolution ("Rejects First") sweep using quoted value matching.
@@ -253,7 +253,7 @@ func (t *GenerateReportTool) Handle(ctx context.Context, req *mcp.CallToolReques
 			}
 		}
 		// Angle 6: Merge cross-server metrics natively
-		if gr, ok := sessionData["_gorefactor"].(map[string]any); ok {
+		if gr, ok := sessionData["_go-refactor"].(map[string]any); ok {
 			if g, ok := gr["gaps"]; ok {
 				if gapBytes, err := json.Marshal(g); err == nil {
 					var parsedGaps []models.Gap
@@ -286,7 +286,7 @@ func (t *GenerateReportTool) Handle(ctx context.Context, req *mcp.CallToolReques
 			sb.WriteString(fmt.Sprintf("### %s\n%v\n\n", name, content))
 		}
 	}
-	if gr, ok := sessionData["_gorefactor"].(map[string]any); ok {
+	if gr, ok := sessionData["_go-refactor"].(map[string]any); ok {
 		if grArts, ok := gr["artifacts"].(map[string]any); ok {
 			for name, content := range grArts {
 				artifactCount++

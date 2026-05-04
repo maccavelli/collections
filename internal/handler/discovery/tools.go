@@ -56,11 +56,11 @@ func (t *DiscoverProjectTool) Handle(ctx context.Context, req *mcp.CallToolReque
 
 	// Phase 1: Load cross-server context from go-refactor if available.
 	if recallAvailable {
-		if peerData := t.Engine.LoadCrossSessionFromRecall(ctx, "gorefactor", t.Engine.ResolvePath(input.Target)); peerData != "" {
+		if peerData := t.Engine.LoadCrossSessionFromRecall(ctx, "go-refactor", t.Engine.ResolvePath(input.Target)); peerData != "" {
 			if session.Metadata == nil {
 				session.Metadata = make(map[string]any)
 			}
-			session.Metadata["peer_context_gorefactor"] = peerData
+			session.Metadata["peer_context_go-refactor"] = peerData
 		}
 	}
 
