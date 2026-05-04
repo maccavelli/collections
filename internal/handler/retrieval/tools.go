@@ -5,13 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"time"
 
 	"mcp-server-magicskills/internal/engine"
 	"mcp-server-magicskills/internal/external"
 	"mcp-server-magicskills/internal/models"
 	"mcp-server-magicskills/internal/registry"
-	"mcp-server-magicskills/internal/telemetry"
 	"mcp-server-magicskills/internal/util"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -28,9 +26,10 @@ func (t *GetTool) Name() string { return "magicskills_get" }
 
 // GetInput defines the structural representation for the entity.
 type GetInput struct {
+	util.UniversalBaseInput
 	Name    string `json:"name" jsonschema:"The name of the skill to retrieve"`
-	Section string `json:"section" jsonschema:"Optional granular section to retrieve"`
-	Version string `json:"version" jsonschema:"Optional minimum semver bound (e.g. 1.2.0)"`
+	Section string `json:"section,omitempty" jsonschema:"Optional granular section to retrieve"`
+	Version string `json:"version,omitempty" jsonschema:"Optional minimum semver bound (e.g. 1.2.0)"`
 }
 
 func (t *GetTool) Register(s *mcp.Server) {
@@ -107,42 +106,12 @@ func (t *GetTool) Handle(ctx context.Context, request *mcp.CallToolRequest, inpu
 		summary = fmt.Sprintf("Retrieved section '%s' for skill: %s", section, input.Name)
 	}
 
-	// 🛡️ NATIVE OPTIMIZATION: Serialize and check for High-Density streaming to CSSA Ring Buffer natively
-	payloadBytes, _ := json.Marshal(output)
-	var finalData any = output
-
-	if len(payloadBytes) > 8192 && telemetry.GlobalRingBuffer != nil {
-		type ringRecord struct {
-			Timestamp   string          `json:"timestamp"`
-			Topic       string          `json:"topic"`
-			Server      string          `json:"server"`
-			MessageType string          `json:"message_type"`
-			Payload     json.RawMessage `json:"payload"`
-		}
-
-		record := ringRecord{
-			Timestamp:   time.Now().Format(time.RFC3339),
-			Topic:       "magicskills-ingestion-payload-extraction",
-			Server:      "magicskills",
-			MessageType: "CSSA_TELEMETRY",
-			Payload:     json.RawMessage(payloadBytes),
-		}
-		if ringData, err := json.Marshal(record); err == nil {
-			telemetry.GlobalRingBuffer.WriteRecord(ringData)
-			finalData = map[string]any{
-				"intent":  "CSSA_STREAMED_PAYLOAD_READY",
-				"size":    len(payloadBytes),
-				"message": "High-Density Skill payload successfully streamed to the orchestrator ring buffer natively avoiding socket I/O loops.",
-			}
-		}
-	}
-
 	return &mcp.CallToolResult{}, struct {
 		Summary string `json:"summary"`
 		Data    any    `json:"data"`
 	}{
 		Summary: summary,
-		Data:    finalData,
+		Data:    output,
 	}, nil
 }
 

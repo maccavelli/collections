@@ -22,6 +22,7 @@ func (t *DecomposeTool) Name() string { return "magicskills_decompose_task" }
 
 // DecomposeInput defines the structural representation for the entity.
 type DecomposeInput struct {
+	util.UniversalBaseInput
 	Prompt string `json:"prompt" jsonschema:"The complex task or high-level prompt to decompose into skills"`
 }
 
@@ -113,6 +114,7 @@ func (t *EfficacyTool) Name() string { return "magicskills_record_efficacy" }
 
 // EfficacyInput defines the structural representation for the entity.
 type EfficacyInput struct {
+	util.UniversalBaseInput
 	SkillName string `json:"skill_name" jsonschema:"The exact name of the skill evaluated"`
 	Target    string `json:"target,omitempty" jsonschema:"Optional target workspace root to dynamically constrain stats bounds"`
 	Success   bool   `json:"success" jsonschema:"True if the skill successfully accomplished the goal, false otherwise"`

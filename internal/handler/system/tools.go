@@ -26,6 +26,7 @@ func (t *ValidateDepsTool) Name() string { return "magicskills_validate_deps" }
 
 // ValidateDepsInput defines the structural representation for the entity.
 type ValidateDepsInput struct {
+	util.UniversalBaseInput
 	Name string `json:"name" jsonschema:"The skill name"`
 }
 
@@ -95,6 +96,7 @@ func (t *AddRootTool) Name() string { return "magicskills_add_root" }
 
 // AddRootInput defines the structural representation for the entity.
 type AddRootInput struct {
+	util.UniversalBaseInput
 	Path string `json:"path" jsonschema:"Absolute path to index"`
 }
 
@@ -149,6 +151,7 @@ func (t *GetInternalLogsTool) Name() string { return "get_internal_logs" }
 
 // LogsInput defines the structural representation for the entity.
 type LogsInput struct {
+	util.UniversalBaseInput
 	MaxLines int `json:"max_lines" jsonschema:"Max log lines to return (default 25)."`
 }
 
@@ -184,7 +187,9 @@ type HealthTool struct {
 func (t *HealthTool) Name() string { return "magicskills_health" }
 
 // HealthInput defines the structural representation for the entity.
-type HealthInput struct{}
+type HealthInput struct {
+	util.UniversalBaseInput
+}
 
 func (t *HealthTool) Register(s *mcp.Server) {
 	util.HardenedAddTool(s, &mcp.Tool{

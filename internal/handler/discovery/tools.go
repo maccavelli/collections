@@ -64,6 +64,7 @@ func (t *MatchTool) Name() string { return "magicskills_match" }
 
 // MatchInput defines the structural representation for the entity.
 type MatchInput struct {
+	util.UniversalBaseInput
 	Intent   string `json:"intent" jsonschema:"Your goal"`
 	Category string `json:"category,omitempty" jsonschema:"Optional category or domain filter (e.g. 'go', 'python')"`
 	Target   string `json:"target,omitempty" jsonschema:"Optional target workspace root to dynamically constrain index bounds"`

@@ -23,6 +23,7 @@ func (t *UpsertTool) Name() string { return "magicskills_upsert" }
 
 // UpsertInput defines the structural representation for the entity.
 type UpsertInput struct {
+	util.UniversalBaseInput
 	Name          string   `json:"name" jsonschema:"The formal name of the skill"`
 	Description   string   `json:"description" jsonschema:"Brief description of what the skill does"`
 	ContextDomain string   `json:"context_domain,omitempty" jsonschema:"Optional domain classification (e.g. 'go', 'python')"`

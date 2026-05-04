@@ -13,7 +13,7 @@ func TestAddRoot_PanicMock(t *testing.T) {
 	eng, _ := engine.NewEngine(nil, "")
 	close(eng.ReadyCh)
 	tool := &AddRootTool{Engine: eng, Scanner: nil}
-	tool.Handle(context.Background(), &mcp.CallToolRequest{}, AddRootInput{"/tmp"})
+	tool.Handle(context.Background(), &mcp.CallToolRequest{}, AddRootInput{Path: "/tmp"})
 }
 
 func TestGetLogs_PanicMock(t *testing.T) {
