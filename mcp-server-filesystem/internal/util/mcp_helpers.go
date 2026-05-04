@@ -18,6 +18,12 @@ type NopWriteCloser struct{ io.Writer }
 
 func (n NopWriteCloser) Close() error { return nil }
 
+// UniversalBaseInput defines the standard parameters required for all utility tool calls,
+// ensuring telemetry correlation via SessionID without disrupting tool-specific parameters.
+type UniversalBaseInput struct {
+	SessionID string `json:"session_id,omitempty" jsonschema:"Optional tracking ID"`
+}
+
 // HardenedAddTool registers an MCP tool with the server while automatically applying a recovery middleware.
 // It uses generics to match the official SDK's AddTool signature while providing a panic-safe execution environment.
 func HardenedAddTool[In any, Out any](

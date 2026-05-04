@@ -6,7 +6,7 @@ import (
 )
 
 // Version is the current version of the Filesystem MCP server.
-var Version = "v4.2.10"
+var Version = "v4.3.2"
 
 func printVersion() {
 	fmt.Fprintf(os.Stderr, "mcp-server-filesystem version %s\n", Version)

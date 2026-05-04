@@ -35,6 +35,7 @@ func (t *ReadTextFileTool) Register(s *mcp.Server) {
 
 // ReadTextFileInput is the input schema for read_text_file.
 type ReadTextFileInput struct {
+	util.UniversalBaseInput
 	Path string `json:"path" jsonschema:"File path to read"`
 	Tail *int   `json:"tail,omitempty" jsonschema:"If provided, returns only the last N lines"`
 	Head *int   `json:"head,omitempty" jsonschema:"If provided, returns only the first N lines"`
@@ -92,6 +93,7 @@ func (t *ReadMediaFileTool) Register(s *mcp.Server) {
 
 // ReadMediaFileInput is the schema for read_media_file.
 type ReadMediaFileInput struct {
+	util.UniversalBaseInput
 	Path string `json:"path" jsonschema:"File path to read"`
 }
 
@@ -159,6 +161,7 @@ func (t *ReadMultipleFilesTool) Register(s *mcp.Server) {
 
 // ReadMultipleFilesInput is the schema for read_multiple_files.
 type ReadMultipleFilesInput struct {
+	util.UniversalBaseInput
 	Paths []string `json:"paths" jsonschema:"Array of file paths to read" jsonschema_extras:"minItems=1"`
 }
 
@@ -202,6 +205,7 @@ func (t *WriteFileTool) Register(s *mcp.Server) {
 
 // WriteFileInput is the schema for write_file.
 type WriteFileInput struct {
+	util.UniversalBaseInput
 	Path    string `json:"path" jsonschema:"File path to write"`
 	Content string `json:"content" jsonschema:"Content to write"`
 }
@@ -242,6 +246,7 @@ func (t *EditFileTool) Register(s *mcp.Server) {
 
 // EditFileInput is the schema for edit_file.
 type EditFileInput struct {
+	util.UniversalBaseInput
 	Path   string            `json:"path" jsonschema:"File path to edit"`
 	Edits  []engine.FileEdit `json:"edits" jsonschema:"Array of edit operations"`
 	DryRun bool              `json:"dryRun,omitzero" jsonschema:"Preview changes using git-style diff format"`
@@ -284,6 +289,7 @@ func (t *CreateDirectoryTool) Register(s *mcp.Server) {
 
 // SinglePathInput is a schema for tools that take only a path.
 type SinglePathInput struct {
+	util.UniversalBaseInput
 	Path string `json:"path" jsonschema:"Directory or file path"`
 }
 
@@ -367,6 +373,7 @@ func (t *ListDirectoryWithSizesTool) Register(s *mcp.Server) {
 
 // ListDirectoryWithSizesInput is the schema.
 type ListDirectoryWithSizesInput struct {
+	util.UniversalBaseInput
 	Path   string `json:"path" jsonschema:"Directory path"`
 	SortBy string `json:"sortBy,omitzero" jsonschema:"Sort entries by 'name' or 'size',enum=name|size"`
 }
@@ -436,6 +443,7 @@ func (t *DirectoryTreeTool) Register(s *mcp.Server) {
 
 // DirectoryTreeInput is the schema.
 type DirectoryTreeInput struct {
+	util.UniversalBaseInput
 	Path            string   `json:"path" jsonschema:"Root directory path"`
 	ExcludePatterns []string `json:"excludePatterns,omitempty" jsonschema:"Glob patterns to exclude"`
 }
@@ -486,6 +494,7 @@ func (t *MoveFileTool) Register(s *mcp.Server) {
 
 // MoveFileInput is the schema for move_file.
 type MoveFileInput struct {
+	util.UniversalBaseInput
 	Source      string `json:"source" jsonschema:"Source path"`
 	Destination string `json:"destination" jsonschema:"Destination path"`
 }
@@ -532,6 +541,7 @@ func (t *SearchFilesTool) Register(s *mcp.Server) {
 
 // SearchFilesInput is the schema.
 type SearchFilesInput struct {
+	util.UniversalBaseInput
 	Path            string   `json:"path" jsonschema:"Root search path"`
 	Pattern         string   `json:"pattern" jsonschema:"Glob pattern to match"`
 	ExcludePatterns []string `json:"excludePatterns,omitempty" jsonschema:"Glob patterns to exclude"`
@@ -623,7 +633,9 @@ func (t *ListAllowedDirectoriesTool) Register(s *mcp.Server) {
 }
 
 // EmptyInput requires no parameters.
-type EmptyInput struct{}
+type EmptyInput struct {
+	util.UniversalBaseInput
+}
 
 // Handle executes the filesystem tool logic.
 func (t *ListAllowedDirectoriesTool) Handle(ctx context.Context, req *mcp.CallToolRequest, input EmptyInput) (*mcp.CallToolResult, any, error) {
@@ -648,6 +660,7 @@ func (t *CopyPathTool) Register(s *mcp.Server) {
 }
 
 type CopyPathInput struct {
+	util.UniversalBaseInput
 	Source      string `json:"source" jsonschema:"Source path to copy"`
 	Destination string `json:"destination" jsonschema:"Destination path"`
 }
