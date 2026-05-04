@@ -37,7 +37,7 @@ func (p *AnthropicProvider) Name() string {
 
 // Generate sends a prompt to Anthropic's Messages API and returns the generated text.
 func (p *AnthropicProvider) Generate(ctx context.Context, prompt string) (string, error) {
-	reqBody, _ := json.Marshal(map[string]interface{}{
+	reqBody, _ := json.Marshal(map[string]any{
 		"model":      p.model,
 		"max_tokens": 1024,
 		"messages": []map[string]string{

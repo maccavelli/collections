@@ -78,12 +78,24 @@ func GatherInfo(maxDiffBytes int) (*Info, error) {
 	}
 
 	var stats []string
-	if counts.yaml > 0 { stats = append(stats, fmt.Sprintf("YAML: %d", counts.yaml)) }
-	if counts.json > 0 { stats = append(stats, fmt.Sprintf("JSON: %d", counts.json)) }
-	if counts.tf > 0 { stats = append(stats, fmt.Sprintf("Terraform: %d", counts.tf)) }
-	if counts.ci > 0 { stats = append(stats, fmt.Sprintf("CI/CD: %d", counts.ci)) }
-	if counts.script > 0 { stats = append(stats, fmt.Sprintf("Scripts: %d", counts.script)) }
-	if counts.other > 0 { stats = append(stats, fmt.Sprintf("Other: %d", counts.other)) }
+	if counts.yaml > 0 {
+		stats = append(stats, fmt.Sprintf("YAML: %d", counts.yaml))
+	}
+	if counts.json > 0 {
+		stats = append(stats, fmt.Sprintf("JSON: %d", counts.json))
+	}
+	if counts.tf > 0 {
+		stats = append(stats, fmt.Sprintf("Terraform: %d", counts.tf))
+	}
+	if counts.ci > 0 {
+		stats = append(stats, fmt.Sprintf("CI/CD: %d", counts.ci))
+	}
+	if counts.script > 0 {
+		stats = append(stats, fmt.Sprintf("Scripts: %d", counts.script))
+	}
+	if counts.other > 0 {
+		stats = append(stats, fmt.Sprintf("Other: %d", counts.other))
+	}
 	info.Stats = strings.Join(stats, ", ")
 
 	// 2. Get the actual unified diff (truncated to avoid blowing LLM token limits)
@@ -107,8 +119,8 @@ func IsCommitMsgEmpty(path string) bool {
 		return true
 	}
 	// Simple check: if file has non-comment lines, it's not empty
-	lines := strings.Split(string(data), "\n")
-	for _, l := range lines {
+	lines := strings.SplitSeq(string(data), "\n")
+	for l := range lines {
 		trimmed := strings.TrimSpace(l)
 		if trimmed != "" && !strings.HasPrefix(trimmed, "#") {
 			return false

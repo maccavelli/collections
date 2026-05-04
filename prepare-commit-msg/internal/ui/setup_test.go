@@ -32,9 +32,9 @@ func TestRunSetup_Success(t *testing.T) {
 
 	oldAsk := surveyAskOne
 	defer func() { surveyAskOne = oldAsk }()
-	
+
 	askCalls := 0
-	surveyAskOne = func(p survey.Prompt, response interface{}, opts ...survey.AskOpt) error {
+	surveyAskOne = func(p survey.Prompt, response any, opts ...survey.AskOpt) error {
 		askCalls++
 		switch askCalls {
 		case 1:
@@ -67,17 +67,17 @@ func TestRunSetup_Errors(t *testing.T) {
 
 	oldAsk := surveyAskOne
 	defer func() { surveyAskOne = oldAsk }()
-	
+
 	// Error on provider choice
-	surveyAskOne = func(p survey.Prompt, response interface{}, opts ...survey.AskOpt) error {
+	surveyAskOne = func(p survey.Prompt, response any, opts ...survey.AskOpt) error {
 		return fmt.Errorf("provider select failed")
 	}
 	if err := RunSetup(context.Background(), conf); err == nil {
 		t.Error("expected error")
 	}
-	
+
 	// Error on API key input
-	surveyAskOne = func(p survey.Prompt, response interface{}, opts ...survey.AskOpt) error {
+	surveyAskOne = func(p survey.Prompt, response any, opts ...survey.AskOpt) error {
 		if _, ok := p.(*survey.Select); ok && p.(*survey.Select).Message == "Choose LLM Provider:" {
 			*response.(*string) = "openai"
 			return nil
@@ -104,9 +104,9 @@ func TestRunSetup_FallbackAndOtherProviders(t *testing.T) {
 
 	oldAsk := surveyAskOne
 	defer func() { surveyAskOne = oldAsk }()
-	
+
 	askCalls := 0
-	surveyAskOne = func(p survey.Prompt, response interface{}, opts ...survey.AskOpt) error {
+	surveyAskOne = func(p survey.Prompt, response any, opts ...survey.AskOpt) error {
 		askCalls++
 		switch askCalls {
 		case 1:
@@ -129,7 +129,7 @@ func TestRunSetup_FallbackAndOtherProviders(t *testing.T) {
 	if conf.Providers["anthropic"].APIKey != "manual-key" {
 		t.Errorf("expected manual-key")
 	}
-	
+
 	// Verify fallbacks were populated // 111.4
 	fb := conf.Providers["anthropic"].FallbackModels
 	if len(fb) == 0 {
@@ -151,7 +151,7 @@ func TestRunSetup_CoverageBranches(t *testing.T) {
 	osGetenv = func(k string) string { return "" }
 
 	// Test openai path (covers line 82)
-	surveyAskOne = func(p survey.Prompt, response interface{}, opts ...survey.AskOpt) error {
+	surveyAskOne = func(p survey.Prompt, response any, opts ...survey.AskOpt) error {
 		switch pt := p.(type) {
 		case *survey.Select:
 			if pt.Message == "Choose LLM Provider:" {
@@ -167,7 +167,7 @@ func TestRunSetup_CoverageBranches(t *testing.T) {
 	_ = RunSetup(context.Background(), conf)
 
 	// Test gemini with standard model (covers line 88 and fallback exclusion)
-	surveyAskOne = func(p survey.Prompt, response interface{}, opts ...survey.AskOpt) error {
+	surveyAskOne = func(p survey.Prompt, response any, opts ...survey.AskOpt) error {
 		switch pt := p.(type) {
 		case *survey.Select:
 			if pt.Message == "Choose LLM Provider:" {
@@ -183,7 +183,7 @@ func TestRunSetup_CoverageBranches(t *testing.T) {
 	_ = RunSetup(context.Background(), conf)
 
 	// Test 'Other' model input error
-	surveyAskOne = func(p survey.Prompt, response interface{}, opts ...survey.AskOpt) error {
+	surveyAskOne = func(p survey.Prompt, response any, opts ...survey.AskOpt) error {
 		switch pt := p.(type) {
 		case *survey.Select:
 			if pt.Message == "Choose LLM Provider:" {

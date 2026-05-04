@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -33,8 +34,8 @@ func (p *GeminiProvider) Name() string { return "gemini" }
 
 // Generate generates a commit message using the Gemini API based on the provided prompt string.
 func (p *GeminiProvider) Generate(ctx context.Context, prompt string) (string, error) {
-	reqBody, _ := json.Marshal(map[string]interface{}{
-		"contents": []map[string]interface{}{
+	reqBody, _ := json.Marshal(map[string]any{
+		"contents": []map[string]any{
 			{
 				"parts": []map[string]string{
 					{"text": prompt},
@@ -124,13 +125,7 @@ func (p *GeminiProvider) DiscoverModels(ctx context.Context) ([]string, error) {
 			continue
 		}
 
-		canGenerate := false
-		for _, method := range m.SupportedGenerationMethods {
-			if method == "generateContent" {
-				canGenerate = true
-				break
-			}
-		}
+		canGenerate := slices.Contains(m.SupportedGenerationMethods, "generateContent")
 		if canGenerate {
 			candidates = append(candidates, id)
 		}
@@ -193,16 +188,15 @@ func (p *GeminiProvider) DiscoverModels(ctx context.Context) ([]string, error) {
 
 	// TARGET: Exactly 3 models total (1 Pro + 2 Flash/Lite)
 	output := []string{}
-	
+
 	// 1. Get top 1 Pro
 	if len(finalPro) > 0 {
 		output = append(output, finalPro[0])
 		finalPro = finalPro[1:]
 	}
-	
+
 	// 2. Get up to 2 Flash
-	fLimit := 2
-	if len(finalFlash) < fLimit { fLimit = len(finalFlash) }
+	fLimit := min(len(finalFlash), 2)
 	output = append(output, finalFlash[:fLimit]...)
 	if len(finalFlash) > fLimit {
 		finalFlash = finalFlash[fLimit:]
