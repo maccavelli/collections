@@ -21,6 +21,12 @@ type NopWriteCloser struct{ io.Writer }
 
 func (n NopWriteCloser) Close() error { return nil }
 
+// UniversalBaseInput defines the standard parameters required for all utility tool calls,
+// ensuring telemetry correlation via SessionID without disrupting tool-specific parameters.
+type UniversalBaseInput struct {
+	SessionID string `json:"session_id,omitempty" jsonschema:"Optional tracking ID"`
+}
+
 // contextKey is an unexported type for context keys in this package.
 type contextKey string
 

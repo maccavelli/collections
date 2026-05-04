@@ -7,6 +7,7 @@ require (
 	github.com/blevesearch/bleve/v2 v2.5.7
 	github.com/dgraph-io/badger/v4 v4.9.1
 	github.com/fsnotify/fsnotify v1.9.0
+	github.com/klauspost/compress v1.18.0
 	github.com/modelcontextprotocol/go-sdk v1.4.1
 	github.com/pterm/pterm v0.12.83
 	github.com/sahilm/fuzzy v0.1.1
@@ -55,7 +56,6 @@ require (
 	github.com/gookit/color v1.6.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/json-iterator/go v0.0.0-20171115153421-f7279a603ede // indirect
-	github.com/klauspost/compress v1.18.0 // indirect
 	github.com/kylelemons/godebug v1.1.0 // indirect
 	github.com/lithammer/fuzzysearch v1.1.8 // indirect
 	github.com/lufia/plan9stats v0.0.0-20211012122336-39d0f177ccd0 // indirect

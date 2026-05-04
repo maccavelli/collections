@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"math/rand/v2"
 	"os"
+	"runtime"
 	"slices"
 	"sort"
 	"strings"
@@ -146,6 +147,12 @@ func NewMemoryStore(ctx context.Context, dbPath string, encryptionKey string, se
 		searchLimit:  searchLimit,
 		maxBatchSize: batchCfg.MaxBatchSize,
 	}
+
+	// 🛡️ Deterministic mmap cleanup: Ensure BadgerDB unmaps all memory natively upon struct GC
+	runtime.AddCleanup(s, func(b *badger.DB) {
+		slog.Warn("MemoryStore garbage collected, forcefully closing BadgerDB mmaps")
+		_ = b.Close()
+	}, db)
 
 	// Start background maintenance
 	go func(ctx context.Context) {
@@ -596,7 +603,7 @@ func (s *MemoryStore) Save(ctx context.Context, title, key, content, category st
 			rec.CreatedAt = now
 		}
 
-		data, err := json.Marshal(rec)
+		data, err := marshalRecord(rec)
 		if err != nil {
 			return err
 		}
@@ -668,7 +675,7 @@ func (s *MemoryStore) updateRecordLocked(_ context.Context, key, title, content,
 			CreatedAt: createdAt,
 			UpdatedAt: now,
 		}
-		data, err := json.Marshal(rec)
+		data, err := marshalRecord(rec)
 		if err != nil {
 			return err
 		}
@@ -884,7 +891,7 @@ func (s *MemoryStore) VacuumSessions(ctx context.Context, targetOutcome string, 
 					rec.Content = fmt.Sprintf(`{"status": "tombstoned", "original_outcome": %q, "vacuumed_at": %q, "reason": "semantic pruning"}`, targetOutcome, now.Format(time.RFC3339))
 					rec.UpdatedAt = now
 
-					data, err := json.Marshal(rec)
+					data, err := marshalRecord(rec)
 					if err != nil {
 						return err
 					}
@@ -1970,7 +1977,7 @@ func (s *MemoryStore) SaveBatch(ctx context.Context, entries []BatchEntry) (stor
 				}
 			}
 
-			data, err := json.Marshal(rec)
+			data, err := marshalRecord(rec)
 			if err != nil {
 				return fmt.Errorf("failed to marshal record for key %q: %w", e.Key, err)
 			}
@@ -2742,20 +2749,22 @@ func (m *MemoryStore) ExportJSONL(ctx context.Context, safePath string, filterCa
 				continue
 			}
 
-			var rec Record
+			var rec *Record
 			err := item.Value(func(v []byte) error {
-				return json.Unmarshal(v, &rec)
+				var mErr error
+				rec, mErr = migrateRecord(v)
+				return mErr
 			})
 			if err != nil {
 				slog.Warn("Failed to unmarshal record during export", "key", k, "error", err)
 				continue
 			}
 
-			if !matchesExportFilters(&rec, filterCategory, filterTags) {
+			if !matchesExportFilters(rec, filterCategory, filterTags) {
 				continue
 			}
 
-			if err := writeJSONLRecord(f, k, &rec); err != nil {
+			if err := writeJSONLRecord(f, k, rec); err != nil {
 				return err
 			}
 			count++

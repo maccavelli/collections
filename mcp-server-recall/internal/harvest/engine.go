@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unique"
 
 	"golang.org/x/tools/go/ast/inspector"
 	"golang.org/x/tools/go/packages"
@@ -304,22 +305,22 @@ func (e *Engine) resolveSymbols(ctx context.Context, p *packages.Package, allExa
 		}
 
 		sym := HarvestedSymbol{
-			PkgPath: p.PkgPath,
-			Name:    name,
+			PkgPath: unique.Make(p.PkgPath).Value(),
+			Name:    unique.Make(name).Value(),
 		}
 
 		if fn, ok := obj.(*types.Func); ok {
-			sym.Signature = fn.Type().String()
+			sym.Signature = unique.Make(fn.Type().String()).Value()
 			sym.SymbolType = "FUNC"
 			if sig, ok := fn.Type().(*types.Signature); ok && sig.Recv() != nil {
-				sym.Receiver = sig.Recv().Type().String()
+				sym.Receiver = unique.Make(sig.Recv().Type().String()).Value()
 				sym.SymbolType = "METHOD"
 			}
 			if sig, ok := fn.Type().(*types.Signature); ok {
 				sym.Dependencies = e.extractSignatureDeps(sig)
 			}
 		} else if typ, ok := obj.(*types.TypeName); ok {
-			sym.Signature = typ.Type().String()
+			sym.Signature = unique.Make(typ.Type().String()).Value()
 			if named, ok := typ.Type().(*types.Named); ok {
 				sym.Interfaces = e.detectInterfaces(ctx, named)
 				if _, isIface := named.Underlying().(*types.Interface); isIface {
@@ -334,13 +335,13 @@ func (e *Engine) resolveSymbols(ctx context.Context, p *packages.Package, allExa
 				sym.SymbolType = "TYPE"
 			}
 		} else if _, ok := obj.(*types.Const); ok {
-			sym.Signature = obj.Type().String()
+			sym.Signature = unique.Make(obj.Type().String()).Value()
 			sym.SymbolType = "CONST"
 		} else if _, ok := obj.(*types.Var); ok {
-			sym.Signature = obj.Type().String()
+			sym.Signature = unique.Make(obj.Type().String()).Value()
 			sym.SymbolType = "VAR"
 		} else {
-			sym.Signature = obj.Type().String()
+			sym.Signature = unique.Make(obj.Type().String()).Value()
 			sym.SymbolType = "UNKNOWN"
 		}
 
@@ -374,15 +375,15 @@ func buildDocMap(syntax []*ast.File) map[string]string {
 		switch d := n.(type) {
 		case *ast.FuncDecl:
 			if d.Doc != nil {
-				docMap[d.Name.Name] = d.Doc.Text()
+				docMap[unique.Make(d.Name.Name).Value()] = d.Doc.Text()
 			}
 		case *ast.GenDecl:
 			for _, spec := range d.Specs {
 				if ts, ok := spec.(*ast.TypeSpec); ok {
 					if d.Doc != nil {
-						docMap[ts.Name.Name] = d.Doc.Text()
+						docMap[unique.Make(ts.Name.Name).Value()] = d.Doc.Text()
 					} else if ts.Doc != nil {
-						docMap[ts.Name.Name] = ts.Doc.Text()
+						docMap[unique.Make(ts.Name.Name).Value()] = ts.Doc.Text()
 					}
 				}
 			}
@@ -405,7 +406,7 @@ func (e *Engine) detectInterfaces(ctx context.Context, named *types.Named) []str
 	for ifaceName, pkgName := range targets {
 		if ifaceType := e.findIface(ctx, pkgName, strings.Split(ifaceName, ".")[1]); ifaceType != nil {
 			if types.Implements(named, ifaceType) || types.Implements(ptrMatched, ifaceType) {
-				impls = append(impls, ifaceName)
+				impls = append(impls, unique.Make(ifaceName).Value())
 			}
 		}
 	}
@@ -466,7 +467,7 @@ func (e *Engine) extractDeps(t types.Type, deps map[string]bool) {
 	case *types.Named:
 		if t.Obj() != nil && t.Obj().Pkg() != nil {
 			dep := fmt.Sprintf("%s.%s", t.Obj().Pkg().Name(), t.Obj().Name())
-			deps[dep] = true
+			deps[unique.Make(dep).Value()] = true
 		}
 	case *types.Pointer:
 		e.extractDeps(t.Elem(), deps)

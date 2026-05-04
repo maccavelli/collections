@@ -40,20 +40,20 @@ type HarvestConfig struct {
 
 // State holds the actual configuration values mapped to yaml.
 type State struct {
-	Name             string        `mapstructure:"name"`
-	Version          string        `mapstructure:"version"`
-	DBPath           string        `mapstructure:"dbPath"`
-	ExportDir        string        `mapstructure:"exportDir"`
-	SearchEnabled    bool          `mapstructure:"searchEnabled"`
-	SearchLimit      int           `mapstructure:"searchLimit"`
-	EncryptionKey    string        `mapstructure:"encryptionKey"`
-	DedupThreshold   float64       `mapstructure:"dedupThreshold"`
-	APIPort          int           `mapstructure:"apiPort"`
-	Harvest          HarvestConfig `mapstructure:"harvest"`
-	SafeTools        []string      `mapstructure:"safeTools"`
+	Name              string        `mapstructure:"name"`
+	Version           string        `mapstructure:"version"`
+	DBPath            string        `mapstructure:"dbPath"`
+	ExportDir         string        `mapstructure:"exportDir"`
+	SearchEnabled     bool          `mapstructure:"searchEnabled"`
+	SearchLimit       int           `mapstructure:"searchLimit"`
+	EncryptionKey     string        `mapstructure:"encryptionKey"`
+	DedupThreshold    float64       `mapstructure:"dedupThreshold"`
+	APIPort           int           `mapstructure:"apiPort"`
+	Harvest           HarvestConfig `mapstructure:"harvest"`
+	SafeTools         []string      `mapstructure:"safeTools"`
 	SafeToolsInternal []string      `mapstructure:"safeToolsInternal"`
-	Batch            BatchConfig   `mapstructure:"batchsettings"`
-	SessionPurgeDays int           `mapstructure:"sessionpurgedays"`
+	Batch             BatchConfig   `mapstructure:"batchsettings"`
+	SessionPurgeDays  int           `mapstructure:"sessionpurgedays"`
 }
 
 // Config safely wraps Viper state with an RWMutex for hot-reloads.

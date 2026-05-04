@@ -41,7 +41,7 @@ func renderSummary(snapshot map[string]any, logs []TelemetryLog) string {
 		if len(tail) > 12 {
 			tail = tail[len(tail)-12:]
 		}
-		
+
 		td := pterm.TableData{
 			{"Time", "Lvl", "Message", "Target"},
 		}
@@ -52,20 +52,24 @@ func renderSummary(snapshot map[string]any, logs []TelemetryLog) string {
 			} else if l.Tool != "" {
 				target = l.Tool
 			}
-			
+
 			timeStr := l.Time
 			if len(timeStr) > 19 {
 				timeStr = timeStr[11:19]
 			}
-			
+
 			lvl := l.Level
 			switch lvl {
-			case "INFO": lvl = pterm.Green("INF")
-			case "DEBUG": lvl = pterm.Gray("DBG")
-			case "WARN": lvl = pterm.Yellow("WRN")
-			case "ERROR": lvl = pterm.Red("ERR")
+			case "INFO":
+				lvl = pterm.Green("INF")
+			case "DEBUG":
+				lvl = pterm.Gray("DBG")
+			case "WARN":
+				lvl = pterm.Yellow("WRN")
+			case "ERROR":
+				lvl = pterm.Red("ERR")
 			}
-			
+
 			if len(target) > 25 {
 				target = "..." + target[len(target)-22:]
 			}
@@ -73,7 +77,7 @@ func renderSummary(snapshot map[string]any, logs []TelemetryLog) string {
 			if len(msg) > 60 {
 				msg = msg[:57] + "..."
 			}
-			
+
 			td = append(td, []string{timeStr, lvl, msg, target})
 		}
 		logContent, _ = pterm.DefaultTable.WithHasHeader().WithData(td).Srender()
@@ -140,7 +144,7 @@ func renderPtermDashboard(snapshot map[string]any, logs []TelemetryLog, uiState 
 	navBox := pterm.DefaultBox.WithTitle("Navigation").Sprint(strings.Join(navItems, "\n"))
 
 	var contentBox string
-	
+
 	switch tabIndex {
 	case 1:
 		contentBox = renderSummary(snapshot, logs)
@@ -166,12 +170,12 @@ func renderPtermDashboard(snapshot map[string]any, logs []TelemetryLog, uiState 
 			}
 			st, _ = pterm.DefaultTable.WithHasHeader().WithData(td).Srender()
 		}
-		
+
 		qpsPanel := loadingText
 		if an, ok := snapshot["analytics"].(map[string]any); ok {
 			qpsPanel = fmt.Sprintf("Average RPC Latency: %v ms", an["avg_rpc_latency_ms"])
 		}
-		
+
 		contentBox = mergeVertical(
 			pterm.DefaultBox.WithTitle("Semantic Search Engine").Sprint(st),
 			pterm.DefaultBox.WithTitle("Search Latency & QPS").Sprint(qpsPanel),
@@ -190,7 +194,7 @@ func renderPtermDashboard(snapshot map[string]any, logs []TelemetryLog, uiState 
 			}
 			stAst, _ = pterm.DefaultTable.WithHasHeader().WithData(td).Srender()
 		}
-		
+
 		stTax := loadingText
 		if tx, ok := snapshot["taxonomy"].(map[string]any); ok {
 			td := pterm.TableData{
@@ -202,7 +206,7 @@ func renderPtermDashboard(snapshot map[string]any, logs []TelemetryLog, uiState 
 			}
 			stTax, _ = pterm.DefaultTable.WithHasHeader().WithData(td).Srender()
 		}
-		
+
 		contentBox = mergeVertical(
 			renderTextTab("AST Ingestion Pipeline", stAst),
 			renderTextTab("Taxonomy & Tag Distribution", stTax),

@@ -78,7 +78,7 @@ func (rs *MCPRecallServer) handleListStandardsCategories(ctx context.Context, _ 
 	}, nil, nil
 }
 
-func (rs *MCPRecallServer) handleSearchStandards(ctx context.Context, req *mcp.CallToolRequest, args SearchStandardsInput) (*mcp.CallToolResult, any, error) {
+func (rs *MCPRecallServer) handleSearchStandards(ctx context.Context, _ *mcp.CallToolRequest, args SearchStandardsInput) (*mcp.CallToolResult, any, error) {
 
 	if args.Limit <= 0 {
 		args.Limit = 20

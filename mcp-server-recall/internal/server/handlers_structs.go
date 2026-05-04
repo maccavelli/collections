@@ -1,8 +1,13 @@
 package server
 
-import "mcp-server-recall/internal/memory"
+import (
+	"mcp-server-recall/internal/memory"
+	"mcp-server-recall/internal/util"
+)
 
 type SearchEcosystemInput struct {
+	util.UniversalBaseInput
+
 	Query      string `json:"query,omitempty"`
 	Package    string `json:"package,omitempty"`
 	SymbolType string `json:"symbol_type,omitempty"`
@@ -13,29 +18,41 @@ type SearchEcosystemInput struct {
 }
 
 type GetEcosystemInput struct {
+	util.UniversalBaseInput
+
 	Key string `json:"key"`
 }
 
 type DeleteMemoriesInput struct {
+	util.UniversalBaseInput
+
 	Key      string `json:"key"`
 	Category string `json:"category,omitempty"`
 	All      bool   `json:"all,omitempty"`
 }
 
 type HarvestStandardsInput struct {
+	util.UniversalBaseInput
+
 	TargetPath string `json:"target_path"`
 }
 
 type HarvestProjectsInput struct {
+	util.UniversalBaseInput
+
 	TargetPath string `json:"target_path"`
 }
 
 type ListProjectCategoriesInput struct {
+	util.UniversalBaseInput
+
 	Package    string `json:"package,omitempty"`
 	SymbolType string `json:"symbol_type,omitempty"`
 }
 
 type SearchProjectsInput struct {
+	util.UniversalBaseInput
+
 	Query      string `json:"query,omitempty"`
 	Package    string `json:"package,omitempty"`
 	SymbolType string `json:"symbol_type,omitempty"`
@@ -46,10 +63,14 @@ type SearchProjectsInput struct {
 }
 
 type GetProjectInput struct {
+	util.UniversalBaseInput
+
 	Key string `json:"key"`
 }
 
 type DeleteProjectsInput struct {
+	util.UniversalBaseInput
+
 	Category       string `json:"category,omitempty"`
 	Package        string `json:"package,omitempty"`
 	CategoryNumber int    `json:"category_number,omitempty"`
@@ -57,11 +78,15 @@ type DeleteProjectsInput struct {
 }
 
 type ListStandardsCategoriesInput struct {
+	util.UniversalBaseInput
+
 	Package    string `json:"package,omitempty"`
 	SymbolType string `json:"symbol_type,omitempty"`
 }
 
 type SearchStandardsInput struct {
+	util.UniversalBaseInput
+
 	Query      string `json:"query,omitempty"`
 	Package    string `json:"package,omitempty"`
 	SymbolType string `json:"symbol_type,omitempty"`
@@ -72,10 +97,14 @@ type SearchStandardsInput struct {
 }
 
 type GetStandardInput struct {
+	util.UniversalBaseInput
+
 	Key string `json:"key"`
 }
 
 type DeleteStandardsInput struct {
+	util.UniversalBaseInput
+
 	Category       string `json:"category,omitempty"`
 	Package        string `json:"package,omitempty"`
 	CategoryNumber int    `json:"category_number,omitempty"`
@@ -83,18 +112,26 @@ type DeleteStandardsInput struct {
 }
 
 type ListCategoriesInput struct {
+	util.UniversalBaseInput
+
 	Filename string `json:"filename,omitempty"`
 }
 
 type IngestFilesInput struct {
+	util.UniversalBaseInput
+
 	Path string `json:"path"`
 }
 
 type HarvestInput struct {
+	util.UniversalBaseInput
+
 	TargetDomain string `json:"target_domain"`
 }
 
 type ContextVacuumInput struct {
+	util.UniversalBaseInput
+
 	Namespace        string  `json:"namespace"`
 	TargetOutcome    string  `json:"target_outcome"`
 	FlattenThreshold int     `json:"flatten_threshold"`
@@ -105,10 +142,14 @@ type ContextVacuumInput struct {
 }
 
 type GetLogsInput struct {
+	util.UniversalBaseInput
+
 	MaxLines int `json:"max_lines"`
 }
 
 type RememberInput struct {
+	util.UniversalBaseInput
+
 	Title          string   `json:"title"`
 	Key            string   `json:"key"`
 	Value          string   `json:"value"`
@@ -118,6 +159,8 @@ type RememberInput struct {
 }
 
 type SaveSessionsInput struct {
+	util.UniversalBaseInput
+
 	ServerID     string `json:"server_id"`
 	ProjectID    string `json:"project_id"`
 	Outcome      string `json:"outcome"`
@@ -129,16 +172,22 @@ type SaveSessionsInput struct {
 }
 
 type RecallInput struct {
+	util.UniversalBaseInput
+
 	Key string `json:"key"`
 }
 
 type SearchMemoriesInput struct {
+	util.UniversalBaseInput
+
 	Query string `json:"query"`
 	Tag   string `json:"tag"`
 	Limit int    `json:"limit"`
 }
 
 type SearchSessionsInput struct {
+	util.UniversalBaseInput
+
 	Query        string `json:"query,omitempty"`
 	ProjectID    string `json:"project_id,omitempty"`
 	ServerID     string `json:"server_id,omitempty"`
@@ -148,12 +197,18 @@ type SearchSessionsInput struct {
 }
 
 type RecallRecentInput struct {
+	util.UniversalBaseInput
+
 	Count int `json:"count"`
 }
 
-type ListMemoriesInput struct {}
+type ListMemoriesInput struct {
+	util.UniversalBaseInput
+}
 
 type ListSessionsInput struct {
+	util.UniversalBaseInput
+
 	ProjectID       string `json:"project_id,omitempty"`
 	ServerID        string `json:"server_id,omitempty"`
 	Outcome         string `json:"outcome,omitempty"`
@@ -163,32 +218,51 @@ type ListSessionsInput struct {
 }
 
 type GetSessionsInput struct {
+	util.UniversalBaseInput
+
 	Key       string `json:"key,omitempty"`
 	SessionID string `json:"session_id,omitempty"`
 }
 
 type DeleteSessionsInput struct {
+	util.UniversalBaseInput
+
 	Key       string `json:"key,omitempty"`
 	SessionID string `json:"session_id,omitempty"`
 	All       bool   `json:"all,omitempty"`
 }
 
-type GetMetricsInput struct {}
-type ReloadCacheInput struct {}
-type ForgetInput struct { Key string `json:"key"` }
+type GetMetricsInput struct {
+	util.UniversalBaseInput
+}
+type ReloadCacheInput struct {
+	util.UniversalBaseInput
+}
+type ForgetInput struct {
+	util.UniversalBaseInput
+	Key string `json:"key"`
+}
 
 type BatchRememberInput struct {
+	util.UniversalBaseInput
+
 	Entries []memory.BatchEntry `json:"entries"`
 }
 
 type BatchRecallInput struct {
+	util.UniversalBaseInput
+
 	Keys []string `json:"keys"`
 }
 
 type ExportMemoriesInput struct {
+	util.UniversalBaseInput
+
 	Filename string `json:"filename"`
 }
 
 type ImportMemoriesInput struct {
+	util.UniversalBaseInput
+
 	Filename string `json:"filename"`
 }

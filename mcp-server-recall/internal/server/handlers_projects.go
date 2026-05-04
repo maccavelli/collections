@@ -78,7 +78,7 @@ func (rs *MCPRecallServer) handleListProjectCategories(ctx context.Context, _ *m
 	}, nil, nil
 }
 
-func (rs *MCPRecallServer) handleSearchProjects(ctx context.Context, req *mcp.CallToolRequest, args SearchProjectsInput) (*mcp.CallToolResult, any, error) {
+func (rs *MCPRecallServer) handleSearchProjects(ctx context.Context, _ *mcp.CallToolRequest, args SearchProjectsInput) (*mcp.CallToolResult, any, error) {
 
 	if args.Limit <= 0 {
 		args.Limit = 20
