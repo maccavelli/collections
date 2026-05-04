@@ -21,7 +21,9 @@ type SyncTool struct {
 func (t *SyncTool) Name() string { return "magicskills_sync_skills" }
 
 // SyncInput defines the structural representation for the entity.
-type SyncInput struct{}
+type SyncInput struct {
+	util.UniversalBaseInput
+}
 
 func (t *SyncTool) Register(s *mcp.Server) {
 	util.HardenedAddTool(s, &mcp.Tool{

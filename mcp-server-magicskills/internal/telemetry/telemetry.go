@@ -14,45 +14,6 @@ var (
 	GlobalTokenSpend atomic.Int64
 )
 
-// CSSAPacket strictly defines a single multiplexed buffer slice.
-type CSSAPacket struct {
-	ToolID  uint16
-	Payload []byte
-}
-
-var (
-	dispatcherMap  [8]chan CSSAPacket // 8 Shards targeting CSSA limits natively.
-	onceDispatcher sync.Once
-)
-
-// InitCSSADispatcher dynamically springs an 8-shard local background multiplexer safely mapping boundaries without UI jitter globally natively.
-func InitCSSADispatcher() {
-	onceDispatcher.Do(func() {
-		for i := range 8 {
-			dispatcherMap[i] = make(chan CSSAPacket, 2048) // Deep buffers handling Signal Storm limits locally cleanly.
-			go cssaWorker(dispatcherMap[i])
-		}
-	})
-}
-
-// cssaWorker dynamically streams exact states natively preventing pipeline jitter organically mapping logs natively locally.
-func cssaWorker(ch <-chan CSSAPacket) {
-	for packet := range ch {
-		// Base dispatcher ready for mutator hook ingestion formally via ToolID headers synchronously.
-		_ = packet
-	}
-}
-
-// DispatchCSSAPacket mathematically directs binary array streams onto explicit local shard pipes preventing global BadgerDB locks dynamically locally mapping states exactly.
-func DispatchCSSAPacket(toolID uint16, payload []byte) {
-	InitCSSADispatcher() // Lazy load mathematically cleanly
-	shardIndex := int(toolID) % 8
-	select {
-	case dispatcherMap[shardIndex] <- CSSAPacket{ToolID: toolID, Payload: payload}:
-	default:
-		// Drop cleanly preventing pipeline panics if mutators overwhelm exact buffer limits natively structurally.
-	}
-}
 
 // AddTokens increments the rolling global token budget and returns the new total atomically.
 func AddTokens(count int) int64 {
