@@ -7,7 +7,7 @@ import (
 )
 
 // Version is the current version of the Go Refactor MCP server.
-var Version = "v4.3.4"
+var Version = "v4.3.5"
 
 func printVersion() {
 	fmt.Fprintf(os.Stderr, "mcp-server-go-refactor version %s\n", Version)
