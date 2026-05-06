@@ -30,15 +30,19 @@ type Alternative struct {
 // ADR represents an Architecture Decision Record (Nygard format),
 // extended with alternatives tracking per AWS best practices.
 type ADR struct {
-	Title        string        `json:"title"`
-	Status       string        `json:"status"`
-	Context      string        `json:"context"`
-	Decision     string        `json:"decision"`
-	Consequences string        `json:"consequences"`
-	Alternatives []Alternative `json:"alternatives,omitzero"` // Rejected options
-	DecisionDate string        `json:"decision_date,omitzero"`
-	Supersedes   string        `json:"supersedes,omitzero"`   // ID of superseded ADR
-	Tags         []string      `json:"tags,omitzero"`         // "security", "performance"
+	Title             string        `json:"title"`
+	Status            string        `json:"status"`
+	Context           string        `json:"context"`
+	Decision          string        `json:"decision"`
+	Consequences      string        `json:"consequences"`
+	Alternatives      []Alternative `json:"alternatives,omitzero"` // Rejected options
+	DecisionDate      string        `json:"decision_date,omitzero"`
+	Supersedes        string        `json:"supersedes,omitzero"`   // ID of superseded ADR
+	Tags              []string      `json:"tags,omitzero"`         // "security", "performance"
+	DecisionDrivers   []string      `json:"decision_drivers,omitzero"`
+	Confirmation      string        `json:"confirmation,omitzero"`
+	ComplianceCheck   string        `json:"compliance_check,omitzero"`
+	SecurityFootprint string        `json:"security_footprint,omitzero"`
 }
 
 // FileEntry represents a single file or directory in the proposed project scaffold.
@@ -236,6 +240,7 @@ type SessionState struct {
 	SessionID              string                `json:"session_id"`
 	SchemaVersion          int                   `json:"schema_version"`
 	TechStack              string                `json:"tech_stack"`
+	BusinessCase           string                `json:"business_case,omitzero"` // Captures Decision Drivers
 	OriginalIdea           string                `json:"original_idea,omitzero"`
 	RefinedIdea            string                `json:"refined_idea,omitzero"`
 	Standards              []string              `json:"standards,omitzero"`                  // dynamically ingested rules

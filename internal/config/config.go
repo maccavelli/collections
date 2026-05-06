@@ -37,6 +37,11 @@ confluence:
   # If left unset (""), documents will be published to the root of the space.
   parent_page_id: ""
 
+  # Enables the Confluence mock layer for offline development and testing.
+  # When true, the pipeline bypasses live Confluence API calls during Phase 1
+  # connectivity checks and downstream documentation generation steps.
+  mock: false
+
 # ------------------------------------------------------------------------------
 # Jira Integration (Ticketing)
 # ------------------------------------------------------------------------------

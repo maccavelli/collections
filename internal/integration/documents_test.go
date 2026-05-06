@@ -142,7 +142,7 @@ func TestProcessDocumentGenerationNetworkFails(t *testing.T) {
 
 
 func TestPushToGitLabError(t *testing.T) {
-	err := pushToGitLab(nil, "JIRA-123", "main", "title", []byte("data"), nil)
+	err := pushToGitLab(nil, "JIRA-123", "main", "title", []byte("data"), []byte("adr data"), nil)
 	if err == nil {
 		t.Error("Expected error from pushToGitLab")
 	}
