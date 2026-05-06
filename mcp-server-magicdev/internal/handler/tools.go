@@ -3,16 +3,16 @@ package handler
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"os"
 	"strings"
-
-	json "github.com/go-json-experiment/json"
-	"github.com/go-json-experiment/json/jsontext"
-	"github.com/spf13/viper"
+	"time"
 
 	"github.com/denisbrodbeck/machineid"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -21,11 +21,15 @@ import (
 	"mcp-server-magicdev/internal/db"
 	"mcp-server-magicdev/internal/integration"
 	"mcp-server-magicdev/internal/logging"
+	"mcp-server-magicdev/internal/sync"
 )
 
-// jsonResult formats output variables into a JSON-like string for the agent.
-func jsonResult(hint string, data map[string]any) (*mcp.CallToolResult, any, error) {
-	b, _ := json.Marshal(data, jsontext.WithIndent("  "))
+// hybridMarkdownResult formats output variables into a JSON-frontmatter string for the agent.
+func hybridMarkdownResult(hint string, data map[string]any) (*mcp.CallToolResult, any, error) {
+	b, err := json.MarshalIndent(data, "", "  ")
+	if err != nil {
+		return nil, nil, err
+	}
 	msg := fmt.Sprintf("```json\n%s\n```\n\n%s", string(b), hint)
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{
@@ -56,18 +60,22 @@ func errorResult(msg string) (*mcp.CallToolResult, any, error) {
 
 // EvaluateIdeaArgs defines the EvaluateIdeaArgs structure.
 type EvaluateIdeaArgs struct {
-	RawIdea     string `json:"raw_idea" jsonschema:"The raw software idea or feature request"`
-	TargetStack string `json:"target_stack" jsonschema:"The technology stack (.NET or Node)"`
-	SessionID   string `json:"session_id,omitempty" jsonschema:"Optional. Provide the existing session ID if refining the idea after Socratic questioning."`
+	RawIdea                string            `json:"raw_idea" jsonschema:"The raw software idea or feature request"`
+	TargetStack            string            `json:"target_stack" jsonschema:"The technology stack (.NET or Node)"`
+	SessionID              string            `json:"session_id,omitempty" jsonschema:"Optional. Provide the existing session ID if refining the idea after Socratic questioning."`
+	Tags                   map[string]string `json:"tags,omitempty" jsonschema:"Optional freeform key-value tags for categorization."`
+	Labels                 []string          `json:"labels" jsonschema:"REQUIRED classification labels (e.g. domain:ecommerce). If not provided in the prompt, you MUST ask the user before calling."`
+	TargetEnvironment      string            `json:"target_environment" jsonschema:"REQUIRED target environment (e.g. containerized). If not provided in the prompt, you MUST ask the user before calling."`
+	ComplianceRequirements []string          `json:"compliance_requirements,omitempty" jsonschema:"Optional compliance tags: SOC2, HIPAA, PCI-DSS, GDPR."`
 }
 
-// ClarifyRequirementsArgs defines the ClarifyRequirementsArgs structure.
+// ClarifyRequirementsArgs defines the structured input for the Socratic Trifecta.
 type ClarifyRequirementsArgs struct {
-	SessionID  string `json:"session_id" jsonschema:"The active session ID returned by evaluate_idea"`
-	Thesis     string `json:"thesis" jsonschema:"Thesis architect output: Identified requirement base"`
-	Antithesis string `json:"antithesis" jsonschema:"Antithesis skeptic output: Gaps and Socratic questions to resolve"`
-	Synthesis  string `json:"synthesis" jsonschema:"Aporia engine synthesis determining final resolution"`
-	IsVetted   bool   `json:"is_vetted" jsonschema:"Final result determined by Aporia Engine. If false, tool triggers an error."`
+	SessionID           string                  `json:"session_id" jsonschema:"The active session ID returned by evaluate_idea"`
+	DesignProposal      *db.DesignProposal      `json:"design_proposal" jsonschema:"Thesis architect output: Proposed architecture, template AST, security mandates, stack tuning, and standard references"`
+	SkepticAnalysis     *db.SkepticAnalysis     `json:"skeptic_analysis" jsonschema:"Antithesis skeptic output: Vulnerabilities, design concerns, and granular questions"`
+	SynthesisResolution *db.SynthesisResolution `json:"synthesis_resolution" jsonschema:"Aporia engine synthesis: Resolved decisions, outstanding questions, and unresolved dependencies"`
+	IsVetted            bool                    `json:"is_vetted" jsonschema:"Final result determined by Aporia Engine. If false, tool triggers an error with outstanding questions."`
 }
 
 // IngestStandardsArgs defines the IngestStandardsArgs structure.
@@ -91,16 +99,30 @@ type FinalizeRequirementsArgs struct {
 
 // BlueprintImplementationArgs defines the BlueprintImplementationArgs structure.
 type BlueprintImplementationArgs struct {
-	SessionID         string `json:"session_id" jsonschema:"The active session ID"`
-	PatternPreference string `json:"pattern_preference" jsonschema:"The pattern preference"`
+	SessionID              string              `json:"session_id" jsonschema:"The active session ID"`
+	PatternPreference      string              `json:"pattern_preference" jsonschema:"The pattern preference"`
+	ImplementationStrategy map[string]string   `json:"implementation_strategy,omitempty" jsonschema:"Optional requirement-to-pattern mapping."`
+	Dependencies           []db.Dependency     `json:"dependencies,omitempty" jsonschema:"Optional real dependency list."`
+	ComplexityScores       map[string]int      `json:"complexity_scores,omitempty" jsonschema:"Optional feature complexity estimates (1-13 SP)."`
+	FileStructure          []db.FileEntry      `json:"file_structure,omitempty" jsonschema:"Optional proposed project file tree."`
+	SecurityConsiderations []db.SecurityItem   `json:"security_considerations,omitempty" jsonschema:"Optional OWASP-aligned security findings."`
+	NFRs                   []db.NFR            `json:"non_functional_requirements,omitempty" jsonschema:"Optional non-functional requirements."`
+	TestingStrategy        map[string]string   `json:"testing_strategy,omitempty" jsonschema:"Optional feature to test approach mapping."`
+	ADRs                   []db.ADR            `json:"adrs,omitempty" jsonschema:"Optional architecture decision records."`
+	APIContracts           []db.APIEndpoint    `json:"api_contracts,omitempty" jsonschema:"Optional REST/GraphQL endpoint definitions."`
+	DataModel              []db.Entity         `json:"data_model,omitempty" jsonschema:"Optional entity definitions for ERD generation."`
+	MCPTools               []db.MCPTool        `json:"mcp_tools,omitempty" jsonschema:"Optional definitions for MCP Tools."`
+	MCPResources           []db.MCPResource    `json:"mcp_resources,omitempty" jsonschema:"Optional definitions for MCP Resources."`
+	MCPPrompts             []db.MCPPrompt      `json:"mcp_prompts,omitempty" jsonschema:"Optional definitions for MCP Prompts."`
 }
 
 // GenerateDocumentsArgs defines the GenerateDocumentsArgs structure.
 type GenerateDocumentsArgs struct {
-	SessionID    string `json:"session_id" jsonschema:"The active session ID"`
-	Title        string `json:"title" jsonschema:"Document title"`
-	Markdown     string `json:"markdown" jsonschema:"Markdown spec"`
-	TargetBranch string `json:"target_branch" jsonschema:"Target git branch"`
+	SessionID       string `json:"session_id" jsonschema:"The active session ID"`
+	Title           string `json:"title" jsonschema:"Document title"`
+	Markdown        string `json:"markdown" jsonschema:"Supplementary markdown content from the agent."`
+	TargetBranch    string `json:"target_branch" jsonschema:"Target git branch"`
+	DiagramOverride string `json:"diagram_override,omitempty" jsonschema:"Optional manual Mermaid diagram override."`
 }
 
 // CompleteDesignArgs defines the CompleteDesignArgs structure.
@@ -110,7 +132,7 @@ type CompleteDesignArgs struct {
 
 // UpdateConfigArgs defines the UpdateConfigArgs structure.
 type UpdateConfigArgs struct {
-	Key   string `json:"key" jsonschema:"Configuration key to update (e.g. 'atlassian.token')"`
+	Key   string `json:"key" jsonschema:"Configuration key to update (e.g. 'jira.token')"`
 	Value string `json:"value" jsonschema:"New value to set"`
 }
 
@@ -126,6 +148,14 @@ type ToolHandler struct {
 
 // EvaluateIdea performs the EvaluateIdea operation.
 func (h *ToolHandler) EvaluateIdea(ctx context.Context, req *mcp.CallToolRequest, args EvaluateIdeaArgs) (*mcp.CallToolResult, any, error) {
+	if args.TargetEnvironment == "" || len(args.Labels) == 0 {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: "[VALIDATION REQUIRED] Missing architectural context.\nYou MUST determine the `target_environment` and applicable domain `labels` (e.g. ecommerce, erp) before evaluating the idea.\nACTION: Ask the user clarifying questions to obtain this missing data. Do not guess. Once the user answers, call `evaluate_idea` again."},
+			},
+		}, nil, nil
+	}
+
 	var session *db.SessionState
 	var sessionID string
 
@@ -136,8 +166,9 @@ func (h *ToolHandler) EvaluateIdea(ctx context.Context, req *mcp.CallToolRequest
 			sessionID = args.SessionID
 			// Reset downstream state for the new iteration
 			session.IsVetted = false
-			session.Tensions = []string{}
-			session.AporiaResolutions = []string{}
+			session.DesignProposal = nil
+			session.SkepticAnalysis = nil
+			session.SynthesisResolution = nil
 			session.StepStatus["evaluate_idea"] = "COMPLETED"
 			// Clear later steps if they existed
 			delete(session.StepStatus, "clarify_requirements")
@@ -155,35 +186,47 @@ func (h *ToolHandler) EvaluateIdea(ctx context.Context, req *mcp.CallToolRequest
 		sessionID = fmt.Sprintf("session-%s", id[:8])
 		session = db.NewSessionState(sessionID)
 		session.OriginalIdea = args.RawIdea
+		session.CreatedAt = time.Now().UTC().Format(time.RFC3339)
 		session.StepStatus["evaluate_idea"] = "COMPLETED"
 	}
 
 	session.RefinedIdea = args.RawIdea
 	session.TechStack = args.TargetStack
 	session.CurrentStep = "evaluate_idea"
+	session.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+
+	// Populate forward-thinking session metadata from agent-provided args
+	if len(args.Tags) > 0 {
+		session.Tags = args.Tags
+	}
+	if len(args.Labels) > 0 {
+		session.Labels = args.Labels
+	}
+	if args.TargetEnvironment != "" {
+		session.TargetEnvironment = args.TargetEnvironment
+	}
+	if len(args.ComplianceRequirements) > 0 {
+		session.ComplianceRequirements = args.ComplianceRequirements
+	}
 
 	if err := h.store.SaveSession(session); err != nil {
 		return errorResult(err.Error())
 	}
 
-	stackKey := strings.ToLower(args.TargetStack)
-	if stackKey == ".net" {
-		stackKey = "dotnet"
-	}
-	baselineURLs := viper.GetStringSlice("standards." + stackKey)
+	baselineURLs := sync.GetContextualStandards(args.TargetStack, args.TargetEnvironment, args.Labels)
 
 	hint := "Next, call 'ingest_standards' to pull in applicable project standards."
 	if len(baselineURLs) > 0 {
 		hint = fmt.Sprintf("Before proceeding to clarify_requirements, you MUST call 'ingest_standards' for each of the following baseline URLs:\n- %s\n\nOnce all baseline standards are ingested, proceed to 'clarify_requirements'.", strings.Join(baselineURLs, "\n- "))
 	}
 
-	return jsonResult(hint, map[string]any{
+	return hybridMarkdownResult(hint, map[string]any{
 		"session_id":     sessionID,
 		"scope_boundary": args.RawIdea,
 	})
 }
 
-// ClarifyRequirements performs the ClarifyRequirements operation.
+// ClarifyRequirements performs the structured Socratic Trifecta analysis.
 func (h *ToolHandler) ClarifyRequirements(ctx context.Context, req *mcp.CallToolRequest, args ClarifyRequirementsArgs) (*mcp.CallToolResult, any, error) {
 	session, err := h.store.LoadSession(args.SessionID)
 	if err != nil || session == nil {
@@ -193,17 +236,35 @@ func (h *ToolHandler) ClarifyRequirements(ctx context.Context, req *mcp.CallTool
 	session.IsVetted = args.IsVetted
 
 	if !args.IsVetted {
-		session.Tensions = append(session.Tensions, args.Antithesis)
+		// Persist the skeptic analysis for audit trail
+		if args.SkepticAnalysis != nil {
+			session.SkepticAnalysis = args.SkepticAnalysis
+		}
 		if err := h.store.SaveSession(session); err != nil {
 			return errorResult(err.Error())
 		}
 
-		msg := fmt.Sprintf("SOCRATIC CONFLICT DETECTED: You must prompt the user with the following questions and await their answers. Once answered, re-run 'clarify_requirements' with the updated synthesis.\n\nQuestions:\n%s", args.Antithesis)
+		// Build structured question list from skeptic + synthesis
+		var questions []string
+		if args.SkepticAnalysis != nil {
+			for _, q := range args.SkepticAnalysis.GranularQuestions {
+				questions = append(questions, fmt.Sprintf("[%s] %s\n  Context: %s\n  Impact: %s", q.Topic, q.Question, q.Context, q.Impact))
+			}
+		}
+		if args.SynthesisResolution != nil {
+			for _, q := range args.SynthesisResolution.OutstandingQuestions {
+				questions = append(questions, fmt.Sprintf("[%s] %s\n  Context: %s\n  Impact: %s", q.Topic, q.Question, q.Context, q.Impact))
+			}
+		}
+
+		msg := fmt.Sprintf("SOCRATIC CONFLICT DETECTED: You must prompt the user with the following questions and await their answers. Once answered, re-run 'clarify_requirements' with the updated synthesis.\n\nOutstanding Questions:\n%s", strings.Join(questions, "\n\n"))
 		return errorResult(msg)
 	}
 
-	session.Tensions = []string{}
-	session.AporiaResolutions = append(session.AporiaResolutions, args.Synthesis)
+	// Persist all structured Trifecta data
+	session.DesignProposal = args.DesignProposal
+	session.SkepticAnalysis = args.SkepticAnalysis
+	session.SynthesisResolution = args.SynthesisResolution
 	session.StepStatus["clarify_requirements"] = "COMPLETED"
 	session.CurrentStep = "clarify_requirements"
 
@@ -211,13 +272,20 @@ func (h *ToolHandler) ClarifyRequirements(ctx context.Context, req *mcp.CallTool
 		return errorResult(err.Error())
 	}
 
-	hint := "Next, call 'ingest_standards' to pull in applicable project standards."
-	return jsonResult(hint, map[string]any{
-		"thesis":           args.Thesis,
-		"antithesis":       args.Antithesis,
-		"aporia_synthesis": args.Synthesis,
-		"is_vetted":        true,
-	})
+	hint := "Socratic Trifecta analysis complete. Proceed to 'critique_design' to vet the proposed architecture."
+	resultData := map[string]any{
+		"is_vetted": true,
+	}
+	if args.DesignProposal != nil {
+		resultData["module_count"] = len(args.DesignProposal.ProposedModules)
+		resultData["template_ast_files"] = len(args.DesignProposal.TemplateAST)
+		resultData["security_mandates"] = len(args.DesignProposal.SecurityMandates)
+		resultData["stack_tuning_items"] = len(args.DesignProposal.StackTuning)
+	}
+	if args.SynthesisResolution != nil {
+		resultData["decisions_resolved"] = len(args.SynthesisResolution.Decisions)
+	}
+	return hybridMarkdownResult(hint, resultData)
 }
 
 // IngestStandards performs the IngestStandards operation.
@@ -229,34 +297,73 @@ func (h *ToolHandler) IngestStandards(ctx context.Context, req *mcp.CallToolRequ
 		isURL = false
 	}
 
-	var content []byte
-	var err error
+	var textContent string
 
-	if isURL {
-		resp, errHTTP := http.Get(standard)
-		if errHTTP != nil {
-			return errorResult(fmt.Sprintf("failed to fetch standard from URL: %v", errHTTP))
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode >= 400 {
-			return errorResult(fmt.Sprintf("failed to fetch standard from URL, status code: %d", resp.StatusCode))
-		}
-		content, err = io.ReadAll(resp.Body)
+	// Attempt zero-latency lookup from Hybrid-Compressed BuntDB cache
+	cachedContent, err := h.store.GetBaselineContent(standard)
+	if err == nil && cachedContent != "" {
+		textContent = cachedContent
 	} else {
-		content, err = os.ReadFile(standard)
-	}
+		// Fallback to manual fetch
+		var content []byte
+		var fetchErr error
+		if isURL {
+			resp, errHTTP := http.Get(standard)
+			if errHTTP == nil && resp.StatusCode < 400 {
+				content, fetchErr = io.ReadAll(resp.Body)
+				resp.Body.Close()
+			} else {
+				if resp != nil {
+					resp.Body.Close()
+				}
+				fetchErr = fmt.Errorf("http fetch failed: %v", errHTTP)
+			}
+		} else {
+			content, fetchErr = os.ReadFile(standard)
+		}
 
-	if err != nil {
-		return errorResult(fmt.Sprintf("failed to read standard content: %v", err))
-	}
+		if fetchErr != nil {
+			slog.Warn("manual fetch failed, attempting embedded fallback", "standard", standard, "error", fetchErr)
+			var embedErr error
+			content, embedErr = sync.GetEmbeddedStandard(standard)
+			if embedErr != nil {
+				return errorResult(fmt.Sprintf("failed to fetch standard and no embedded fallback available: %v", embedErr))
+			}
+		}
+		textContent = string(content)
 
-	textContent := string(content)
+		hashBytes := sha256.Sum256(content)
+		hashStr := hex.EncodeToString(hashBytes[:])
+		if err := h.store.SetBaseline(standard, textContent, hashStr); err != nil {
+			slog.Warn("failed to cache baseline standard", "url", standard, "error", err)
+		}
+	}
 
 	if err := h.store.AppendStandard(args.SessionID, textContent); err != nil {
 		return errorResult(err.Error())
 	}
 
-	hint := "Standard ingested successfully. You may ingest another, or proceed to 'clarify_requirements' to evaluate the idea against these ingested standards."
+	hint := "Standard ingested successfully. You may ingest another, or proceed to 'clarify_requirements'.\n\n" +
+		"=== SOCRATIC TRIFECTA DIRECTIVE ===\n" +
+		"When ALL standards are ingested, you MUST call 'clarify_requirements' with the following structured analysis:\n\n" +
+		"1. THESIS ARCHITECT (design_proposal):\n" +
+		"   - Propose a complete application architecture using the ingested standards as your baseline.\n" +
+		"   - Define proposed_modules: component hierarchy with responsibilities and inter-module dependencies.\n" +
+		"   - Generate a template_ast: proposed project file tree with function/interface signatures (exports).\n" +
+		"   - Enumerate security_mandates: white-hat security practices (OWASP Top 10, input validation, auth, secrets management, CSRF, XSS).\n" +
+		"   - Provide stack_tuning: stack-specific optimizations (Node.js: event loop, clustering, streams, memory | .NET: async/await, DI, middleware, Kestrel).\n" +
+		"   - Cite referenced_standards: specific rules from ingested standards that influenced your design.\n\n" +
+		"2. ANTITHESIS SKEPTIC (skeptic_analysis):\n" +
+		"   - Perform adversarial white-hat review of EVERY thesis element.\n" +
+		"   - Identify vulnerabilities: attack vectors, injection points, auth bypass scenarios.\n" +
+		"   - Flag design_concerns: over-engineering, missing patterns, scalability bottlenecks, code smells.\n" +
+		"   - Generate granular_questions: detailed, code-specific questions the user must answer.\n\n" +
+		"3. APORIA ENGINE (synthesis_resolution):\n" +
+		"   - Resolve conflicts between thesis and antithesis with explicit decisions and rationale.\n" +
+		"   - Escalate outstanding_questions to the user with full context and impact descriptions.\n" +
+		"   - List unresolved_dependencies that need external input.\n" +
+		"   - Set is_vetted=true ONLY if all questions are resolved. Otherwise is_vetted=false.\n" +
+		"=== END DIRECTIVE ==="
 	return textResult(fmt.Sprintf("%s\n\n=== STANDARD CONTENT START ===\n%s\n=== STANDARD CONTENT END ===\n\n%s", standard, textContent, hint))
 }
 
@@ -268,7 +375,6 @@ func (h *ToolHandler) CritiqueDesign(ctx context.Context, req *mcp.CallToolReque
 	}
 
 	session.IsVetted = true
-	session.Tensions = []string{} // Clear tensions simulating resolution
 	if args.StrictMode {
 		// Enforce strict logic if needed
 		slog.Info("Strict mode enabled for vetting")
@@ -281,7 +387,7 @@ func (h *ToolHandler) CritiqueDesign(ctx context.Context, req *mcp.CallToolReque
 	}
 
 	hint := "Next, call 'finalize_requirements' to generate the golden copy."
-	return jsonResult(hint, map[string]any{
+	return hybridMarkdownResult(hint, map[string]any{
 		"is_vetted":    true,
 		"critique_log": "Vetting passed successfully.",
 	})
@@ -302,7 +408,7 @@ func (h *ToolHandler) FinalizeRequirements(ctx context.Context, req *mcp.CallToo
 	}
 
 	hint := "Next, call 'blueprint_implementation' to generate the technical mapping."
-	return jsonResult(hint, map[string]any{
+	return hybridMarkdownResult(hint, map[string]any{
 		"golden_copy_json": args.ApprovalSignature,
 		"status":           "APPROVED",
 	})
@@ -319,17 +425,70 @@ func (h *ToolHandler) BlueprintImplementation(ctx context.Context, req *mcp.Call
 		return errorResult("finalize_requirements must be completed before blueprint_implementation")
 	}
 
+	// Build blueprint from agent-provided data, falling back to session-derived data.
 	bp := &db.Blueprint{
-		DependencyManifest: []db.Dependency{
-			{Name: "ExamplePkg", Version: "1.0.0", Ecosystem: "npm"},
-		},
-		ComplexityScores: map[string]int{"featureA": 5},
+		ImplementationStrategy: args.ImplementationStrategy,
+		DependencyManifest:     args.Dependencies,
+		ComplexityScores:       args.ComplexityScores,
+		ADRs:                   args.ADRs,
+		FileStructure:          args.FileStructure,
+		SecurityConsiderations: args.SecurityConsiderations,
+		NonFunctionalRequirements: args.NFRs,
+		TestingStrategy:        args.TestingStrategy,
+		APIContracts:           args.APIContracts,
+		DataModel:              args.DataModel,
+		MCPTools:               args.MCPTools,
+		MCPResources:           args.MCPResources,
+		MCPPrompts:             args.MCPPrompts,
 	}
+
+	// Ensure non-nil maps for downstream consumers
+	if bp.ImplementationStrategy == nil {
+		bp.ImplementationStrategy = map[string]string{
+			session.RefinedIdea: args.PatternPreference,
+		}
+	}
+	if bp.ComplexityScores == nil {
+		bp.ComplexityScores = make(map[string]int)
+	}
+
+	// Populate AporiaTraceability from synthesis decisions
+	bp.AporiaTraceability = make(map[string]string)
+	if session.SynthesisResolution != nil {
+		for i, decision := range session.SynthesisResolution.Decisions {
+			key := fmt.Sprintf("Decision-%d: %s", i+1, decision.Topic)
+			bp.AporiaTraceability[key] = decision.Decision
+		}
+	}
+
+	// Pre-seed blueprint from DesignProposal when agent doesn't provide overrides
+	if session.DesignProposal != nil {
+		if len(bp.FileStructure) == 0 {
+			bp.FileStructure = session.DesignProposal.TemplateAST
+		}
+		if len(bp.SecurityConsiderations) == 0 {
+			bp.SecurityConsiderations = session.DesignProposal.SecurityMandates
+		}
+		if len(bp.NonFunctionalRequirements) == 0 && len(session.DesignProposal.StackTuning) > 0 {
+			for _, opt := range session.DesignProposal.StackTuning {
+				bp.NonFunctionalRequirements = append(bp.NonFunctionalRequirements, db.NFR{
+					Category:    opt.Category,
+					Requirement: opt.Recommendation,
+					Target:      opt.Rationale,
+					Priority:    opt.Priority,
+				})
+			}
+		}
+	}
+
+	// Generate and persist the Mermaid diagram
+	bp.MermaidDiagram = GenerateMermaidDiagram(session, bp)
 
 	if session.TechMapping == nil {
 		session.TechMapping = make(map[string]string)
 	}
 	session.TechMapping["Pattern"] = args.PatternPreference
+	session.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 
 	if err := h.store.SaveBlueprint(args.SessionID, bp); err != nil {
 		return errorResult(fmt.Sprintf("failed to save blueprint: %v", err))
@@ -341,10 +500,368 @@ func (h *ToolHandler) BlueprintImplementation(ctx context.Context, req *mcp.Call
 	_ = h.store.AppendStepStatus(args.SessionID, "blueprint_implementation", "COMPLETED")
 
 	hint := "Next, call 'generate_documents' to sync the artifacts with Jira, Confluence, and GitLab."
-	return jsonResult(hint, map[string]any{
+	return hybridMarkdownResult(hint, map[string]any{
 		"dependency_manifest": bp.DependencyManifest,
 		"complexity_score":    bp.ComplexityScores,
+		"file_count":          len(bp.FileStructure),
+		"adr_count":           len(bp.ADRs),
 	})
+}
+
+// buildComprehensiveSpec synthesizes all accumulated session state into a
+// machine-optimized markdown document suitable for LLM code generation handoff.
+func buildComprehensiveSpec(session *db.SessionState, bp *db.Blueprint, agentMarkdown, title string) string {
+	var b strings.Builder
+
+	b.WriteString(fmt.Sprintf("# %s\n\n", title))
+
+	// --- Project Overview ---
+	b.WriteString("## Project Overview\n\n")
+	if session.OriginalIdea != "" {
+		b.WriteString(fmt.Sprintf("**Original Idea:** %s\n\n", session.OriginalIdea))
+	}
+	if session.RefinedIdea != "" && session.RefinedIdea != session.OriginalIdea {
+		b.WriteString(fmt.Sprintf("**Refined Idea:** %s\n\n", session.RefinedIdea))
+	}
+	b.WriteString(fmt.Sprintf("**Technology Stack:** %s\n\n", session.TechStack))
+	if session.TargetEnvironment != "" {
+		b.WriteString(fmt.Sprintf("**Target Environment:** %s\n\n", session.TargetEnvironment))
+	}
+	if session.RiskLevel != "" {
+		b.WriteString(fmt.Sprintf("**Risk Level:** %s\n\n", session.RiskLevel))
+	}
+	if len(session.ComplianceRequirements) > 0 {
+		b.WriteString(fmt.Sprintf("**Compliance:** %s\n\n", strings.Join(session.ComplianceRequirements, ", ")))
+	}
+	if len(session.Labels) > 0 {
+		b.WriteString(fmt.Sprintf("**Labels:** %s\n\n", strings.Join(session.Labels, ", ")))
+	}
+
+	// --- Approved Specification ---
+	if session.FinalSpec != "" {
+		b.WriteString("## Approved Specification\n\n")
+		b.WriteString(session.FinalSpec)
+		b.WriteString("\n\n")
+	}
+
+	// --- Design Decisions & Resolved Architectural Decisions ---
+	if session.SynthesisResolution != nil && len(session.SynthesisResolution.Decisions) > 0 {
+		b.WriteString("## Resolved Architectural Decisions\n\n")
+		for i, decision := range session.SynthesisResolution.Decisions {
+			b.WriteString(fmt.Sprintf("%d. **%s**: %s\n   *Rationale:* %s\n", i+1, decision.Topic, decision.Decision, decision.Rationale))
+		}
+		b.WriteString("\n")
+	}
+
+	// --- Design Proposal ---
+	if session.DesignProposal != nil {
+		if session.DesignProposal.Narrative != "" {
+			b.WriteString("## Design Proposal\n\n")
+			b.WriteString(session.DesignProposal.Narrative)
+			b.WriteString("\n\n")
+		}
+
+		// Proposed Modules
+		if len(session.DesignProposal.ProposedModules) > 0 {
+			b.WriteString("### Proposed Modules\n\n")
+			for _, mod := range session.DesignProposal.ProposedModules {
+				b.WriteString(fmt.Sprintf("#### %s\n\n", mod.Name))
+				b.WriteString(fmt.Sprintf("**Purpose:** %s\n\n", mod.Purpose))
+				if len(mod.Responsibilities) > 0 {
+					b.WriteString("**Responsibilities:**\n")
+					for _, r := range mod.Responsibilities {
+						b.WriteString(fmt.Sprintf("- %s\n", r))
+					}
+				}
+				if len(mod.Dependencies) > 0 {
+					b.WriteString(fmt.Sprintf("\n**Dependencies:** %s\n", strings.Join(mod.Dependencies, ", ")))
+				}
+				b.WriteString("\n")
+			}
+		}
+
+		// Template AST
+		if len(session.DesignProposal.TemplateAST) > 0 {
+			b.WriteString("### Proposed Project Structure (Template AST)\n\n")
+			b.WriteString("| Path | Type | Language | Description | Exports |\n")
+			b.WriteString("|---|---|---|---|---|\n")
+			for _, f := range session.DesignProposal.TemplateAST {
+				exports := strings.Join(f.Exports, ", ")
+				b.WriteString(fmt.Sprintf("| `%s` | %s | %s | %s | %s |\n", f.Path, f.Type, f.Language, f.Description, exports))
+			}
+			b.WriteString("\n")
+		}
+
+		// Stack Optimization Strategy
+		if len(session.DesignProposal.StackTuning) > 0 {
+			b.WriteString("### Stack Optimization Strategy\n\n")
+			b.WriteString("| Category | Recommendation | Rationale | Priority |\n")
+			b.WriteString("|---|---|---|---|\n")
+			for _, opt := range session.DesignProposal.StackTuning {
+				b.WriteString(fmt.Sprintf("| %s | %s | %s | %s |\n", opt.Category, opt.Recommendation, opt.Rationale, opt.Priority))
+			}
+			b.WriteString("\n")
+		}
+
+		// Standards Traceability
+		if len(session.DesignProposal.ReferencedStandards) > 0 {
+			b.WriteString("### Standards Traceability\n\n")
+			b.WriteString("| Standard | Rule | Application |\n")
+			b.WriteString("|---|---|---|\n")
+			for _, ref := range session.DesignProposal.ReferencedStandards {
+				b.WriteString(fmt.Sprintf("| %s | %s | %s |\n", ref.StandardURL, ref.Rule, ref.Application))
+			}
+			b.WriteString("\n")
+		}
+
+		// White-Hat Security Mandates (from thesis)
+		if len(session.DesignProposal.SecurityMandates) > 0 {
+			b.WriteString("### White-Hat Security Mandates (Thesis)\n\n")
+			b.WriteString("| Category | Severity | Description | Mitigation |\n")
+			b.WriteString("|---|---|---|---|\n")
+			for _, sec := range session.DesignProposal.SecurityMandates {
+				b.WriteString(fmt.Sprintf("| %s | %s | %s | %s |\n", sec.Category, sec.Severity, sec.Description, sec.MitigationStrategy))
+			}
+			b.WriteString("\n")
+		}
+	}
+
+	// --- Skeptic Review ---
+	if session.SkepticAnalysis != nil {
+		if session.SkepticAnalysis.Narrative != "" {
+			b.WriteString("## Skeptic Review\n\n")
+			b.WriteString(session.SkepticAnalysis.Narrative)
+			b.WriteString("\n\n")
+		}
+
+		// Vulnerabilities (from antithesis)
+		if len(session.SkepticAnalysis.Vulnerabilities) > 0 {
+			b.WriteString("### Vulnerability Assessment\n\n")
+			b.WriteString("| Category | Severity | Description | Mitigation |\n")
+			b.WriteString("|---|---|---|---|\n")
+			for _, vuln := range session.SkepticAnalysis.Vulnerabilities {
+				b.WriteString(fmt.Sprintf("| %s | %s | %s | %s |\n", vuln.Category, vuln.Severity, vuln.Description, vuln.MitigationStrategy))
+			}
+			b.WriteString("\n")
+		}
+
+		// Design Concerns
+		if len(session.SkepticAnalysis.DesignConcerns) > 0 {
+			b.WriteString("### Design Concerns\n\n")
+			b.WriteString("| Area | Severity | Concern | Suggestion |\n")
+			b.WriteString("|---|---|---|---|\n")
+			for _, concern := range session.SkepticAnalysis.DesignConcerns {
+				b.WriteString(fmt.Sprintf("| %s | %s | %s | %s |\n", concern.Area, concern.Severity, concern.Concern, concern.Suggestion))
+			}
+			b.WriteString("\n")
+		}
+	}
+
+	if bp == nil {
+		// No blueprint data — append agent markdown and return early
+		if agentMarkdown != "" {
+			b.WriteString("## Additional Notes\n\n")
+			b.WriteString(agentMarkdown)
+			b.WriteString("\n")
+		}
+		return b.String()
+	}
+
+	// --- Implementation Strategy ---
+	if len(bp.ImplementationStrategy) > 0 {
+		b.WriteString("## Implementation Strategy\n\n")
+		b.WriteString("| Requirement | Pattern |\n")
+		b.WriteString("|---|---|\n")
+		for req, pattern := range bp.ImplementationStrategy {
+			b.WriteString(fmt.Sprintf("| %s | %s |\n", req, pattern))
+		}
+		b.WriteString("\n")
+	}
+
+	// --- File Structure ---
+	if len(bp.FileStructure) > 0 {
+		b.WriteString("## Proposed File Structure\n\n")
+		b.WriteString("| Path | Type | Language | Description |\n")
+		b.WriteString("|---|---|---|---|\n")
+		for _, f := range bp.FileStructure {
+			b.WriteString(fmt.Sprintf("| `%s` | %s | %s | %s |\n", f.Path, f.Type, f.Language, f.Description))
+		}
+		b.WriteString("\n")
+	}
+
+	// --- Dependency Manifest ---
+	if len(bp.DependencyManifest) > 0 {
+		b.WriteString("## Dependency Manifest\n\n")
+		b.WriteString("| Package | Version | Ecosystem | Purpose | License | Dev |\n")
+		b.WriteString("|---|---|---|---|---|---|\n")
+		for _, dep := range bp.DependencyManifest {
+			devFlag := ""
+			if dep.DevOnly {
+				devFlag = "✓"
+			}
+			b.WriteString(fmt.Sprintf("| %s | %s | %s | %s | %s | %s |\n", dep.Name, dep.Version, dep.Ecosystem, dep.Purpose, dep.License, devFlag))
+		}
+		b.WriteString("\n")
+	}
+
+	// --- Security Considerations ---
+	if len(bp.SecurityConsiderations) > 0 {
+		b.WriteString("## Security Considerations\n\n")
+		b.WriteString("| Category | Severity | Description | Mitigation |\n")
+		b.WriteString("|---|---|---|---|\n")
+		for _, sec := range bp.SecurityConsiderations {
+			b.WriteString(fmt.Sprintf("| %s | %s | %s | %s |\n", sec.Category, sec.Severity, sec.Description, sec.MitigationStrategy))
+		}
+		b.WriteString("\n")
+	}
+
+	// --- Non-Functional Requirements ---
+	if len(bp.NonFunctionalRequirements) > 0 {
+		b.WriteString("## Non-Functional Requirements\n\n")
+		b.WriteString("| Category | Requirement | Target | Priority |\n")
+		b.WriteString("|---|---|---|---|\n")
+		for _, nfr := range bp.NonFunctionalRequirements {
+			b.WriteString(fmt.Sprintf("| %s | %s | %s | %s |\n", nfr.Category, nfr.Requirement, nfr.Target, nfr.Priority))
+		}
+		b.WriteString("\n")
+	}
+
+	// --- API Contracts ---
+	if len(bp.APIContracts) > 0 {
+		b.WriteString("## API Contracts\n\n")
+		b.WriteString("| Method | Path | Description |\n")
+		b.WriteString("|---|---|---|\n")
+		for _, api := range bp.APIContracts {
+			b.WriteString(fmt.Sprintf("| %s | `%s` | %s |\n", api.Method, api.Path, api.Description))
+		}
+		b.WriteString("\n")
+	}
+
+	// --- MCP Tools ---
+	if len(bp.MCPTools) > 0 {
+		b.WriteString("## MCP Tools\n\n")
+		b.WriteString("| Name | Description | Input Schema |\n")
+		b.WriteString("|---|---|---|\n")
+		for _, tool := range bp.MCPTools {
+			b.WriteString(fmt.Sprintf("| `%s` | %s | %s |\n", tool.Name, tool.Description, tool.InputSchema))
+		}
+		b.WriteString("\n")
+	}
+
+	// --- MCP Resources ---
+	if len(bp.MCPResources) > 0 {
+		b.WriteString("## MCP Resources\n\n")
+		b.WriteString("| URI | Name | Description |\n")
+		b.WriteString("|---|---|---|\n")
+		for _, res := range bp.MCPResources {
+			b.WriteString(fmt.Sprintf("| `%s` | %s | %s |\n", res.URI, res.Name, res.Description))
+		}
+		b.WriteString("\n")
+	}
+
+	// --- MCP Prompts ---
+	if len(bp.MCPPrompts) > 0 {
+		b.WriteString("## MCP Prompts\n\n")
+		b.WriteString("| Name | Description | Arguments |\n")
+		b.WriteString("|---|---|---|\n")
+		for _, prompt := range bp.MCPPrompts {
+			b.WriteString(fmt.Sprintf("| `%s` | %s | %s |\n", prompt.Name, prompt.Description, strings.Join(prompt.Arguments, ", ")))
+		}
+		b.WriteString("\n")
+	}
+
+	// --- Data Model ---
+	if len(bp.DataModel) > 0 {
+		b.WriteString("## Data Model\n\n")
+		for _, entity := range bp.DataModel {
+			b.WriteString(fmt.Sprintf("### %s\n\n", entity.Name))
+			b.WriteString("| Field | Type | Required | Comment |\n")
+			b.WriteString("|---|---|---|---|\n")
+			for _, field := range entity.Fields {
+				req := ""
+				if field.Required {
+					req = "✓"
+				}
+				b.WriteString(fmt.Sprintf("| %s | %s | %s | %s |\n", field.Name, field.Type, req, field.Comment))
+			}
+			if len(entity.Relationships) > 0 {
+				b.WriteString(fmt.Sprintf("\n**Relationships:** %s\n", strings.Join(entity.Relationships, ", ")))
+			}
+			b.WriteString("\n")
+		}
+	}
+
+	// --- Complexity Estimation ---
+	if len(bp.ComplexityScores) > 0 {
+		b.WriteString("## Complexity Estimation\n\n")
+		totalPoints := 0
+		for feature, points := range bp.ComplexityScores {
+			b.WriteString(fmt.Sprintf("- **%s**: %d SP\n", feature, points))
+			totalPoints += points
+		}
+		b.WriteString(fmt.Sprintf("\n**Total:** %d story points\n\n", totalPoints))
+	}
+
+	// --- Testing Strategy ---
+	if len(bp.TestingStrategy) > 0 {
+		b.WriteString("## Testing Strategy\n\n")
+		b.WriteString("| Feature | Approach |\n")
+		b.WriteString("|---|---|\n")
+		for feature, approach := range bp.TestingStrategy {
+			b.WriteString(fmt.Sprintf("| %s | %s |\n", feature, approach))
+		}
+		b.WriteString("\n")
+	}
+
+	// --- Architecture Decision Records ---
+	if len(bp.ADRs) > 0 {
+		b.WriteString("## Architecture Decision Records\n\n")
+		for i, adr := range bp.ADRs {
+			b.WriteString(fmt.Sprintf("### ADR %d: %s\n\n", i+1, adr.Title))
+			b.WriteString(fmt.Sprintf("**Status:** %s\n\n", adr.Status))
+			if adr.DecisionDate != "" {
+				b.WriteString(fmt.Sprintf("**Date:** %s\n\n", adr.DecisionDate))
+			}
+			b.WriteString(fmt.Sprintf("**Context:** %s\n\n", adr.Context))
+			b.WriteString(fmt.Sprintf("**Decision:** %s\n\n", adr.Decision))
+			b.WriteString(fmt.Sprintf("**Consequences:** %s\n\n", adr.Consequences))
+			if len(adr.Alternatives) > 0 {
+				b.WriteString("**Evaluated Alternatives:**\n\n")
+				for _, alt := range adr.Alternatives {
+					b.WriteString(fmt.Sprintf("- **%s** — Pros: %s | Cons: %s | Rejected: %s\n", alt.Name, alt.Pros, alt.Cons, alt.RejectionReason))
+				}
+				b.WriteString("\n")
+			}
+		}
+	}
+
+	// --- Aporia Traceability ---
+	if len(bp.AporiaTraceability) > 0 {
+		b.WriteString("## Aporia Traceability\n\n")
+		for contradiction, resolution := range bp.AporiaTraceability {
+			b.WriteString(fmt.Sprintf("- **%s** → %s\n", contradiction, resolution))
+		}
+		b.WriteString("\n")
+	}
+
+	// --- System Architecture Diagram ---
+	diagram := bp.MermaidDiagram
+	if diagram == "" {
+		diagram = GenerateMermaidDiagram(session, bp)
+	}
+	if diagram != "" {
+		b.WriteString("## System Architecture\n\n")
+		b.WriteString(diagram)
+	}
+
+	// --- Agent Supplementary Notes ---
+	if agentMarkdown != "" {
+		b.WriteString("## Additional Notes\n\n")
+		b.WriteString(agentMarkdown)
+		b.WriteString("\n")
+	}
+
+	return b.String()
 }
 
 // GenerateDocuments performs the GenerateDocuments operation.
@@ -355,32 +872,61 @@ func (h *ToolHandler) GenerateDocuments(ctx context.Context, req *mcp.CallToolRe
 	}
 
 	session.CurrentStep = "generate_documents"
+	session.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 	if err := h.store.SaveSession(session); err != nil {
 		return errorResult(err.Error())
 	}
 
 	bp := session.Blueprint
-	aporias := session.AporiaResolutions
+	aporias := session.SynthesisResolution
 
-	if err := integration.ProcessDocumentGeneration(args.Title, args.Markdown, args.TargetBranch, args.SessionID, bp, aporias); err != nil {
+	// Allow diagram override from agent
+	if args.DiagramOverride != "" && bp != nil {
+		bp.MermaidDiagram = args.DiagramOverride
+	}
+
+	// Build comprehensive machine-optimized spec from ALL session state
+	markdownPayload := buildComprehensiveSpec(session, bp, args.Markdown, args.Title)
+
+	jiraID, err := integration.ProcessDocumentGeneration(h.store, args.Title, markdownPayload, args.TargetBranch, args.SessionID, bp, aporias)
+	if err != nil {
+		return errorResult(err.Error())
+	}
+	session.JiraID = jiraID
+	if err := h.store.SaveSession(session); err != nil {
 		return errorResult(err.Error())
 	}
 
 	hint := "Next, wrap up with 'complete_design'."
-	return jsonResult(hint, map[string]any{
-		"jira_key":       "DEV-1234",
-		"confluence_url": "https://wiki/DEV-1234",
+	return hybridMarkdownResult(hint, map[string]any{
+		"jira_key":       jiraID,
+		"confluence_url": "https://wiki/" + jiraID,
 		"commit_sha":     "abcdef123456",
 	})
 }
 
 // CompleteDesign performs the CompleteDesign operation.
 func (h *ToolHandler) CompleteDesign(ctx context.Context, req *mcp.CallToolRequest, args CompleteDesignArgs) (*mcp.CallToolResult, any, error) {
+	session, err := h.store.LoadSession(args.SessionID)
+	jiraTask := "UNKNOWN"
+	var diagram string
+	if err == nil && session != nil {
+		jiraTask = session.JiraID
+		diagram = GenerateMermaidDiagram(session, session.Blueprint)
+	}
+
 	if err := h.store.DeleteSession(args.SessionID); err != nil {
 		slog.Warn("complete_design: session cleanup failed", "error", err, "session_id", args.SessionID)
 	}
-	return jsonResult("Session completed and archived.", map[string]any{
-		"handoff_report": "All tasks successful.",
+	
+	handoffReport := "All tasks successful."
+	if diagram != "" {
+		handoffReport += "\n" + diagram
+	}
+	
+	return hybridMarkdownResult("Session completed and archived.", map[string]any{
+		"handoff_report": handoffReport,
+		"jira_task":      jiraTask,
 		"archive_path":   fmt.Sprintf("/archives/%s", args.SessionID),
 	})
 }
@@ -460,7 +1006,7 @@ func (h *ToolHandler) UpdateConfig(ctx context.Context, req *mcp.CallToolRequest
 	slog.Info("config updated via MCP tool", "key", args.Key)
 	
 	hint := fmt.Sprintf("Successfully updated configuration key '%s'. fsnotify should hot-reload this immediately.", args.Key)
-	return jsonResult(hint, map[string]any{
+	return hybridMarkdownResult(hint, map[string]any{
 		"updated_key": args.Key,
 		"status":      "SUCCESS",
 	})

@@ -20,8 +20,8 @@ func TestNewSessionState(t *testing.T) {
 		t.Error("StepStatus map should not be nil")
 	}
 
-	if session.AporiaResolutions != nil {
-		t.Error("AporiaResolutions slice should be nil for omitzero")
+	if session.DesignProposal != nil {
+		t.Error("DesignProposal should be nil for omitzero")
 	}
 
 	if len(session.StepStatus) != 0 {

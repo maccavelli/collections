@@ -14,57 +14,124 @@ import (
 )
 
 const DefaultConfigTemplate = `# ==============================================================================
-# MagicDev Server Configuration
+# MagicDev Server Configuration (magicdev.yaml)
+#
+# This file governs the integrations, behavior, and structural boundaries of the
+# MagicDev Socratic Orchestrator. The orchestrator uses fsnotify to hot-reload
+# changes made to this file in real-time.
 # ==============================================================================
 
-# Integration: Atlassian (Jira & Confluence)
-atlassian:
-  # The base URL for your Atlassian Cloud instance.
-  # Example: https://your-domain.atlassian.net
-  url: "PLACEHOLDER_ATLASSIAN_URL"
-  
-  # An API token for Atlassian Cloud.
-  # Required to create tickets and post documentation.
-  token: "PLACEHOLDER_ATLASSIAN_TOKEN"
-  
-  # Custom field ID for Story Points in your Jira instance (if applicable).
-  story_points_field: "customfield_10016"
+# ------------------------------------------------------------------------------
+# Confluence Integration (Documentation)
+# ------------------------------------------------------------------------------
+confluence:
+  # The base URL for your Confluence instance.
+  # Example: https://your-domain.atlassian.net/wiki
+  url: "PLACEHOLDER_CONFLUENCE_URL"
 
-# Integration: Git (GitHub / GitLab)
+  # The space key where documentation will be published.
+  # Default: "SPACE"
+  space: "SPACE"
+  
+  # An optional parent page ID to nest generated documents underneath.
+  # If left unset (""), documents will be published to the root of the space.
+  parent_page_id: ""
+
+# ------------------------------------------------------------------------------
+# Jira Integration (Ticketing)
+# ------------------------------------------------------------------------------
+jira:
+  # The base URL for your Jira instance.
+  # Example: https://your-domain.atlassian.net
+  url: "PLACEHOLDER_JIRA_URL"
+  
+  # The project key where issues should be created.
+  # Default: "PROJ"
+  project: "PROJ"
+  
+  # An existing issue key to attach documents to.
+  # If left unset (""), MagicDev will automatically create a new task.
+  issue: ""
+  
+  # The custom field ID used for estimating Story Points in your Jira instance.
+  # This varies per Jira workspace. You can find it in your Jira field settings.
+  # Default: "customfield_10016"
+  # story_points_field: "customfield_10016"
+
+# ------------------------------------------------------------------------------
+# Version Control Integration (Git)
+# ------------------------------------------------------------------------------
+# These settings allow MagicDev to commit artifacts and generated code to Git
+# using the native HTTPS transport protocol.
 git:
-  # Your git service username.
+  # Your git service username (e.g., your GitHub or GitLab handle).
   username: "PLACEHOLDER_GIT_USERNAME"
+
+  # The base URL for the GitLab server.
+  # Example: "https://gitlab.com" or "https://gitlab.internal.corp"
+  server_url: "PLACEHOLDER_GITLAB_URL"
+
+  # The namespace/project path in GitLab where artifacts will be pushed.
+  # Example: "my-org/my-project"
+  project_path: "PLACEHOLDER_GITLAB_PROJECT_PATH"
   
-  # A personal access token for committing documents to Git over HTTPS.
-  token: "PLACEHOLDER_GIT_TOKEN"
-  
-  # Default target branch for pushing generated artifacts.
+  # The default target branch for pushing generated artifacts if not specified.
   default_branch: "main"
 
-# Core Agent Settings
+# ------------------------------------------------------------------------------
+# Core Agent Behavior Settings
+# ------------------------------------------------------------------------------
 agent:
-  # The default tech stack assumed when analyzing requirements (e.g., .NET, Node)
+  # The default technology stack assumed when analyzing requirements or
+  # generating technical blueprints if the user does not specify one.
+  # Recommended values: ".NET", "Node", "Go", "Python"
   default_stack: ".NET"
 
-# Server Diagnostics
+# ------------------------------------------------------------------------------
+# OS & Runtime Optimization (Advanced)
+# ------------------------------------------------------------------------------
+# MagicDev applies these limits directly to the Go runtime at startup to ensure
+# stable execution in dynamic CPU-scaling environments (e.g., Kubernetes pods).
+runtime:
+  # The soft memory limit for the Go garbage collector. As memory pressure 
+  # approaches this limit, the GC will aggressively reclaim memory to prevent OOM.
+  # Valid formats: "4GB", "512MB", etc.
+  gomemlimit: "4GB"
+  
+  # The maximum number of OS threads that can execute user-level Go code.
+  # Keeping this low prevents CPU context-switching thrashing in constrained environments.
+  gomaxprocs: "2"
+
+# ------------------------------------------------------------------------------
+# Server Diagnostics & Storage
+# ------------------------------------------------------------------------------
 server:
-  # Set the database persistence path. Leave blank to use OS default cache dir.
+  # The absolute path to the BuntDB persistence file (session.db).
+  # If left blank (""), MagicDev will automatically use the OS default cache directory:
+  # Linux: $HOME/.cache/mcp-server-magicdev/session.db
+  # Windows: %LOCALAPPDATA%\mcp-server-magicdev\session.db
+  # macOS: $HOME/Library/Caches/mcp-server-magicdev/session.db
   db_path: ""
 
+# ------------------------------------------------------------------------------
 # Baseline Architectural Standards
+# ------------------------------------------------------------------------------
+# These URLs are automatically fetched by the sync engine on startup. The engine
+# compresses them with Zstd and caches them in BuntDB for zero-latency retrieval.
+# You can add local filesystem paths (e.g., /path/to/my/standards.md) or standard URLs.
 standards:
   node:
-    - "https://raw.githubusercontent.com/goldbergyoni/nodebestpractices/master/README.md"
+    - "https://raw.githubusercontent.com/nodejs/Release/main/README.md"
     - "https://raw.githubusercontent.com/goldbergyoni/nodebestpractices/master/sections/projectstructre/readme.md"
     - "https://raw.githubusercontent.com/goldbergyoni/nodebestpractices/master/sections/errorhandling/readme.md"
     - "https://raw.githubusercontent.com/goldbergyoni/nodebestpractices/master/sections/security/readme.md"
     - "https://raw.githubusercontent.com/goldbergyoni/nodebestpractices/master/sections/production/readme.md"
   dotnet:
+    - "https://raw.githubusercontent.com/dotnet/core/main/release-notes/8.0/README.md"
     - "https://raw.githubusercontent.com/dotnet/docs/main/docs/csharp/fundamentals/coding-style/coding-conventions.md"
     - "https://raw.githubusercontent.com/dotnet/docs/main/docs/standard/design-guidelines/index.md"
+    - "https://raw.githubusercontent.com/dotnet/docs/main/docs/standard/security/best-practices.md"
     - "https://raw.githubusercontent.com/dotnet/docs/main/docs/core/testing/unit-testing-best-practices.md"
-    - "https://raw.githubusercontent.com/dotnet/docs/main/docs/standard/security/index.md"
-    - "https://raw.githubusercontent.com/dotnet/docs/main/docs/architecture/microservices/index.md"
 `
 
 // ConfigPath returns the absolute path to the magicdev.yaml file.
@@ -73,7 +140,7 @@ func ConfigPath() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	magicDir := filepath.Join(dir, "magicdev")
+	magicDir := filepath.Join(dir, "mcp-server-magicdev")
 	if err := os.MkdirAll(magicDir, 0700); err != nil {
 		return "", err
 	}

@@ -50,31 +50,70 @@ func TestGenerateHybridMarkdown(t *testing.T) {
 		DependencyManifest: []db.Dependency{
 			{Name: "pkg", Version: "1.0"},
 		},
+		ComplexityScores: map[string]int{"auth": 5, "api": 8},
+		FileStructure: []db.FileEntry{
+			{Path: "src/index.ts", Type: "file"},
+		},
+		ADRs: []db.ADR{
+			{Title: "Use TypeScript", Status: "Accepted"},
+		},
 	}
-	aporias := []string{"aporia1"}
+	synthesis := &db.SynthesisResolution{Narrative: "test synthesis"}
 
-	hybrid, err := generateHybridMarkdown("JIRA-1", "content", bp, aporias)
+	hybridBytes, err := generateHybridMarkdown("JIRA-1", "content", bp, synthesis)
 	if err != nil {
 		t.Fatalf("Failed to generate: %v", err)
 	}
 
-	if hybrid.Metadata.JiraID != "JIRA-1" {
-		t.Errorf("Expected JIRA-1, got %s", hybrid.Metadata.JiraID)
+	output := string(hybridBytes)
+
+	if !strings.Contains(output, "JIRA-1") {
+		t.Errorf("Expected JIRA-1 in output")
 	}
-	if len(hybrid.Metadata.DependencyManifest) != 1 {
-		t.Error("Missing dependency manifest in metadata")
+	if !strings.Contains(output, "pkg") {
+		t.Error("Missing dependency manifest in output")
 	}
-	if len(hybrid.Metadata.AporiaResolutions) != 1 {
-		t.Error("Missing aporia resolutions in metadata")
+	if !strings.Contains(output, "---json") {
+		t.Error("Missing JSON frontmatter block in output")
 	}
-	if hybrid.Payload == "" {
+	// Validate expanded frontmatter fields
+	if !strings.Contains(output, "\"schema_version\"") {
+		t.Error("Missing schema_version in frontmatter")
+	}
+	if !strings.Contains(output, "\"generated_at\"") {
+		t.Error("Missing generated_at in frontmatter")
+	}
+	if !strings.Contains(output, "\"total_story_points\": 13") {
+		t.Error("Missing or incorrect total_story_points in frontmatter")
+	}
+	if !strings.Contains(output, "\"file_count\": 1") {
+		t.Error("Missing or incorrect file_count in frontmatter")
+	}
+	if !strings.Contains(output, "\"adr_count\": 1") {
+		t.Error("Missing or incorrect adr_count in frontmatter")
+	}
+	if len(hybridBytes) == 0 {
 		t.Error("Payload is empty")
+	}
+}
+
+func TestGenerateHybridMarkdownNilBlueprint(t *testing.T) {
+	hybridBytes, err := generateHybridMarkdown("JIRA-2", "minimal content", nil, nil)
+	if err != nil {
+		t.Fatalf("Failed to generate with nil bp: %v", err)
+	}
+	output := string(hybridBytes)
+	if !strings.Contains(output, "\"schema_version\": 1") {
+		t.Error("Expected schema_version even with nil blueprint")
+	}
+	if !strings.Contains(output, "minimal content") {
+		t.Error("Missing markdown body")
 	}
 }
 
 func TestProcessDocumentGenerationErrors(t *testing.T) {
 	// Should fail fast due to empty configuration
-	err := ProcessDocumentGeneration("title", "md", "/invalid/path", "session", nil, nil)
+	_, err := ProcessDocumentGeneration(nil, "title", "md", "/invalid/path", "session", nil, nil)
 	if err == nil {
 		t.Error("Expected error from ProcessDocumentGeneration")
 	}
@@ -82,8 +121,10 @@ func TestProcessDocumentGenerationErrors(t *testing.T) {
 
 func TestProcessDocumentGenerationNetworkFails(t *testing.T) {
 	// Temporarily set valid-looking URLs that will fail to connect
-	viper.Set("atlassian.url", "http://127.0.0.1:0")
-	viper.Set("atlassian.token", "dummy")
+	viper.Set("confluence.url", "http://127.0.0.1:0")
+	viper.Set("confluence.token", "dummy")
+	viper.Set("jira.url", "http://127.0.0.1:0")
+	viper.Set("jira.token", "dummy")
 	
 	bp := &db.Blueprint{
 		ComplexityScores: map[string]int{"feature1": 5},
@@ -91,7 +132,7 @@ func TestProcessDocumentGenerationNetworkFails(t *testing.T) {
 	
 	// This will fail at git push because the repo path is invalid,
 	// but it will successfully traverse the Jira and Confluence setup logic.
-	err := ProcessDocumentGeneration("title", "md", "/invalid/path", "session", bp, []string{"aporia"})
+	_, err := ProcessDocumentGeneration(nil, "title", "md", "/invalid/path", "session", bp, &db.SynthesisResolution{Narrative: "test"})
 	if err == nil {
 		t.Error("Expected error from ProcessDocumentGeneration at git push")
 	}
@@ -101,7 +142,7 @@ func TestProcessDocumentGenerationNetworkFails(t *testing.T) {
 
 
 func TestPushToGitLabError(t *testing.T) {
-	err := pushToGitLab("/does/not/exist", "title", []byte("data"))
+	err := pushToGitLab(nil, "JIRA-123", "main", "title", []byte("data"), nil)
 	if err == nil {
 		t.Error("Expected error from pushToGitLab")
 	}
