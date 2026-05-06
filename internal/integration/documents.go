@@ -4,13 +4,10 @@
 package integration
 
 import (
-	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"os"
 	"runtime"
 	"strings"
 	"time"
@@ -19,11 +16,8 @@ import (
 	"github.com/ctreminiom/go-atlassian/v2/jira/v3"
 	"github.com/ctreminiom/go-atlassian/v2/pkg/infra/models"
 	"github.com/ericmason/mdadf"
-	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing/object"
-	"github.com/go-git/go-git/v5/plumbing/transport/http"
-	"github.com/klauspost/compress/zstd"
 	"github.com/spf13/viper"
+	"gitlab.com/gitlab-org/api/client-go"
 
 	"mcp-server-magicdev/internal/db"
 )
@@ -36,81 +30,103 @@ type HybridMarkdown struct {
 		ProjectStep        string          `json:"step"`
 		Compression        string          `json:"compression"`
 		DependencyManifest []db.Dependency `json:"dependency_manifest,omitzero"`
-		AporiaResolutions  []string        `json:"aporia_resolutions,omitzero"`
+		DecisionCount      int             `json:"decision_count,omitzero"`
 	} `json:"metadata"`
 	Payload string `json:"payload_b64"`
 }
 
 // ProcessDocumentGeneration creates Jira task, Confluence page, and Hybrid Markdown Git commits.
 // When bp is non-nil, the Blueprint data enriches all three outputs.
-func ProcessDocumentGeneration(title, markdown, repoPath, sessionID string, bp *db.Blueprint, aporias []string) error {
+func ProcessDocumentGeneration(store *db.Store, title, markdown, targetBranch, sessionID string, bp *db.Blueprint, synthesis *db.SynthesisResolution) (string, error) {
 	ctx := context.Background()
 
-	// 1. Jira Ticket Creation
-	jiraClient, err := v3.New(nil, viper.GetString("atlassian.url"))
+	// 1. Jira Ticket Creation or Retrieval
+	jiraClient, err := v3.New(nil, viper.GetString("jira.url"))
 	if err != nil {
-		return fmt.Errorf("failed to create jira client: %w", err)
+		return "", fmt.Errorf("failed to create jira client: %w", err)
 	}
-	jiraClient.Auth.SetBasicAuth("", viper.GetString("atlassian.token"))
-
-	issuePayload := &models.IssueScheme{
-		Fields: &models.IssueFieldsScheme{
-			Summary:   title,
-			Project:   &models.ProjectScheme{Key: "PROJ"},
-			IssueType: &models.IssueTypeScheme{Name: "Task"},
-		},
+	var jiraToken string
+	if store != nil {
+		jiraToken, _ = store.GetSecret("jira")
 	}
+	jiraClient.Auth.SetBasicAuth("", jiraToken)
 
-	// Populate story points from Blueprint complexity scores if available
-	var customFields *models.CustomFields
-	if bp != nil && len(bp.ComplexityScores) > 0 {
-		totalPoints := 0
-		for _, points := range bp.ComplexityScores {
-			totalPoints += points
+	jiraID := viper.GetString("jira.issue")
+	if jiraID == "" {
+		projectKey := viper.GetString("jira.project")
+		if projectKey == "" {
+			projectKey = "PROJ"
 		}
 
-		storyPointsField := viper.GetString("atlassian.story_points_field")
-		if storyPointsField == "" {
-			storyPointsField = "customfield_10016" // Jira Cloud default
+		issuePayload := &models.IssueScheme{
+			Fields: &models.IssueFieldsScheme{
+				Summary:   title,
+				Project:   &models.ProjectScheme{Key: projectKey},
+				IssueType: &models.IssueTypeScheme{Name: "Task"},
+			},
 		}
 
-		customFields = &models.CustomFields{}
-		if err := customFields.Number(storyPointsField, float64(totalPoints)); err != nil {
-			slog.Warn("generate_documents: failed to set story points custom field", "error", err)
-		} else {
-			slog.Info("generate_documents: setting story points from blueprint",
-				"field", storyPointsField,
-				"total_points", totalPoints,
+		// Populate story points from Blueprint complexity scores if available
+		var customFields *models.CustomFields
+		if bp != nil && len(bp.ComplexityScores) > 0 {
+			totalPoints := 0
+			for _, points := range bp.ComplexityScores {
+				totalPoints += points
+			}
+
+			storyPointsField := viper.GetString("jira.story_points_field")
+			if storyPointsField == "" {
+				storyPointsField = "customfield_10016" // Jira Cloud default
+			}
+
+			customFields = &models.CustomFields{}
+			if err := customFields.Number(storyPointsField, float64(totalPoints)); err != nil {
+				slog.Warn("generate_documents: failed to set story points custom field", "error", err)
+			} else {
+				slog.Info("generate_documents: setting story points from blueprint",
+					"field", storyPointsField,
+					"total_points", totalPoints,
+				)
+			}
+		}
+
+		issue, resp, jiraErr := jiraClient.Issue.Create(ctx, issuePayload, customFields)
+		if jiraErr != nil {
+			status := 0
+			if resp != nil {
+				status = resp.StatusCode
+			}
+			slog.Warn("generate_documents: jira issue creation failed",
+				"error", jiraErr,
+				"status", status,
 			)
+			jiraID = "UNKNOWN"
+		} else if issue != nil {
+			jiraID = issue.Key
+		} else {
+			jiraID = "UNKNOWN"
 		}
-	}
-
-	issue, resp, jiraErr := jiraClient.Issue.Create(ctx, issuePayload, customFields)
-	jiraID := "UNKNOWN"
-	if jiraErr != nil {
-		status := 0
-		if resp != nil {
-			status = resp.StatusCode
-		}
-		slog.Warn("generate_documents: jira issue creation failed",
-			"error", jiraErr,
-			"status", status,
-		)
-	} else if issue != nil {
-		jiraID = issue.Key
 	}
 
 	// 2. Confluence Page Creation (Markdown -> ADF)
-	confluenceClient, err := confluence.New(nil, viper.GetString("atlassian.url"))
+	confluenceClient, err := confluence.New(nil, viper.GetString("confluence.url"))
 	if err != nil {
-		return fmt.Errorf("failed to create confluence client: %w", err)
+		return "", fmt.Errorf("failed to create confluence client: %w", err)
 	}
-	confluenceClient.Auth.SetBasicAuth("", viper.GetString("atlassian.token"))
+	var confluenceToken string
+	if store != nil {
+		confluenceToken, _ = store.GetSecret("confluence")
+	}
+	confluenceClient.Auth.SetBasicAuth("", confluenceToken)
 
 	// Enrich markdown with Technical Implementation Roadmap section from Blueprint
 	enrichedMarkdown := markdown
 	if bp != nil {
 		enrichedMarkdown = appendRoadmapSection(markdown, bp)
+	}
+
+	if jiraID != "" && jiraID != "UNKNOWN" {
+		enrichedMarkdown = fmt.Sprintf("**Associated Jira Task:** [%s](%s/browse/%s)\n\n%s", jiraID, viper.GetString("jira.url"), jiraID, enrichedMarkdown)
 	}
 
 	// Normalize line endings for Windows
@@ -119,18 +135,28 @@ func ProcessDocumentGeneration(title, markdown, repoPath, sessionID string, bp *
 	// Convert Markdown to ADF
 	adfDoc, err := mdadf.Convert(enrichedMarkdown)
 	if err != nil {
-		return fmt.Errorf("failed to convert markdown to ADF: %w", err)
+		return "", fmt.Errorf("failed to convert markdown to ADF: %w", err)
 	}
 
 	adfBytes, err := json.Marshal(adfDoc)
 	if err != nil {
-		return fmt.Errorf("failed to marshal ADF document: %w", err)
+		return "", fmt.Errorf("failed to marshal ADF document: %w", err)
+	}
+
+	space := viper.GetString("confluence.space")
+	if space == "" {
+		space = "SPACE"
+	}
+
+	confluenceTitle := title
+	if jiraID != "" && jiraID != "UNKNOWN" {
+		confluenceTitle = fmt.Sprintf("[%s] %s", jiraID, title)
 	}
 
 	contentPayload := &models.ContentScheme{
 		Type:  "page",
-		Title: title,
-		Space: &models.SpaceScheme{Key: "SPACE"},
+		Title: confluenceTitle,
+		Space: &models.SpaceScheme{Key: space},
 		Body: &models.BodyScheme{
 			Storage: &models.BodyNodeScheme{
 				Value:          string(adfBytes),
@@ -139,7 +165,14 @@ func ProcessDocumentGeneration(title, markdown, repoPath, sessionID string, bp *
 		},
 	}
 
-	if _, resp, err := confluenceClient.Content.Create(ctx, contentPayload); err != nil {
+	parentPageID := viper.GetString("confluence.parent_page_id")
+	if parentPageID != "" {
+		contentPayload.Ancestors = []*models.ContentScheme{{ID: parentPageID}}
+	}
+
+	var parentID string
+	createdPage, resp, err := confluenceClient.Content.Create(ctx, contentPayload)
+	if err != nil {
 		status := 0
 		if resp != nil {
 			status = resp.StatusCode
@@ -148,25 +181,67 @@ func ProcessDocumentGeneration(title, markdown, repoPath, sessionID string, bp *
 			"error", err,
 			"status", status,
 		)
+	} else if createdPage != nil {
+		parentID = createdPage.ID
 	}
 
-	// 3. Generate Hybrid Markdown with enriched metadata
-	hybrid, err := generateHybridMarkdown(jiraID, enrichedMarkdown, bp, aporias)
+	// 2.5 Generate Confluence Child Pages for ADRs
+	if parentID != "" && bp != nil && len(bp.ADRs) > 0 {
+		for i, adr := range bp.ADRs {
+			adrMarkdown := fmt.Sprintf("# ADR %d: %s\n\n**Status:** %s\n\n## Context\n%s\n\n## Decision\n%s\n\n## Consequences\n%s\n",
+				i+1, adr.Title, adr.Status, adr.Context, adr.Decision, adr.Consequences)
+
+			adrADF, err := mdadf.Convert(adrMarkdown)
+			if err != nil {
+				slog.Warn("failed to convert ADR to ADF", "error", err)
+				continue
+			}
+			adrBytes, err := json.Marshal(adrADF)
+			if err != nil {
+				slog.Warn("failed to marshal ADR ADF", "error", err)
+				continue
+			}
+
+			adrPayload := &models.ContentScheme{
+				Type:  "page",
+				Title: fmt.Sprintf("%s - ADR: %s", confluenceTitle, adr.Title),
+				Space: &models.SpaceScheme{Key: space},
+				Ancestors: []*models.ContentScheme{
+					{ID: parentID},
+				},
+				Body: &models.BodyScheme{
+					Storage: &models.BodyNodeScheme{
+						Value:          string(adrBytes),
+						Representation: "atlas_doc_format",
+					},
+				},
+			}
+
+			if _, resp, err := confluenceClient.Content.Create(ctx, adrPayload); err != nil {
+				status := 0
+				if resp != nil {
+					status = resp.StatusCode
+				}
+				slog.Warn("generate_documents: confluence adr page creation failed",
+					"error", err,
+					"status", status,
+				)
+			}
+		}
+	}
+
+	// 3. Generate Hybrid Markdown
+	hybridBytes, err := generateHybridMarkdown(jiraID, enrichedMarkdown, bp, synthesis)
 	if err != nil {
-		return err
+		return "", err
 	}
 
-	hybridJSON, err := json.MarshalIndent(hybrid, "", "  ")
-	if err != nil {
-		return err
+	// 4. Git Push via GitLab API
+	if err := pushToGitLab(store, jiraID, targetBranch, title, hybridBytes, bp); err != nil {
+		return "", fmt.Errorf("gitlab push failed: %w", err)
 	}
 
-	// 4. Git Push
-	if err := pushToGitLab(repoPath, title, hybridJSON); err != nil {
-		return fmt.Errorf("git push failed: %w", err)
-	}
-
-	return nil
+	return jiraID, nil
 }
 
 // appendRoadmapSection adds a "Technical Implementation Roadmap" section to the markdown.
@@ -225,84 +300,136 @@ func normalizeLineEndings(body string) string {
 	return body
 }
 
-func generateHybridMarkdown(jiraID, markdown string, bp *db.Blueprint, aporias []string) (*HybridMarkdown, error) {
-	var buf bytes.Buffer
-	enc, err := zstd.NewWriter(&buf, zstd.WithEncoderLevel(zstd.SpeedDefault))
+func generateHybridMarkdown(jiraID, markdown string, bp *db.Blueprint, synthesis *db.SynthesisResolution) ([]byte, error) {
+	// Compute aggregate metrics for frontmatter
+	totalSP := 0
+	fileCount := 0
+	adrCount := 0
+	if bp != nil {
+		for _, points := range bp.ComplexityScores {
+			totalSP += points
+		}
+		fileCount = len(bp.FileStructure)
+		adrCount = len(bp.ADRs)
+	}
+
+	meta := struct {
+		SchemaVersion      int             `json:"schema_version"`
+		GeneratedAt        string          `json:"generated_at"`
+		JiraID             string          `json:"jira_id"`
+		ProjectStep        string          `json:"project_step"`
+		DependencyManifest []db.Dependency `json:"dependency_manifest,omitempty"`
+		DecisionCount      int             `json:"decision_count,omitempty"`
+		TotalStoryPoints   int             `json:"total_story_points,omitempty"`
+		FileCount          int             `json:"file_count,omitempty"`
+		ADRCount           int             `json:"adr_count,omitempty"`
+	}{
+		SchemaVersion:     db.CurrentSchemaVersion,
+		GeneratedAt:       time.Now().UTC().Format(time.RFC3339),
+		JiraID:            jiraID,
+		ProjectStep:       "Finalized Design",
+		TotalStoryPoints:  totalSP,
+		FileCount:         fileCount,
+		ADRCount:          adrCount,
+	}
+	if bp != nil {
+		meta.DependencyManifest = bp.DependencyManifest
+	}
+
+	jsonBytes, err := json.MarshalIndent(meta, "", "  ")
 	if err != nil {
 		return nil, err
 	}
 
-	if _, err := enc.Write([]byte(markdown)); err != nil {
-		return nil, err
-	}
-	if err := enc.Close(); err != nil {
-		return nil, err
-	}
+	var buf strings.Builder
+	buf.WriteString("---json\n")
+	buf.Write(jsonBytes)
+	buf.WriteString("\n---\n\n")
+	buf.WriteString(markdown)
 
-	b64Payload := base64.StdEncoding.EncodeToString(buf.Bytes())
-
-	hybrid := &HybridMarkdown{}
-	hybrid.Metadata.JiraID = jiraID
-	hybrid.Metadata.ProjectStep = "Finalized Design"
-	hybrid.Metadata.Compression = "zstd"
-
-	// Enrich metadata from Blueprint
-	if bp != nil {
-		hybrid.Metadata.DependencyManifest = bp.DependencyManifest
-	}
-	if len(aporias) > 0 {
-		hybrid.Metadata.AporiaResolutions = aporias
-	}
-
-	hybrid.Payload = b64Payload
-
-	return hybrid, nil
+	return []byte(buf.String()), nil
 }
 
-func pushToGitLab(repoPath, title string, fileContent []byte) error {
-	r, err := git.PlainOpen(repoPath)
+func pushToGitLab(store *db.Store, jiraID, targetBranch, title string, fileContent []byte, bp *db.Blueprint) error {
+	var gitToken string
+	if store != nil {
+		gitToken, _ = store.GetSecret("gitlab")
+	}
+	if gitToken == "" {
+		return fmt.Errorf("git_token must be configured for GitLab API push")
+	}
+
+	serverURL := viper.GetString("git.server_url")
+	projectPath := viper.GetString("git.project_path")
+	if serverURL == "" || projectPath == "" {
+		return fmt.Errorf("git.server_url and git.project_path must be configured")
+	}
+
+	git, err := gitlab.NewClient(gitToken, gitlab.WithBaseURL(serverURL))
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to create gitlab client: %w", err)
 	}
 
-	w, err := r.Worktree()
-	if err != nil {
-		return err
+	// Auto-create branch if it does not exist
+	defaultBranch := viper.GetString("git.default_branch")
+	if defaultBranch == "" {
+		defaultBranch = "main"
+	}
+	_, resp, err := git.Branches.GetBranch(projectPath, targetBranch)
+	if err != nil && resp != nil && resp.StatusCode == 404 {
+		slog.Info("branch not found, creating", "branch", targetBranch, "ref", defaultBranch)
+		_, _, createErr := git.Branches.CreateBranch(projectPath, &gitlab.CreateBranchOptions{
+			Branch: gitlab.Ptr(targetBranch),
+			Ref:    gitlab.Ptr(defaultBranch),
+		})
+		if createErr != nil {
+			return fmt.Errorf("failed to create branch %q from %q: %w", targetBranch, defaultBranch, createErr)
+		}
 	}
 
-	filePath := fmt.Sprintf("%s.json", title)
-	fullPath := repoPath + "/" + filePath
-	if err := os.WriteFile(fullPath, fileContent, 0644); err != nil {
-		return err
+	filePath := fmt.Sprintf("%s.md", title)
+	commitMsg := fmt.Sprintf("Add Hybrid Markdown for %s", title)
+	if jiraID != "" && jiraID != "UNKNOWN" {
+		commitMsg = fmt.Sprintf("[%s] Add Hybrid Markdown for %s", jiraID, title)
 	}
 
-	if _, err := w.Add(filePath); err != nil {
-		return err
+	actions := []*gitlab.CommitActionOptions{}
+
+	fileAction := gitlab.FileCreate
+	if _, _, err := git.RepositoryFiles.GetFile(projectPath, filePath, &gitlab.GetFileOptions{Ref: gitlab.Ptr(targetBranch)}); err == nil {
+		fileAction = gitlab.FileUpdate
 	}
 
-	_, err = w.Commit(fmt.Sprintf("Add hybrid markdown for %s", title), &git.CommitOptions{
-		Author: &object.Signature{
-			Name:  "MagicDev Agent",
-			Email: "agent@magicdev.local",
-			When:  time.Now(),
-		},
+	actions = append(actions, &gitlab.CommitActionOptions{
+		Action:   gitlab.Ptr(fileAction),
+		FilePath: gitlab.Ptr(filePath),
+		Content:  gitlab.Ptr(string(fileContent)),
 	})
+
+	// Commit standalone Mermaid diagram file alongside the spec
+	if bp != nil && bp.MermaidDiagram != "" {
+		mmdPath := fmt.Sprintf("%s_architecture.mmd", title)
+		mmdAction := gitlab.FileCreate
+		if _, _, err := git.RepositoryFiles.GetFile(projectPath, mmdPath, &gitlab.GetFileOptions{Ref: gitlab.Ptr(targetBranch)}); err == nil {
+			mmdAction = gitlab.FileUpdate
+		}
+		actions = append(actions, &gitlab.CommitActionOptions{
+			Action:   gitlab.Ptr(mmdAction),
+			FilePath: gitlab.Ptr(mmdPath),
+			Content:  gitlab.Ptr(bp.MermaidDiagram),
+		})
+	}
+
+	opt := &gitlab.CreateCommitOptions{
+		Branch:        gitlab.Ptr(targetBranch),
+		CommitMessage: gitlab.Ptr(commitMsg),
+		Actions:       actions,
+	}
+
+	_, _, err = git.Commits.CreateCommit(projectPath, opt)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to create commit: %w", err)
 	}
 
-	gitUser := viper.GetString("git.username")
-	gitToken := viper.GetString("git.token")
-	if gitUser == "" || gitToken == "" {
-		return fmt.Errorf("git_username and git_token must be configured for HTTPS push")
-	}
-
-	auth := &http.BasicAuth{
-		Username: gitUser,
-		Password: gitToken,
-	}
-
-	return r.Push(&git.PushOptions{
-		Auth: auth,
-	})
+	return nil
 }

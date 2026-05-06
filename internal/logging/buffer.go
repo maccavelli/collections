@@ -1,3 +1,4 @@
+// Package logging provides functionality for the logging subsystem.
 package logging
 
 import (

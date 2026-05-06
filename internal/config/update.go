@@ -1,3 +1,4 @@
+// Package config provides functionality for the config subsystem.
 package config
 
 import (
