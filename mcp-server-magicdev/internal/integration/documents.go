@@ -186,46 +186,52 @@ func ProcessDocumentGeneration(store *db.Store, title, markdown, targetBranch, s
 	}
 
 	// 2.5 Generate Confluence Child Pages for ADRs
-	if parentID != "" && bp != nil && len(bp.ADRs) > 0 {
-		for i, adr := range bp.ADRs {
-			adrMarkdown := fmt.Sprintf("# ADR %d: %s\n\n**Status:** %s\n\n## Context\n%s\n\n## Decision\n%s\n\n## Consequences\n%s\n",
-				i+1, adr.Title, adr.Status, adr.Context, adr.Decision, adr.Consequences)
+	var session *db.SessionState
+	if store != nil {
+		session, err = store.LoadSession(sessionID)
+		if err != nil {
+			slog.Warn("failed to load session for ADR generation", "error", err)
+		}
+	}
 
-			adrADF, err := mdadf.Convert(adrMarkdown)
-			if err != nil {
-				slog.Warn("failed to convert ADR to ADF", "error", err)
-				continue
-			}
+	var adrMarkdown string
+	if parentID != "" && bp != nil && len(bp.ADRs) > 0 && session != nil {
+		adrMarkdown = buildComprehensiveADRDocument(session, bp)
+
+		// Publish to Confluence
+		adrADF, err := mdadf.Convert(adrMarkdown)
+		if err != nil {
+			slog.Warn("failed to convert Comprehensive ADR to ADF", "error", err)
+		} else {
 			adrBytes, err := json.Marshal(adrADF)
 			if err != nil {
 				slog.Warn("failed to marshal ADR ADF", "error", err)
-				continue
-			}
-
-			adrPayload := &models.ContentScheme{
-				Type:  "page",
-				Title: fmt.Sprintf("%s - ADR: %s", confluenceTitle, adr.Title),
-				Space: &models.SpaceScheme{Key: space},
-				Ancestors: []*models.ContentScheme{
-					{ID: parentID},
-				},
-				Body: &models.BodyScheme{
-					Storage: &models.BodyNodeScheme{
-						Value:          string(adrBytes),
-						Representation: "atlas_doc_format",
+			} else {
+				adrPayload := &models.ContentScheme{
+					Type:  "page",
+					Title: fmt.Sprintf("%s - Architecture Decision Records", confluenceTitle),
+					Space: &models.SpaceScheme{Key: space},
+					Ancestors: []*models.ContentScheme{
+						{ID: parentID},
 					},
-				},
-			}
-
-			if _, resp, err := confluenceClient.Content.Create(ctx, adrPayload); err != nil {
-				status := 0
-				if resp != nil {
-					status = resp.StatusCode
+					Body: &models.BodyScheme{
+						Storage: &models.BodyNodeScheme{
+							Value:          string(adrBytes),
+							Representation: "atlas_doc_format",
+						},
+					},
 				}
-				slog.Warn("generate_documents: confluence adr page creation failed",
-					"error", err,
-					"status", status,
-				)
+
+				if _, resp, err := confluenceClient.Content.Create(ctx, adrPayload); err != nil {
+					status := 0
+					if resp != nil {
+						status = resp.StatusCode
+					}
+					slog.Warn("generate_documents: confluence adr page creation failed",
+						"error", err,
+						"status", status,
+					)
+				}
 			}
 		}
 	}
@@ -236,8 +242,43 @@ func ProcessDocumentGeneration(store *db.Store, title, markdown, targetBranch, s
 		return "", err
 	}
 
+	// 2.6 Jira to Confluence Remote Link and Attachments
+	if createdPage != nil {
+		pageURL := fmt.Sprintf("%s/pages/viewpage.action?pageId=%s", viper.GetString("confluence.url"), createdPage.ID)
+
+		// Create Jira Remote Link
+		linkPayload := &models.RemoteLinkScheme{
+			Object: &models.RemoteLinkObjectScheme{
+				URL:   pageURL,
+				Title: createdPage.Title,
+			},
+		}
+		if _, _, err := jiraClient.Issue.Link.Remote.Create(ctx, jiraID, linkPayload); err != nil {
+			slog.Warn("generate_documents: failed to create jira remote link", "error", err)
+		}
+
+		// Upload Mermaid as attachment
+		if bp != nil && bp.MermaidDiagram != "" {
+			fileName := fmt.Sprintf("%s_architecture.mmd", title)
+			reader := strings.NewReader(bp.MermaidDiagram)
+			if _, _, err := confluenceClient.Content.Attachment.Create(ctx, createdPage.ID, "current", fileName, reader); err != nil {
+				slog.Warn("generate_documents: failed to upload mermaid attachment", "error", err)
+			}
+		}
+	}
+
+	// 2.7 Verify Cross-Links
+	confluencePayload := ""
+	if adfBytes != nil {
+		confluencePayload = string(adfBytes)
+	}
+	if err := verifyCrossLinks(hybridBytes, confluencePayload, jiraID); err != nil {
+		slog.Error("cross-link verification failed", "error", err)
+		return "", err
+	}
+
 	// 4. Git Push via GitLab API
-	if err := pushToGitLab(store, jiraID, targetBranch, title, hybridBytes, bp); err != nil {
+	if err := pushToGitLab(store, jiraID, targetBranch, title, hybridBytes, []byte(adrMarkdown), bp); err != nil {
 		return "", fmt.Errorf("gitlab push failed: %w", err)
 	}
 
@@ -324,13 +365,13 @@ func generateHybridMarkdown(jiraID, markdown string, bp *db.Blueprint, synthesis
 		FileCount          int             `json:"file_count,omitempty"`
 		ADRCount           int             `json:"adr_count,omitempty"`
 	}{
-		SchemaVersion:     db.CurrentSchemaVersion,
-		GeneratedAt:       time.Now().UTC().Format(time.RFC3339),
-		JiraID:            jiraID,
-		ProjectStep:       "Finalized Design",
-		TotalStoryPoints:  totalSP,
-		FileCount:         fileCount,
-		ADRCount:          adrCount,
+		SchemaVersion:    db.CurrentSchemaVersion,
+		GeneratedAt:      time.Now().UTC().Format(time.RFC3339),
+		JiraID:           jiraID,
+		ProjectStep:      "Finalized Design",
+		TotalStoryPoints: totalSP,
+		FileCount:        fileCount,
+		ADRCount:         adrCount,
 	}
 	if bp != nil {
 		meta.DependencyManifest = bp.DependencyManifest
@@ -350,7 +391,7 @@ func generateHybridMarkdown(jiraID, markdown string, bp *db.Blueprint, synthesis
 	return []byte(buf.String()), nil
 }
 
-func pushToGitLab(store *db.Store, jiraID, targetBranch, title string, fileContent []byte, bp *db.Blueprint) error {
+func pushToGitLab(store *db.Store, jiraID, targetBranch, title string, fileContent []byte, adrContent []byte, bp *db.Blueprint) error {
 	var gitToken string
 	if store != nil {
 		gitToken, _ = store.GetSecret("gitlab")
@@ -406,6 +447,19 @@ func pushToGitLab(store *db.Store, jiraID, targetBranch, title string, fileConte
 		Content:  gitlab.Ptr(string(fileContent)),
 	})
 
+	if len(adrContent) > 0 {
+		adrPath := fmt.Sprintf("%s_ADR.md", title)
+		adrAction := gitlab.FileCreate
+		if _, _, err := git.RepositoryFiles.GetFile(projectPath, adrPath, &gitlab.GetFileOptions{Ref: gitlab.Ptr(targetBranch)}); err == nil {
+			adrAction = gitlab.FileUpdate
+		}
+		actions = append(actions, &gitlab.CommitActionOptions{
+			Action:   gitlab.Ptr(adrAction),
+			FilePath: gitlab.Ptr(adrPath),
+			Content:  gitlab.Ptr(string(adrContent)),
+		})
+	}
+
 	// Commit standalone Mermaid diagram file alongside the spec
 	if bp != nil && bp.MermaidDiagram != "" {
 		mmdPath := fmt.Sprintf("%s_architecture.mmd", title)
@@ -432,4 +486,81 @@ func pushToGitLab(store *db.Store, jiraID, targetBranch, title string, fileConte
 	}
 
 	return nil
+}
+
+// buildComprehensiveADRDocument generates a single Markdown string containing all ADRs following the Extended MADR template.
+func buildComprehensiveADRDocument(session *db.SessionState, bp *db.Blueprint) string {
+	var b strings.Builder
+
+	b.WriteString(fmt.Sprintf("# Architecture Decision Records: %s\n\n", session.RefinedIdea))
+	if session.BusinessCase != "" {
+		b.WriteString(fmt.Sprintf("## Business Case / Decision Drivers\n%s\n\n", session.BusinessCase))
+	}
+
+	for i, adr := range bp.ADRs {
+		b.WriteString(fmt.Sprintf("## ADR %d: %s\n\n", i+1, adr.Title))
+		b.WriteString(fmt.Sprintf("**Status:** %s\n", adr.Status))
+		if adr.DecisionDate != "" {
+			b.WriteString(fmt.Sprintf("**Date:** %s\n", adr.DecisionDate))
+		}
+		b.WriteString("\n")
+
+		b.WriteString(fmt.Sprintf("### Context\n%s\n\n", adr.Context))
+
+		if len(adr.DecisionDrivers) > 0 {
+			b.WriteString("### Decision Drivers\n")
+			for _, driver := range adr.DecisionDrivers {
+				b.WriteString(fmt.Sprintf("- %s\n", driver))
+			}
+			b.WriteString("\n")
+		}
+
+		if len(adr.Alternatives) > 0 {
+			b.WriteString("### Considered Options\n")
+			for _, alt := range adr.Alternatives {
+				b.WriteString(fmt.Sprintf("- %s\n", alt.Name))
+			}
+			b.WriteString("\n")
+		}
+
+		b.WriteString(fmt.Sprintf("### Decision Outcome\n%s\n\n", adr.Decision))
+
+		b.WriteString(fmt.Sprintf("### Consequences\n%s\n\n", adr.Consequences))
+
+		if adr.Confirmation != "" {
+			b.WriteString(fmt.Sprintf("### Confirmation\n%s\n\n", adr.Confirmation))
+		}
+
+		// Extended sections
+		if adr.ComplianceCheck != "" {
+			b.WriteString("### Compliance Check\n")
+			b.WriteString(fmt.Sprintf("%s\n\n", adr.ComplianceCheck))
+		}
+
+		if adr.SecurityFootprint != "" {
+			b.WriteString("### Security Footprint\n")
+			b.WriteString(fmt.Sprintf("%s\n\n", adr.SecurityFootprint))
+		}
+		b.WriteString("---\n\n")
+	}
+
+	return b.String()
+}
+
+// verifyCrossLinks ensures that the Jira ID is embedded in both the hybrid markdown and confluence payload.
+// It implements a 3-attempt exponential backoff retry loop.
+func verifyCrossLinks(hybridBytes []byte, confluencePayload string, jiraID string) error {
+	var err error
+	for i := 0; i < 3; i++ {
+		hybridHasJira := strings.Contains(string(hybridBytes), jiraID)
+		confluenceHasJira := strings.Contains(confluencePayload, jiraID)
+
+		if (hybridHasJira && confluenceHasJira) || jiraID == "UNKNOWN" {
+			return nil
+		}
+
+		err = fmt.Errorf("Jira ID %q missing in cross-links (hybrid: %v, confluence: %v)", jiraID, hybridHasJira, confluenceHasJira)
+		time.Sleep(time.Duration(1<<i) * time.Second) // exponential backoff
+	}
+	return err
 }

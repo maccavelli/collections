@@ -67,6 +67,7 @@ type EvaluateIdeaArgs struct {
 	Labels                 []string          `json:"labels" jsonschema:"REQUIRED classification labels (e.g. domain:ecommerce). If not provided in the prompt, you MUST ask the user before calling."`
 	TargetEnvironment      string            `json:"target_environment" jsonschema:"REQUIRED target environment (e.g. containerized). If not provided in the prompt, you MUST ask the user before calling."`
 	ComplianceRequirements []string          `json:"compliance_requirements,omitempty" jsonschema:"Optional compliance tags: SOC2, HIPAA, PCI-DSS, GDPR."`
+	BusinessCase           string            `json:"business_case" jsonschema:"REQUIRED business case or decision drivers. If not provided in the prompt, you MUST ask the user before calling."`
 }
 
 // ClarifyRequirementsArgs defines the structured input for the Socratic Trifecta.
@@ -148,10 +149,19 @@ type ToolHandler struct {
 
 // EvaluateIdea performs the EvaluateIdea operation.
 func (h *ToolHandler) EvaluateIdea(ctx context.Context, req *mcp.CallToolRequest, args EvaluateIdeaArgs) (*mcp.CallToolResult, any, error) {
-	if args.TargetEnvironment == "" || len(args.Labels) == 0 {
+	if args.TargetEnvironment == "" || len(args.Labels) == 0 || args.BusinessCase == "" {
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{
-				&mcp.TextContent{Text: "[VALIDATION REQUIRED] Missing architectural context.\nYou MUST determine the `target_environment` and applicable domain `labels` (e.g. ecommerce, erp) before evaluating the idea.\nACTION: Ask the user clarifying questions to obtain this missing data. Do not guess. Once the user answers, call `evaluate_idea` again."},
+				&mcp.TextContent{Text: "[VALIDATION REQUIRED] Missing architectural context.\nYou MUST determine the `target_environment`, applicable domain `labels` (e.g. ecommerce, erp), and the `business_case` (decision drivers) before evaluating the idea.\nACTION: Ask the user clarifying questions to obtain this missing data. Do not guess. Once the user answers, call `evaluate_idea` again."},
+			},
+		}, nil, nil
+	}
+
+	if err := integration.VerifyConnectivity(h.store); err != nil {
+		return &mcp.CallToolResult{
+			IsError: true,
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: fmt.Sprintf("[BOOTSTRAP FAILED] Environment connectivity check failed: %v\nPlease ensure your Jira, GitLab, and Confluence credentials are correct before proceeding.", err)},
 			},
 		}, nil, nil
 	}
@@ -204,6 +214,9 @@ func (h *ToolHandler) EvaluateIdea(ctx context.Context, req *mcp.CallToolRequest
 	}
 	if args.TargetEnvironment != "" {
 		session.TargetEnvironment = args.TargetEnvironment
+	}
+	if args.BusinessCase != "" {
+		session.BusinessCase = args.BusinessCase
 	}
 	if len(args.ComplianceRequirements) > 0 {
 		session.ComplianceRequirements = args.ComplianceRequirements
