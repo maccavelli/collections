@@ -42,6 +42,8 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          draft: false
+          make_latest: true
           files: |
             ${{ steps.parse.outputs.APP_NAME }}/${{ steps.parse.outputs.APP_NAME }}-macos-arm64
             ${{ steps.parse.outputs.APP_NAME }}/${{ steps.parse.outputs.APP_NAME }}-macos-amd64
