@@ -12,7 +12,7 @@ import (
 // buildMADRDocument generates a comprehensive MADR 4.0-compliant specification
 // document optimized for LLM agent consumption. It serves as the authoritative
 // source of truth for implementing the designed project from scratch.
-func buildMADRDocument(title string, session *db.SessionState, bp *db.Blueprint) string {
+func buildMADRDocument(title string, session *db.SessionState, bp *db.Blueprint, jiraBaseURL, browseURL string) string {
 	var b strings.Builder
 
 	// --- YAML Frontmatter (MADR 4.0) ---
@@ -24,6 +24,14 @@ func buildMADRDocument(title string, session *db.SessionState, bp *db.Blueprint)
 	}
 	if session.JiraID != "" {
 		b.WriteString(fmt.Sprintf("jira: %s\n", session.JiraID))
+		// Prefer authoritative browseURL from Jira API over config-constructed URL
+		jiraLink := browseURL
+		if jiraLink == "" && jiraBaseURL != "" {
+			jiraLink = fmt.Sprintf("%s/browse/%s", jiraBaseURL, session.JiraID)
+		}
+		if jiraLink != "" {
+			b.WriteString(fmt.Sprintf("jira_url: %s\n", jiraLink))
+		}
 	}
 	if session.TechStack != "" {
 		b.WriteString(fmt.Sprintf("tech_stack: %s\n", session.TechStack))
@@ -41,10 +49,26 @@ func buildMADRDocument(title string, session *db.SessionState, bp *db.Blueprint)
 		b.WriteString(fmt.Sprintf("risk_level: %s\n", session.RiskLevel))
 	}
 	b.WriteString(fmt.Sprintf("schema_version: %d\n", db.CurrentSchemaVersion))
+	if session.ChaosAnalysis != nil && session.ChaosAnalysis.ChaosScore > 0 {
+		b.WriteString(fmt.Sprintf("chaos_score: %d\n", session.ChaosAnalysis.ChaosScore))
+	}
+	if session.SynthesisResolution != nil && session.SynthesisResolution.LLMEnhanced {
+		b.WriteString("llm_enhanced: true\n")
+	}
 	b.WriteString("---\n\n")
 
 	// --- Title ---
 	b.WriteString(fmt.Sprintf("# %s\n\n", title))
+
+	if session.JiraID != "" && session.JiraID != "UNKNOWN" {
+		jiraLink := browseURL
+		if jiraLink == "" && jiraBaseURL != "" {
+			jiraLink = fmt.Sprintf("%s/browse/%s", jiraBaseURL, session.JiraID)
+		}
+		if jiraLink != "" {
+			b.WriteString(fmt.Sprintf("**Associated Jira Task:** [%s](%s)\n\n", session.JiraID, jiraLink))
+		}
+	}
 
 	// --- Persona ---
 	if p := persona.GeneratePersona(session, bp); p != "" {
@@ -82,6 +106,15 @@ func buildMADRDocument(title string, session *db.SessionState, bp *db.Blueprint)
 
 	// --- Implementation Guardrails ---
 	writeGuardrails(&b, session)
+
+	// --- Chaos Architect: Operational Constraints (No-Fly Zones) ---
+	writeConstraintLocks(&b, session)
+
+	// --- Chaos Architect: Rejected Options (Graveyard) ---
+	writeChaosGraveyard(&b, session)
+
+	// --- Chaos Architect: Failure Modes & Stress Scenarios ---
+	writeStressScenarios(&b, session)
 
 	// --- Technical Implementation Roadmap ---
 	writeRoadmap(&b, bp)
@@ -526,6 +559,65 @@ func writeValidationCriteria(b *strings.Builder, bp *db.Blueprint) {
 	b.WriteString("## Validation Criteria\n\n")
 	for _, c := range criteria {
 		b.WriteString(fmt.Sprintf("* %s\n", c))
+	}
+	b.WriteString("\n")
+}
+
+// writeConstraintLocks renders the Chaos Architect's operational constraints as a table.
+func writeConstraintLocks(b *strings.Builder, session *db.SessionState) {
+	if session.ChaosAnalysis == nil || len(session.ChaosAnalysis.Constraints) == 0 {
+		return
+	}
+	b.WriteString("## Operational Constraints (No-Fly Zones)\n\n")
+	b.WriteString("> These hard operational boundaries were identified by the Chaos Architect. Violating them will cause runtime failures.\n\n")
+	b.WriteString("| Domain | Constraint | Platform | Impact | Validated |\n")
+	b.WriteString("|--------|-----------|----------|--------|----------|\n")
+	for _, c := range session.ChaosAnalysis.Constraints {
+		validated := "\u2718"
+		if c.Enforced {
+			validated = "\u2714 (standard)"
+		}
+		b.WriteString(fmt.Sprintf("| %s | %s | %s | %s | %s |\n", c.Domain, c.Constraint, c.Platform, c.Impact, validated))
+	}
+	b.WriteString("\n")
+}
+
+// writeChaosGraveyard renders the Chaos Architect's rejected patterns.
+func writeChaosGraveyard(b *strings.Builder, session *db.SessionState) {
+	if session.ChaosAnalysis == nil || len(session.ChaosAnalysis.RejectedPatterns) == 0 {
+		return
+	}
+	b.WriteString("## Rejected Options (Chaos Graveyard)\n\n")
+	b.WriteString("> The following patterns have been explicitly killed by the Chaos Architect. DO NOT implement these.\n\n")
+	for _, r := range session.ChaosAnalysis.RejectedPatterns {
+		severityBadge := "\u26A0\uFE0F"
+		if r.Severity == "fatal" {
+			severityBadge = "\U0001F6D1"
+		}
+		b.WriteString(fmt.Sprintf("* %s **[%s]** %s \u2014 %s", severityBadge, r.Severity, r.Pattern, r.Reason))
+		if r.Source != "" && r.Source != "chaos_architect" {
+			b.WriteString(fmt.Sprintf(" _(source: %s)_", r.Source))
+		}
+		b.WriteString("\n")
+	}
+	b.WriteString("\n")
+}
+
+// writeStressScenarios renders the Chaos Architect's edge case analysis.
+func writeStressScenarios(b *strings.Builder, session *db.SessionState) {
+	if session.ChaosAnalysis == nil || len(session.ChaosAnalysis.StressScenarios) == 0 {
+		return
+	}
+	b.WriteString("## Failure Modes & Stress Scenarios\n\n")
+	b.WriteString("> Edge cases, race conditions, and cascading failures the design must survive.\n\n")
+	b.WriteString("| Scenario | Trigger | Impact | Mitigation |\n")
+	b.WriteString("|----------|---------|--------|------------|\n")
+	for _, s := range session.ChaosAnalysis.StressScenarios {
+		mitigation := s.Mitigation
+		if mitigation == "" {
+			mitigation = "\u2014 (unresolved)"
+		}
+		b.WriteString(fmt.Sprintf("| %s | %s | %s | %s |\n", s.Scenario, s.Trigger, s.Impact, mitigation))
 	}
 	b.WriteString("\n")
 }

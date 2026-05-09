@@ -15,6 +15,7 @@ func TestBuildMADRDocument(t *testing.T) {
 		BusinessCase:      "Audit Node.js codebases for best practices",
 		RefinedIdea:       "A TypeScript MCP server for codebase auditing",
 		Labels:            []string{"domain:devtools", "type:mcp-server"},
+		JiraID:            "MAG-99",
 		RiskLevel:         "medium",
 		DesignProposal: &db.DesignProposal{
 			Narrative: "The system uses a modular tool pipeline.",
@@ -83,7 +84,7 @@ func TestBuildMADRDocument(t *testing.T) {
 		},
 	}
 
-	out := buildMADRDocument("Node Auditor MCP Server", session, bp)
+	out := buildMADRDocument("Node Auditor MCP Server", session, bp, "https://jiraqc.lkqdev.com", "https://jiraqc.lkqdev.com/browse/MAG-99")
 
 	checks := []struct {
 		label   string
@@ -95,6 +96,11 @@ func TestBuildMADRDocument(t *testing.T) {
 		{"tech stack", "tech_stack: Node"},
 		{"risk level", "risk_level: medium"},
 		{"schema version", "schema_version: 1"},
+
+		// Jira link
+		{"jira frontmatter", "jira: MAG-99"},
+		{"jira url frontmatter", "jira_url: https://jiraqc.lkqdev.com/browse/MAG-99"},
+		{"jira clickable link", "**Associated Jira Task:** [MAG-99](https://jiraqc.lkqdev.com/browse/MAG-99)"},
 
 		// Persona
 		{"persona section", "## Persona"},
@@ -161,7 +167,7 @@ func TestBuildMADRDocument_MinimalInput(t *testing.T) {
 		},
 	}
 
-	out := buildMADRDocument("Minimal Project", session, bp)
+	out := buildMADRDocument("Minimal Project", session, bp, "", "")
 
 	if !strings.Contains(out, "# Minimal Project") {
 		t.Error("Missing title")

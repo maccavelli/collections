@@ -10,6 +10,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"net/textproto"
 	"strings"
 )
 
@@ -271,7 +272,17 @@ func (cc *ConfluenceClient) CreateAttachment(ctx context.Context, contentID, sta
 	var buf bytes.Buffer
 	writer := multipart.NewWriter(&buf)
 
-	part, err := writer.CreateFormFile("file", fileName)
+	// Use CreatePart with explicit MIME type so Confluence recognizes SVGs as
+	// renderable images instead of opaque binary blobs (CreateFormFile defaults
+	// to application/octet-stream which forces download).
+	contentType := "application/octet-stream"
+	if strings.HasSuffix(strings.ToLower(fileName), ".svg") {
+		contentType = "image/svg+xml"
+	}
+	partHeader := make(textproto.MIMEHeader)
+	partHeader.Set("Content-Disposition", fmt.Sprintf(`form-data; name="file"; filename="%s"`, fileName))
+	partHeader.Set("Content-Type", contentType)
+	part, err := writer.CreatePart(partHeader)
 	if err != nil {
 		return fmt.Errorf("failed to create multipart form: %w", err)
 	}

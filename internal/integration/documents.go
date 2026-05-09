@@ -36,15 +36,20 @@ type HybridMarkdown struct {
 
 // ProcessDocumentGeneration creates Jira task, Confluence page, and Hybrid Markdown Git commits.
 // When bp is non-nil, the Blueprint data enriches all three outputs.
-func ProcessDocumentGeneration(store *db.Store, title, markdown, targetBranch, sessionID string, bp *db.Blueprint, synthesis *db.SynthesisResolution) (string, error) {
+// Returns the Jira issue key and the authoritative browse URL for downstream consumers.
+func ProcessDocumentGeneration(store *db.Store, title, markdown, targetBranch, sessionID string, bp *db.Blueprint, synthesis *db.SynthesisResolution) (string, string, error) {
 	ctx := context.Background()
+
+	// Capture the Jira base URL ONCE from viper to prevent fsnotify
+	// hot-reload drift across multiple downstream consumers.
+	jiraBaseURL := viper.GetString("jira.url")
 
 	// 1. Jira Ticket Creation or Retrieval
 	var jiraToken string
 	if store != nil {
 		jiraToken, _ = store.GetSecret("jira")
 	}
-	jc := NewJiraClient(viper.GetString("jira.url"), jiraToken)
+	jc := NewJiraClient(jiraBaseURL, jiraToken)
 
 	jiraID := viper.GetString("jira.issue")
 	if jiraID == "" {
@@ -67,15 +72,15 @@ func ProcessDocumentGeneration(store *db.Store, title, markdown, targetBranch, s
 			}
 
 			storyPointsField := viper.GetString("jira.story_points_field")
-			if storyPointsField == "" {
-				storyPointsField = "customfield_10016"
+			if storyPointsField != "" {
+				fields[storyPointsField] = float64(totalPoints)
+				slog.Info("generate_documents: setting story points from blueprint",
+					"field", storyPointsField,
+					"total_points", totalPoints,
+				)
+			} else {
+				slog.Debug("generate_documents: skipping story points (jira.story_points_field not configured)")
 			}
-
-			fields[storyPointsField] = float64(totalPoints)
-			slog.Info("generate_documents: setting story points from blueprint",
-				"field", storyPointsField,
-				"total_points", totalPoints,
-			)
 		}
 
 		issue, status, jiraErr := jc.CreateIssue(ctx, &JiraIssuePayload{Fields: fields})
@@ -92,6 +97,17 @@ func ProcessDocumentGeneration(store *db.Store, title, markdown, targetBranch, s
 		}
 	}
 
+	// Compute the authoritative browse URL for downstream consumers.
+	var browseURL string
+	if jiraID != "" && jiraID != "UNKNOWN" && jiraBaseURL != "" {
+		browseURL = fmt.Sprintf("%s/browse/%s", jiraBaseURL, jiraID)
+		slog.Info("generate_documents: jira ticket resolved",
+			"jira_id", jiraID,
+			"jira_base_url", jiraBaseURL,
+			"browse_url", browseURL,
+		)
+	}
+
 	// 2. Confluence Page Creation (Markdown -> ADF)
 	var confluenceToken string
 	if store != nil {
@@ -106,7 +122,7 @@ func ProcessDocumentGeneration(store *db.Store, title, markdown, targetBranch, s
 	}
 
 	if jiraID != "" && jiraID != "UNKNOWN" {
-		enrichedMarkdown = fmt.Sprintf("**Associated Jira Task:** [%s](%s/browse/%s)\n\n%s", jiraID, viper.GetString("jira.url"), jiraID, enrichedMarkdown)
+		enrichedMarkdown = fmt.Sprintf("**Associated Jira Task:** [%s](%s/browse/%s)\n\n%s", jiraID, jiraBaseURL, jiraID, enrichedMarkdown)
 	}
 
 	// Normalize line endings for Windows
@@ -115,7 +131,7 @@ func ProcessDocumentGeneration(store *db.Store, title, markdown, targetBranch, s
 	// 3. Generate Hybrid Markdown & MADR Early
 	hybridBytes, hybridErr := generateHybridMarkdown(jiraID, enrichedMarkdown, bp, synthesis)
 	if hybridErr != nil {
-		return "", hybridErr
+		return "", "", hybridErr
 	}
 
 	var session *db.SessionState
@@ -128,8 +144,8 @@ func ProcessDocumentGeneration(store *db.Store, title, markdown, targetBranch, s
 	}
 
 	var adrMarkdown string
-	if bp != nil && len(bp.ADRs) > 0 && session != nil {
-		adrMarkdown = buildMADRDocument(title, session, bp)
+	if bp != nil && session != nil {
+		adrMarkdown = buildMADRDocument(title, session, bp, jiraBaseURL, browseURL)
 	}
 
 	// Format Hybrid Markdown for Confluence (replace frontmatter with code block)
@@ -140,7 +156,7 @@ func ProcessDocumentGeneration(store *db.Store, title, markdown, targetBranch, s
 	// Convert Hybrid Markdown to XHTML storage format for Confluence Data Center
 	xhtml, err := markdownToXHTML(hybridStr)
 	if err != nil {
-		return "", fmt.Errorf("failed to convert markdown to XHTML: %w", err)
+		return "", "", fmt.Errorf("failed to convert markdown to XHTML: %w", err)
 	}
 
 	space := viper.GetString("confluence.space")
@@ -219,8 +235,12 @@ func ProcessDocumentGeneration(store *db.Store, title, markdown, targetBranch, s
 		linkPayload := &JiraRemoteLinkPayload{}
 		linkPayload.Object.URL = pageURL
 		linkPayload.Object.Title = createdPage.Title
-		if err := jc.CreateRemoteLink(ctx, jiraID, linkPayload); err != nil {
-			slog.Warn("generate_documents: failed to create jira remote link", "error", err)
+		if jiraID != "" && jiraID != "UNKNOWN" {
+			if err := jc.CreateRemoteLink(ctx, jiraID, linkPayload); err != nil {
+				slog.Warn("generate_documents: failed to create jira remote link", "error", err)
+			}
+		} else {
+			slog.Debug("generate_documents: skipping jira remote link (no valid issue)")
 		}
 
 		// Upload D2 SVG as attachment (renders natively in Confluence)
@@ -245,19 +265,25 @@ func ProcessDocumentGeneration(store *db.Store, title, markdown, targetBranch, s
 	confluencePayload := xhtml
 	if err := verifyCrossLinks(hybridBytes, confluencePayload, jiraID); err != nil {
 		slog.Error("cross-link verification failed", "error", err)
-		return "", err
+		return "", "", err
 	}
 
 	// 4. Git Push via GitLab API
 	mainGitLabContent := []byte(adrMarkdown)
 	if len(mainGitLabContent) == 0 {
 		mainGitLabContent = hybridBytes
+		slog.Debug("generate_documents: using hybrid markdown for git commit (no MADR generated)")
+	} else {
+		slog.Debug("generate_documents: using MADR for git commit",
+			"madr_bytes", len(mainGitLabContent),
+			"jira_id", jiraID,
+		)
 	}
 	if err := pushToGitLab(store, jiraID, targetBranch, title, mainGitLabContent, nil, bp); err != nil {
-		return "", fmt.Errorf("gitlab push failed: %w", err)
+		return "", "", fmt.Errorf("gitlab push failed: %w", err)
 	}
 
-	return jiraID, nil
+	return jiraID, browseURL, nil
 }
 
 // appendRoadmapSection adds a "Technical Implementation Roadmap" section to the markdown.
@@ -321,12 +347,16 @@ func generateHybridMarkdown(jiraID, markdown string, bp *db.Blueprint, synthesis
 	totalSP := 0
 	fileCount := 0
 	adrCount := 0
+	decisionCount := 0
 	if bp != nil {
 		for _, points := range bp.ComplexityScores {
 			totalSP += points
 		}
 		fileCount = len(bp.FileStructure)
 		adrCount = len(bp.ADRs)
+	}
+	if synthesis != nil {
+		decisionCount = len(synthesis.Decisions)
 	}
 
 	meta := struct {
@@ -344,6 +374,7 @@ func generateHybridMarkdown(jiraID, markdown string, bp *db.Blueprint, synthesis
 		GeneratedAt:      time.Now().UTC().Format(time.RFC3339),
 		JiraID:           jiraID,
 		ProjectStep:      "Finalized Design",
+		DecisionCount:    decisionCount,
 		TotalStoryPoints: totalSP,
 		FileCount:        fileCount,
 		ADRCount:         adrCount,
