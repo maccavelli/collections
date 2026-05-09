@@ -73,7 +73,7 @@ jira:
   
   # The custom field ID used for estimating Story Points in your Jira instance.
   # This varies per Jira workspace. You can find it in your Jira field settings.
-  # If left empty, defaults to "customfield_10016" at runtime.
+  # If left empty, story points will NOT be set on created issues.
   story_points_field: ""
 
 # ------------------------------------------------------------------------------
@@ -173,10 +173,10 @@ standards:
     - "https://raw.githubusercontent.com/dotnet/dotnet-docker/main/documentation/scenarios/installing-dotnet.md"
 
 # ------------------------------------------------------------------------------
-# Semantic Gatekeeper Intelligence (LLM)
+# Intelligence Engine (LLM)
 # ------------------------------------------------------------------------------
 llm:
-  # The chosen model used by the Semantic Gatekeeper during requirement analysis.
+  # The chosen model used by the Intelligence Engine during requirement analysis.
   # This value can be hot-reloaded at runtime.
   # Examples: "gemini-2.5-flash", "gpt-4o", "claude-3-5-sonnet-latest"
   model: ""

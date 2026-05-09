@@ -152,23 +152,42 @@ var serveCmd = &cobra.Command{
 		// Launch the background baseline standards sync priority cascade
 		go sync.SyncBaselines(store)
 
-		// Semantic Gatekeeper (LLM) initialization and health check closure
+		// Intelligence Engine (LLM) initialization and health check closure
 		checkLLMHealth := func() {
 			if client, err := integration.NewLLMClient(store); err != nil {
-				slog.Info("Semantic Gatekeeper (LLM) feature disabled or unconfigured", "reason", err)
+				slog.Info("Intelligence Engine (LLM) feature disabled or unconfigured", "reason", err)
 			} else {
-				// Perform a lightweight health check to ensure the model is valid
-				// We use a short timeout context to prevent blocking the reload loop
-				pingCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				defer cancel()
-				
-				if _, err := client.GenerateContent(pingCtx, "ping"); err != nil {
-					slog.Warn("Semantic Gatekeeper (LLM) is configured but failing/unavailable", 
+				// Retry health check up to 3 times to handle cold starts and transient failures
+				const maxRetries = 3
+				var healthy bool
+
+				for attempt := 1; attempt <= maxRetries; attempt++ {
+					pingCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+					_, pingErr := client.GenerateContent(pingCtx, "ping")
+					cancel()
+
+					if pingErr == nil {
+						slog.Info("Intelligence Engine (LLM) feature enabled and healthy",
+							"model", viper.GetString("llm.model"),
+							"attempt", attempt,
+						)
+						healthy = true
+						break
+					}
+
+					slog.Warn("Intelligence Engine (LLM) health check failed",
+						"attempt", attempt,
+						"max_retries", maxRetries,
 						"model", viper.GetString("llm.model"),
-						"error", err,
+						"error", pingErr,
 					)
-				} else {
-					slog.Info("Semantic Gatekeeper (LLM) feature enabled and healthy", 
+					if attempt < maxRetries {
+						time.Sleep(time.Duration(1<<attempt) * time.Second) // 2s, 4s
+					}
+				}
+
+				if !healthy {
+					slog.Warn("Intelligence Engine (LLM) is configured but failing after all retries",
 						"model", viper.GetString("llm.model"),
 					)
 				}

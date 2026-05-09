@@ -47,7 +47,7 @@ var ValidConfigKeys = []ConfigKeyInfo{
 	{Key: "server.db_path", Description: "Absolute path to BuntDB session file", ValueType: "string"},
 
 	// LLM
-	{Key: "llm.model", Description: "The chosen model used by the Semantic Gatekeeper", ValueType: "string"},
+	{Key: "llm.model", Description: "The chosen model used by the Intelligence Engine", ValueType: "string"},
 }
 
 // LookupKey searches ValidConfigKeys for the given dotted key path.

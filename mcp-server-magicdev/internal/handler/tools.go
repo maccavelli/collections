@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -70,6 +72,7 @@ type ClarifyRequirementsArgs struct {
 	SessionID           string                  `json:"session_id" jsonschema:"The active session ID returned by evaluate_idea"`
 	DesignProposal      *db.DesignProposal      `json:"design_proposal" jsonschema:"Thesis architect output: Proposed architecture, template AST, security mandates, stack tuning, and standard references"`
 	SkepticAnalysis     *db.SkepticAnalysis     `json:"skeptic_analysis" jsonschema:"Antithesis skeptic output: Vulnerabilities, design concerns, and granular questions"`
+	ChaosAnalysis       *db.ChaosAnalysis       `json:"chaos_analysis,omitempty" jsonschema:"Chaos Architect output: Fatal flaws, operational constraints, rejected patterns, and stress scenarios"`
 	SynthesisResolution *db.SynthesisResolution `json:"synthesis_resolution" jsonschema:"Aporia engine synthesis: Resolved decisions, outstanding questions, and unresolved dependencies"`
 	IsVetted            bool                    `json:"is_vetted" jsonschema:"Final result determined by Aporia Engine. If false, tool triggers an error with outstanding questions."`
 }
@@ -123,7 +126,8 @@ type GenerateDocumentsArgs struct {
 
 // CompleteDesignArgs defines the CompleteDesignArgs structure.
 type CompleteDesignArgs struct {
-	SessionID string `json:"session_id" jsonschema:"The active session ID"`
+	SessionID    string `json:"session_id" jsonschema:"The active session ID"`
+	ArtifactPath string `json:"artifact_path,omitempty" jsonschema:"Optional absolute path for IDE-specific artifact delivery"`
 }
 
 // UpdateConfigArgs defines the UpdateConfigArgs structure.
@@ -221,7 +225,7 @@ func (h *ToolHandler) EvaluateIdea(ctx context.Context, req *mcp.CallToolRequest
 		return errorResult(err.Error())
 	}
 
-	// --- Semantic Gatekeeper Intelligence (Phase 1) ---
+	// --- Intelligence Engine (Phase 1) ---
 	meta, err := h.store.GetSessionMetadata(sessionID)
 	if err != nil {
 		slog.Warn("Failed to retrieve session metadata", "error", err)
@@ -232,11 +236,35 @@ func (h *ToolHandler) EvaluateIdea(ctx context.Context, req *mcp.CallToolRequest
 
 	llmClient, llmErr := integration.NewLLMClient(h.store)
 	if llmErr == nil && llmClient != nil {
-		// Run semantic gatekeeper
+		// Run semantic gatekeeper with retry
 		prompt := fmt.Sprintf("Analyze the following software idea and determine its complexity, security footprint, and pattern preference.\n\nIdea: %s\nTarget Stack: %s\nTarget Environment: %s\nLabels: %s\nBusiness Case: %s\n\nReturn ONLY a JSON object with the following keys: \"complexity_score\" (integer 1-13), \"security_footprint\" (string), \"pattern_preference\" (string).", args.RawIdea, args.TargetStack, args.TargetEnvironment, strings.Join(args.Labels, ", "), args.BusinessCase)
 
-		response, err := llmClient.GenerateContent(ctx, prompt)
-		if err == nil {
+		const maxRetries = 3
+		var gatekeeperOK bool
+
+		for attempt := 1; attempt <= maxRetries; attempt++ {
+			llmCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+			response, err := llmClient.GenerateContent(llmCtx, prompt)
+			cancel()
+
+			if err != nil {
+				slog.Warn("Intelligence Engine LLM call failed",
+					"attempt", attempt,
+					"max_retries", maxRetries,
+					"error", err,
+				)
+				if attempt < maxRetries {
+					backoff := time.Duration(1<<attempt) * time.Second
+					select {
+					case <-time.After(backoff):
+					case <-ctx.Done():
+						slog.Warn("Intelligence Engine cancelled during backoff")
+						break
+					}
+				}
+				continue
+			}
+
 			var gatekeeper struct {
 				ComplexityScore   int    `json:"complexity_score"`
 				SecurityFootprint string `json:"security_footprint"`
@@ -247,20 +275,39 @@ func (h *ToolHandler) EvaluateIdea(ctx context.Context, req *mcp.CallToolRequest
 			cleaned = strings.TrimSuffix(cleaned, "```")
 			cleaned = strings.TrimSpace(cleaned)
 
-			if err := json.Unmarshal([]byte(cleaned), &gatekeeper); err == nil {
+			if parseErr := json.Unmarshal([]byte(cleaned), &gatekeeper); parseErr == nil {
 				meta.ComplexityScore = gatekeeper.ComplexityScore
 				meta.SecurityFootprint = gatekeeper.SecurityFootprint
 				meta.PatternPreference = gatekeeper.PatternPreference
 				h.store.SaveSessionMetadata(meta)
-				slog.Info("Semantic gatekeeper completed successfully", "score", meta.ComplexityScore)
+				slog.Info("Semantic gatekeeper completed successfully",
+					"score", meta.ComplexityScore,
+					"attempt", attempt,
+				)
+				gatekeeperOK = true
+				break
 			} else {
-				slog.Warn("Failed to parse semantic gatekeeper response", "error", err, "response", response)
+				slog.Warn("Failed to parse semantic gatekeeper response",
+					"attempt", attempt,
+					"error", parseErr,
+					"response", response,
+				)
+				if attempt < maxRetries {
+					backoff := time.Duration(1<<attempt) * time.Second
+					select {
+					case <-time.After(backoff):
+					case <-ctx.Done():
+						break
+					}
+				}
 			}
-		} else {
-			slog.Warn("LLM Semantic Gatekeeper failed, falling back to default behavior", "error", err)
+		}
+
+		if !gatekeeperOK {
+			slog.Warn("Intelligence Engine failed after all retries, using defaults")
 		}
 	} else {
-		slog.Info("LLM not configured, skipping semantic gatekeeper", "reason", llmErr)
+		slog.Info("LLM not configured, skipping Intelligence Engine", "reason", llmErr)
 	}
 	// ---------------------------------------------------
 
@@ -330,7 +377,45 @@ func (h *ToolHandler) ClarifyRequirements(ctx context.Context, req *mcp.CallTool
 	// Persist all structured Trifecta data
 	session.DesignProposal = args.DesignProposal
 	session.SkepticAnalysis = args.SkepticAnalysis
-	session.SynthesisResolution = args.SynthesisResolution
+
+	// --- Input Sanitization: strip server-authority fields ---
+	if args.ChaosAnalysis != nil {
+		// Chaos requires Thesis input
+		if args.DesignProposal == nil {
+			return errorResult("Chaos Architect requires Thesis (design_proposal) input")
+		}
+		for i := range args.ChaosAnalysis.Constraints {
+			args.ChaosAnalysis.Constraints[i].Enforced = false
+		}
+		for i := range args.ChaosAnalysis.RejectedPatterns {
+			args.ChaosAnalysis.RejectedPatterns[i].Source = "chaos_architect"
+		}
+		if args.ChaosAnalysis.ChaosScore < 1 {
+			args.ChaosAnalysis.ChaosScore = 1
+		}
+		if args.ChaosAnalysis.ChaosScore > 10 {
+			args.ChaosAnalysis.ChaosScore = 10
+		}
+		session.ChaosAnalysis = args.ChaosAnalysis
+	}
+	if args.SynthesisResolution != nil {
+		args.SynthesisResolution.ChaosVetted = false
+		args.SynthesisResolution.RejectedOptions = nil
+		args.SynthesisResolution.ConstraintLocks = nil
+		args.SynthesisResolution.LLMEnhanced = false
+	}
+
+	// --- Server-side Aporia Engine ---
+	session.SynthesisResolution = runAporiaEngine(
+		ctx,
+		h.store,
+		session,
+		args.DesignProposal,
+		args.SkepticAnalysis,
+		args.ChaosAnalysis,
+		args.SynthesisResolution,
+	)
+
 	session.StepStatus["clarify_requirements"] = "COMPLETED"
 	session.CurrentStep = "clarify_requirements"
 
@@ -360,6 +445,16 @@ func (h *ToolHandler) ClarifyRequirements(ctx context.Context, req *mcp.CallTool
 	if args.SynthesisResolution != nil {
 		resultData["decisions_resolved"] = len(args.SynthesisResolution.Decisions)
 	}
+	if args.ChaosAnalysis != nil {
+		resultData["chaos_score"] = args.ChaosAnalysis.ChaosScore
+		resultData["fatal_flaws"] = len(args.ChaosAnalysis.FatalFlaws)
+		resultData["constraints"] = len(args.ChaosAnalysis.Constraints)
+		resultData["rejected_patterns"] = len(args.ChaosAnalysis.RejectedPatterns)
+	}
+	if session.SynthesisResolution != nil {
+		resultData["llm_enhanced"] = session.SynthesisResolution.LLMEnhanced
+		resultData["chaos_vetted"] = session.SynthesisResolution.ChaosVetted
+	}
 	return hybridMarkdownResult(hint, resultData)
 }
 
@@ -382,7 +477,7 @@ func (h *ToolHandler) IngestStandards(ctx context.Context, req *mcp.CallToolRequ
 	}
 
 	hint := "Standard ingested successfully. You may ingest another, or proceed to 'clarify_requirements'.\n\n" +
-		"=== SOCRATIC TRIFECTA DIRECTIVE ===\n" +
+		"=== SOCRATIC TRIFECTA + CHAOS ARCHITECT DIRECTIVE ===\n" +
 		"When ALL standards are ingested, you MUST call 'clarify_requirements' with the following structured analysis:\n\n" +
 		"1. THESIS ARCHITECT (design_proposal):\n" +
 		"   - Propose a complete application architecture using the ingested standards as your baseline.\n" +
@@ -396,8 +491,15 @@ func (h *ToolHandler) IngestStandards(ctx context.Context, req *mcp.CallToolRequ
 		"   - Identify vulnerabilities: attack vectors, injection points, auth bypass scenarios.\n" +
 		"   - Flag design_concerns: over-engineering, missing patterns, scalability bottlenecks, code smells.\n" +
 		"   - Generate granular_questions: detailed, code-specific questions the user must answer.\n\n" +
-		"3. APORIA ENGINE (synthesis_resolution):\n" +
-		"   - Resolve conflicts between thesis and antithesis with explicit decisions and rationale.\n" +
+		"3. CHAOS ARCHITECT (chaos_analysis):\n" +
+		"   - Assume the combined Thesis+Antithesis design WILL fail. Your job is to find WHERE and HOW.\n" +
+		"   - Identify fatal_flaws: issues severe enough to veto the entire design.\n" +
+		"   - Map constraints: platform/runtime/API hard limits the design violates (domain, constraint, platform, impact).\n" +
+		"   - Build the Graveyard (rejected_patterns): patterns you killed and WHY (pattern, reason, severity).\n" +
+		"   - Construct stress_scenarios: edge cases, race conditions, cascading failures (scenario, trigger, impact, mitigation).\n" +
+		"   - Assign a chaos_score (1-10): your confidence in the design's operational survivability.\n\n" +
+		"4. APORIA ENGINE (synthesis_resolution):\n" +
+		"   - Resolve conflicts between thesis, antithesis, and chaos with explicit decisions and rationale.\n" +
 		"   - Escalate outstanding_questions to the user with full context and impact descriptions.\n" +
 		"   - List unresolved_dependencies that need external input.\n" +
 		"   - Set is_vetted=true ONLY if all questions are resolved. Otherwise is_vetted=false.\n" +
@@ -519,6 +621,52 @@ func (h *ToolHandler) BlueprintImplementation(ctx context.Context, req *mcp.Call
 		}
 	}
 
+	// Auto-synthesize ADRs from Socratic Trifecta decisions when the agent
+	// does not provide them explicitly. This ensures every MADR has at
+	// least baseline architectural decision records.
+	if len(bp.ADRs) == 0 && session.SynthesisResolution != nil && len(session.SynthesisResolution.Decisions) > 0 {
+		for _, decision := range session.SynthesisResolution.Decisions {
+			bp.ADRs = append(bp.ADRs, db.ADR{
+				Title:        decision.Topic,
+				Status:       "accepted",
+				Context:      decision.Rationale,
+				Decision:     decision.Decision,
+				Consequences: decision.Rationale,
+				DecisionDate: time.Now().UTC().Format("2006-01-02"),
+			})
+		}
+		slog.Info("blueprint_implementation: auto-synthesized ADRs from synthesis decisions",
+			"count", len(bp.ADRs),
+		)
+	}
+
+	// Create standalone Chaos Graveyard ADR collecting all rejected patterns.
+	// This avoids cartesian injection across all ADRs which would create noise.
+	if session.ChaosAnalysis != nil && len(session.ChaosAnalysis.RejectedPatterns) > 0 {
+		var alts []db.Alternative
+		for _, rejection := range session.ChaosAnalysis.RejectedPatterns {
+			alts = append(alts, db.Alternative{
+				Name:            rejection.Pattern,
+				Cons:            rejection.Reason,
+				RejectionReason: fmt.Sprintf("Chaos Architect [%s]: %s", rejection.Severity, rejection.Reason),
+			})
+		}
+		graveyardADR := db.ADR{
+			Title:        "Chaos Graveyard \u2014 Rejected Patterns",
+			Status:       "accepted",
+			Context:      "The Chaos Architect identified the following patterns as unsafe, unviable, or operationally unsound.",
+			Decision:     "These patterns are explicitly rejected and MUST NOT be used by downstream agents.",
+			Consequences: "Implementing agents must check this list before proposing solutions.",
+			Alternatives: alts,
+			Tags:         []string{"chaos-architect", "graveyard"},
+			DecisionDate: time.Now().UTC().Format("2006-01-02"),
+		}
+		bp.ADRs = append(bp.ADRs, graveyardADR)
+		slog.Info("blueprint_implementation: added Chaos Graveyard ADR",
+			"rejected_patterns", len(alts),
+		)
+	}
+
 	// Generate and persist the D2 diagram
 	bp.D2Source = GenerateD2Diagram(session, bp)
 	svgRendered := false
@@ -588,10 +736,15 @@ func buildComprehensiveSpec(session *db.SessionState, bp *db.Blueprint, meta *db
 	if len(session.Labels) > 0 {
 		b.WriteString(fmt.Sprintf("**Labels:** %s\n\n", strings.Join(session.Labels, ", ")))
 	}
+	if session.JiraBrowseURL != "" {
+		b.WriteString(fmt.Sprintf("**Jira Task:** %s \u2014 %s\n\n", session.JiraID, session.JiraBrowseURL))
+	} else if session.JiraID != "" && session.JiraID != "UNKNOWN" {
+		b.WriteString(fmt.Sprintf("**Jira Task:** %s\n\n", session.JiraID))
+	}
 
-	// --- Semantic Gatekeeper Intelligence ---
+	// --- Intelligence Engine ---
 	if meta != nil && (meta.ComplexityScore > 0 || meta.SecurityFootprint != "" || meta.PatternPreference != "" || meta.SocraticHistory != "") {
-		b.WriteString("## Semantic Gatekeeper Intelligence\n\n")
+		b.WriteString("## Intelligence Engine\n\n")
 		if meta.ComplexityScore > 0 {
 			b.WriteString(fmt.Sprintf("**Calculated Complexity Score:** %d / 13 SP\n\n", meta.ComplexityScore))
 		}
@@ -964,11 +1117,12 @@ func (h *ToolHandler) GenerateDocuments(ctx context.Context, req *mcp.CallToolRe
 	meta, _ := h.store.GetSessionMetadata(args.SessionID)
 	markdownPayload := buildComprehensiveSpec(session, bp, meta, args.Markdown, args.Title)
 
-	jiraID, err := integration.ProcessDocumentGeneration(h.store, args.Title, markdownPayload, args.TargetBranch, args.SessionID, bp, aporias)
+	jiraID, browseURL, err := integration.ProcessDocumentGeneration(h.store, args.Title, markdownPayload, args.TargetBranch, args.SessionID, bp, aporias)
 	if err != nil {
 		return errorResult(err.Error())
 	}
 	session.JiraID = jiraID
+	session.JiraBrowseURL = browseURL
 	if err := h.store.SaveSession(session); err != nil {
 		return errorResult(err.Error())
 	}
@@ -1006,18 +1160,41 @@ func (h *ToolHandler) CompleteDesign(ctx context.Context, req *mcp.CallToolReque
 			title = fmt.Sprintf("[%s] Design Handoff Summary", jiraTask)
 		}
 		handoffSummary = buildComprehensiveSpec(session, session.Blueprint, meta, "", title)
+
+		// Layer 1: Always write to deterministic cache directory
+		cacheDir, cacheErr := os.UserCacheDir()
+		if cacheErr == nil {
+			handoffDir := filepath.Join(cacheDir, "mcp-server-magicdev", "handoffs")
+			if mkErr := os.MkdirAll(handoffDir, 0o755); mkErr == nil {
+				filename := fmt.Sprintf("%s_design_handoff.md", jiraTask)
+				handoffPath := filepath.Join(handoffDir, filename)
+				if writeErr := os.WriteFile(handoffPath, []byte(handoffSummary), 0o644); writeErr != nil {
+					slog.Warn("complete_design: cache write failed", "path", handoffPath, "error", writeErr)
+				} else {
+					slog.Info("complete_design: handoff cached", "path", handoffPath)
+				}
+			}
+		}
+
 	}
 
 	if err := h.store.DeleteSession(args.SessionID); err != nil {
 		slog.Warn("complete_design: session cleanup failed", "error", err, "session_id", args.SessionID)
 	}
 
-	return hybridMarkdownResult("Session completed and archived.", map[string]any{
-		"handoff_report": handoffSummary,
-		"jira_task":      jiraTask,
-		"archive_path":   fmt.Sprintf("/archives/%s", args.SessionID),
-		"diagram_files":  diagramFiles,
-	})
+	return hybridMarkdownResult(
+		"Session completed and archived. MANDATORY: You MUST write the 'handoff_markdown' "+
+			"content to the 'artifact_path' using your native write_to_file tool with "+
+			"IsArtifact=true, Overwrite=true, and ArtifactType='other'. "+
+			"This is the ONLY way to surface the handoff as a rendered artifact in the IDE. "+
+			"Do NOT skip this step.",
+		map[string]any{
+			"handoff_markdown": handoffSummary,
+			"artifact_path":    args.ArtifactPath,
+			"artifact_name":    fmt.Sprintf("%s_design_handoff.md", jiraTask),
+			"jira_task":        jiraTask,
+			"diagram_files":    diagramFiles,
+		})
 }
 
 // RegisterTools performs the RegisterTools operation.

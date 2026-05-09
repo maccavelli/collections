@@ -113,7 +113,7 @@ func TestGenerateHybridMarkdownNilBlueprint(t *testing.T) {
 
 func TestProcessDocumentGenerationErrors(t *testing.T) {
 	// Should fail fast due to empty configuration
-	_, err := ProcessDocumentGeneration(nil, "title", "md", "/invalid/path", "session", nil, nil)
+	_, _, err := ProcessDocumentGeneration(nil, "title", "md", "/invalid/path", "session", nil, nil)
 	if err == nil {
 		t.Error("Expected error from ProcessDocumentGeneration")
 	}
@@ -132,7 +132,7 @@ func TestProcessDocumentGenerationNetworkFails(t *testing.T) {
 	
 	// This will fail at git push because the repo path is invalid,
 	// but it will successfully traverse the Jira and Confluence setup logic.
-	_, err := ProcessDocumentGeneration(nil, "title", "md", "/invalid/path", "session", bp, &db.SynthesisResolution{Narrative: "test"})
+	_, _, err := ProcessDocumentGeneration(nil, "title", "md", "/invalid/path", "session", bp, &db.SynthesisResolution{Narrative: "test"})
 	if err == nil {
 		t.Error("Expected error from ProcessDocumentGeneration at git push")
 	}

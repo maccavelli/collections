@@ -30,10 +30,7 @@ func VerifyConnectivity(store *db.Store) error {
 		return fmt.Errorf("gitlab token is required but not configured (run: mcp-server-magicdev token reconfigure)")
 	}
 
-	gitBaseURL := viper.GetString("git.base_url")
-	if gitBaseURL == "" {
-		gitBaseURL = viper.GetString("git.server_url")
-	}
+	gitBaseURL := viper.GetString("git.server_url")
 
 	var glOpts []gitlab.ClientOptionFunc
 	if gitBaseURL != "" {

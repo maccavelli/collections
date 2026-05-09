@@ -121,12 +121,16 @@ type SkepticAnalysis struct {
 }
 
 // SynthesisResolution holds the structured output of the Aporia Engine phase.
-// It resolves conflicts between thesis and antithesis or escalates to the user.
+// It resolves conflicts between thesis, antithesis, and chaos or escalates to the user.
 type SynthesisResolution struct {
 	Narrative              string                  `json:"narrative"`                        // Synthesis narrative
 	Decisions              []ArchitecturalDecision  `json:"decisions"`                        // Resolved items
 	OutstandingQuestions   []GranularQuestion       `json:"outstanding_questions,omitzero"`    // Items escalated to user
 	UnresolvedDependencies []string                 `json:"unresolved_dependencies,omitzero"` // Structural gaps
+	ChaosVetted            bool                    `json:"chaos_vetted,omitzero"`             // Whether Chaos Architect passed
+	RejectedOptions        []ChaosRejection        `json:"rejected_options,omitzero"`         // From Chaos Graveyard
+	ConstraintLocks        []ChaosConstraint       `json:"constraint_locks,omitzero"`         // Hard operational limits
+	LLMEnhanced            bool                    `json:"llm_enhanced,omitzero"`             // Whether LLM was used for synthesis
 }
 
 // SecurityItem represents an OWASP-aligned security finding or consideration.
@@ -135,6 +139,42 @@ type SecurityItem struct {
 	Description        string `json:"description"`
 	Severity           string `json:"severity"`            // "low", "medium", "high", "critical"
 	MitigationStrategy string `json:"mitigation_strategy"`
+}
+
+// ChaosConstraint represents a hard operational boundary identified by the Chaos Architect.
+type ChaosConstraint struct {
+	Domain     string `json:"domain"`                // "filesystem", "network", "memory", "concurrency", "api_limits"
+	Constraint string `json:"constraint"`            // The specific limitation
+	Platform   string `json:"platform"`              // "windows", "linux", "macos", "all"
+	Impact     string `json:"impact"`                // How it affects the design
+	Enforced   bool   `json:"enforced,omitzero"`     // SERVER-ONLY: set by constraint filtering, NOT from agent input
+}
+
+// ChaosRejection represents a pattern killed by the Chaos Architect (the Graveyard).
+type ChaosRejection struct {
+	Pattern  string `json:"pattern"`              // The rejected approach
+	Reason   string `json:"reason"`               // Why it was killed
+	Severity string `json:"severity"`             // "warning", "fatal"
+	Source   string `json:"source,omitzero"`      // SERVER-ONLY: "chaos_architect", "buntdb_standard", "llm_synthesis"
+}
+
+// StressScenario represents an adversarial edge case identified by the Chaos Architect.
+type StressScenario struct {
+	Scenario   string `json:"scenario"`              // Description of the failure mode
+	Trigger    string `json:"trigger"`               // What causes it
+	Impact     string `json:"impact"`                // System-level consequence
+	Mitigation string `json:"mitigation,omitzero"`   // Proposed fix (or empty if unresolvable)
+}
+
+// ChaosAnalysis holds the structured output of the Chaos Architect phase.
+// It performs operational stress testing of the combined Thesis+Antithesis design.
+type ChaosAnalysis struct {
+	Narrative        string            `json:"narrative"`                    // Chaos narrative
+	FatalFlaws       []SecurityItem    `json:"fatal_flaws,omitzero"`         // Veto-worthy issues
+	Constraints      []ChaosConstraint `json:"constraints,omitzero"`         // Hard operational limits
+	RejectedPatterns []ChaosRejection  `json:"rejected_patterns,omitzero"`   // The Graveyard
+	StressScenarios  []StressScenario  `json:"stress_scenarios,omitzero"`    // Edge case analysis
+	ChaosScore       int               `json:"chaos_score,omitzero"`         // 1-10 (0 = not scored)
 }
 
 // NFR represents a Non-Functional Requirement with a measurable target.
@@ -259,12 +299,14 @@ type SessionState struct {
 	FinalSpec              string                `json:"final_spec,omitzero"`                 // Golden Copy from finalize_requirements
 	DesignProposal         *DesignProposal       `json:"design_proposal,omitzero"`            // Structured thesis from clarify_requirements
 	SkepticAnalysis        *SkepticAnalysis       `json:"skeptic_analysis,omitzero"`            // Structured antithesis from clarify_requirements
+	ChaosAnalysis          *ChaosAnalysis         `json:"chaos_analysis,omitzero"`              // Structured chaos analysis from clarify_requirements
 	SynthesisResolution    *SynthesisResolution   `json:"synthesis_resolution,omitzero"`        // Structured aporia resolution from clarify_requirements
 	Blueprint              *Blueprint            `json:"blueprint,omitzero"`
 	IsVetted               bool                  `json:"is_vetted,omitzero"`
 	StandardsSnapshot      string                `json:"standards_snapshot,omitzero"`
 	TechMapping            map[string]string     `json:"tech_mapping,omitzero"`
 	JiraID                 string                `json:"jira_id,omitzero"`
+	JiraBrowseURL          string                `json:"jira_browse_url,omitzero"`
 	CreatedAt              string                `json:"created_at,omitzero"`
 	UpdatedAt              string                `json:"updated_at,omitzero"`
 	Tags                   map[string]string     `json:"tags,omitzero"`                       // Freeform key-value categorization
