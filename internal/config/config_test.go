@@ -96,10 +96,95 @@ func TestUpdateConfigKey(t *testing.T) {
 	if viper.GetString("confluence.space") != "NEWSPACE" {
 		t.Errorf("Failed to update nested key")
 	}
+}
 
-	// Try updating non-existent key
-	err = UpdateConfigKey("does.not.exist", "value")
+func TestUpdateConfigKey_InvalidKey(t *testing.T) {
+	setupTestConfig(t)
+	EnsureConfig()
+
+	// Unknown key should be rejected by registry validation.
+	err := UpdateConfigKey("does.not.exist", "value")
 	if err == nil {
 		t.Error("Expected error when updating non-existent key")
 	}
+	if err != nil && !contains(err.Error(), "unknown configuration key") {
+		t.Errorf("Expected 'unknown configuration key' error, got: %v", err)
+	}
+
+	// Token keys must also be rejected (vault-only).
+	for _, tokenKey := range []string{"confluence.api_key", "jira.api_key", "git.token"} {
+		err := UpdateConfigKey(tokenKey, "some-token")
+		if err == nil {
+			t.Errorf("Expected error when updating token key %q", tokenKey)
+		}
+	}
+}
+
+func TestUpdateConfigKey_BooleanValid(t *testing.T) {
+	setupTestConfig(t)
+	EnsureConfig()
+
+	// Valid boolean values
+	for _, val := range []string{"true", "false", "TRUE", "False", " true "} {
+		err := UpdateConfigKey("confluence.mock", val)
+		if err != nil {
+			t.Errorf("UpdateConfigKey should accept boolean value %q, got error: %v", val, err)
+		}
+	}
+}
+
+func TestUpdateConfigKey_BooleanInvalid(t *testing.T) {
+	setupTestConfig(t)
+	EnsureConfig()
+
+	// Invalid boolean values
+	for _, val := range []string{"yes", "no", "1", "0", "", "on", "off"} {
+		err := UpdateConfigKey("confluence.mock", val)
+		if err == nil {
+			t.Errorf("Expected error for invalid boolean value %q", val)
+		}
+		if err != nil && !contains(err.Error(), "requires a boolean value") {
+			t.Errorf("Expected boolean validation error for %q, got: %v", val, err)
+		}
+	}
+}
+
+func TestUpdateConfigKey_BooleanPersistence(t *testing.T) {
+	setupTestConfig(t)
+	EnsureConfig()
+	LoadConfig()
+
+	// Update jira.mock to true
+	if err := UpdateConfigKey("jira.mock", "true"); err != nil {
+		t.Fatalf("UpdateConfigKey failed: %v", err)
+	}
+
+	// Reload and verify
+	LoadConfig()
+	if !viper.GetBool("jira.mock") {
+		t.Error("Expected jira.mock to be true after update")
+	}
+
+	// Update back to false
+	if err := UpdateConfigKey("jira.mock", "false"); err != nil {
+		t.Fatalf("UpdateConfigKey failed: %v", err)
+	}
+
+	LoadConfig()
+	if viper.GetBool("jira.mock") {
+		t.Error("Expected jira.mock to be false after update")
+	}
+}
+
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && findSubstring(s, substr)
+}
+
+func findSubstring(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
 }

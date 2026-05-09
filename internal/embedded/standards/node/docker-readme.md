@@ -1,0 +1,316 @@
+# Node.js
+
+[**node - Docker Official Images on Docker Hub**](https://hub.docker.com/_/node)
+
+[![GitHub issues](https://img.shields.io/github/issues/nodejs/docker-node.svg "GitHub issues")](https://github.com/nodejs/docker-node)
+[![GitHub stars](https://img.shields.io/github/stars/nodejs/docker-node.svg "GitHub stars")](https://github.com/nodejs/docker-node)
+
+The official Node.js docker image, made with love by the node community.
+
+<!-- START doctoc generated TOC please keep comment here to allow auto update -->
+<!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
+## Table of Contents
+
+- [What is Node.js?](#what-is-nodejs)
+- [How to use this image](#how-to-use-this-image)
+  - [Create a `Dockerfile` in your Node.js app project](#create-a-dockerfile-in-your-nodejs-app-project)
+  - [Best Practices](#best-practices)
+  - [Run a single Node.js script](#run-a-single-nodejs-script)
+  - [Verbosity](#verbosity)
+    - [Dockerfile](#dockerfile)
+    - [Docker Run](#docker-run)
+    - [npm run](#npm-run)
+- [Image Variants](#image-variants)
+  - [`node:<version>`](#nodeversion)
+  - [`node:alpine`](#nodealpine)
+  - [`node:bullseye`](#nodebullseye)
+  - [`node:bookworm`](#nodebookworm)
+  - [`node:trixie`](#nodetrixie)
+  - [`node:slim`](#nodeslim)
+- [Release Availability](#release-availability)
+- [License](#license)
+- [Supported Docker versions](#supported-docker-versions)
+- [Supported Node.js versions](#supported-nodejs-versions)
+- [Yarn v1 Classic bundling](#yarn-v1-classic-bundling)
+- [Governance and Current Members](#governance-and-current-members)
+  - [Docker Maintainers](#docker-maintainers)
+  - [Collaborators](#collaborators)
+  - [Emeritus](#emeritus)
+    - [Former Maintainers](#former-maintainers)
+
+<!-- END doctoc generated TOC please keep comment here to allow auto update -->
+
+## What is Node.js?
+
+Node.js is a platform built on Chrome's JavaScript runtime for easily building
+fast, scalable network applications. Node.js uses an event-driven, non-blocking
+I/O model that makes it lightweight and efficient, perfect for data-intensive
+real-time applications that run across distributed devices.
+
+See: https://nodejs.org
+
+## How to use this image
+
+### Create a `Dockerfile` in your Node.js app project
+
+```dockerfile
+# specify the node base image with your desired version node:<version>
+FROM node:24
+# replace this with your application's default port
+EXPOSE 8888
+```
+
+You can then build and run the Docker image:
+
+```console
+$ docker build -t my-nodejs-app .
+$ docker run -it --rm --name my-running-app my-nodejs-app
+```
+
+If you prefer Docker Compose:
+
+```yml
+services:
+  node:
+    image: "node:24"
+    user: "node"
+    working_dir: /home/node/app
+    environment:
+      - NODE_ENV=production
+    volumes:
+      - ./:/home/node/app
+    ports: # use if it is necessary to expose the container to the host machine
+      - "8888:8888"
+    command: ["npm", "start"]
+```
+
+You can then run using Docker Compose:
+
+```console
+$ docker-compose up -d
+```
+
+Docker Compose example mounts your current directory (including node_modules) to the container.
+It assumes that your application has a file named [`package.json`](https://docs.npmjs.com/files/package.json)
+defining [start script](https://docs.npmjs.com/misc/scripts#default-values).
+
+### Best Practices
+
+We have assembled a [Best Practices Guide](./docs/BestPractices.md) for those using these images on a daily basis.
+
+### Run a single Node.js script
+
+For many simple, single file projects, you may find it inconvenient to write a
+complete `Dockerfile`. In such cases, you can run a Node.js script by using the
+Node.js Docker image directly:
+
+```console
+$ docker run -it --rm --name my-running-script -v "$PWD":/usr/src/app -w /usr/src/app node:24 node your-daemon-or-script.js
+```
+
+### Verbosity
+
+Prior to 8.7.0 and 6.11.4, the docker images overrode the default npm log
+level from `warn` to `info`. However, due to improvements to npm and new Docker
+patterns (e.g. multi-stage builds) the working group reached a [consensus](https://github.com/nodejs/docker-node/issues/528)
+to revert the log level to npm defaults. If you need more verbose output, please
+use one of the following methods to change the verbosity level.
+
+#### Dockerfile
+
+If you create your own `Dockerfile` which inherits from the `node` image, you can
+simply use `ENV` to override `NPM_CONFIG_LOGLEVEL`.
+
+```dockerfile
+FROM node
+ENV NPM_CONFIG_LOGLEVEL=info
+...
+```
+
+#### Docker Run
+
+If you run the node image using `docker run`, you can use the `-e` flag to
+override `NPM_CONFIG_LOGLEVEL`.
+
+```console
+$ docker run -e NPM_CONFIG_LOGLEVEL=info node ...
+```
+
+#### npm run
+
+If you are running npm commands, you can use `--loglevel` to control the
+verbosity of the output.
+
+```console
+$ docker run node npm --loglevel=warn ...
+```
+
+## Image Variants
+
+The `node` images come in many flavors, each designed for a specific use case.
+All of the images contain pre-installed versions of `node`,
+[`npm`](https://www.npmjs.com/), and [Yarn v1 Classic](https://classic.yarnpkg.com/). For each
+supported architecture, the supported variants are different. In the file:
+[versions.json](./versions.json), it lists all supported variants for all of
+the architectures that we support now.
+See [Yarn v1 Classic bundling](#yarn-v1-classic-bundling) for future plans to
+remove this legacy version.
+
+### `node:<version>`
+
+This is the defacto image. If you are unsure about what your needs are, you
+probably want to use this one. It is designed to be used both as a throw away
+container (mount your source code and start the container to start your app), as
+well as the base to build other images off of. This tag is based off of
+[`buildpack-deps`](https://registry.hub.docker.com/_/buildpack-deps/).
+`buildpack-deps` is designed for the average user of docker who has many images
+on their system. It, by design, has a large number of extremely common Debian
+packages. This reduces the number of packages that images that derive from it
+need to install, thus reducing the overall size of all images on your system.
+
+### `node:alpine`
+
+This image is based on the popular
+[Alpine Linux project](https://alpinelinux.org), available in
+[the `alpine` official image](https://hub.docker.com/_/alpine). Alpine Linux is
+much smaller than most distribution base images (~5MB), and thus leads to much
+slimmer images in general.
+
+This variant is highly recommended when final image size being as small as
+possible is desired. The main caveat to note is that it does use
+[musl libc](https://musl.libc.org/) instead of
+[glibc and friends](https://www.etalabs.net/compare_libcs.html), so certain
+software might run into issues depending on the depth of their libc
+requirements. However, most software doesn't have an issue with this, so this
+variant is usually a very safe choice. See
+[this Hacker News comment thread](https://news.ycombinator.com/item?id=10782897)
+for more discussion of the issues that might arise and some pro/con comparisons
+of using Alpine-based images.
+
+One common issue that may arise is a missing shared library required for use of
+`process.dlopen`. To add the missing shared libraries to your image:
+
+- Starting from Alpine v3.19, you can use the
+[`gcompat`](https://pkgs.alpinelinux.org/package/v3.19/main/x86/gcompat) package
+to add the missing shared libraries: `apk add --no-cache gcompat`
+
+To minimize image size, it's uncommon for additional related tools
+(such as `git` or `bash`) to be included in Alpine-based images. Using this
+image as a base, add the things you need in your own Dockerfile
+(see the [`alpine` image description](https://hub.docker.com/_/alpine/) for
+examples of how to install packages if you are unfamiliar).
+
+To make the image size even smaller, you can [bundle without npm/yarn](./docs/BestPractices.md#smaller-images-without-npmyarn).
+
+### `node:bullseye`
+
+This image is based on version 11 of
+[Debian](https://debian.org), available in
+[the `debian` official image](https://hub.docker.com/_/debian).
+
+### `node:bookworm`
+
+This image is based on version 12 of
+[Debian](https://debian.org), available in
+[the `debian` official image](https://hub.docker.com/_/debian).
+
+### `node:trixie`
+
+This image is based on version 13 of
+[Debian](https://debian.org), available in
+[the `debian` official image](https://hub.docker.com/_/debian).
+
+### `node:slim`
+
+This image does not contain the common packages contained in the default tag and
+only contains the minimal packages needed to run `node`. Unless you are working
+in an environment where *only* the Node.js image will be deployed and you have
+space constraints, we highly recommend using the default image of this
+repository.
+
+## Release Availability
+
+This repo automatically triggers a process to build new `node` images when Node.js releases
+become available. The build processes can take several hours to complete.
+
+Images may initially appear on [Docker Hub](https://hub.docker.com/_/node)
+with incomplete or missing OS/ARCH listings as the build process first publishes a tag
+and then backfills each architecture when ready.
+During this time, if you try to pull the image, you may see an error
+message "no matching manifest". In this case, check back later.
+(See [Docker Library FAQs](https://github.com/docker-library/faq#an-images-source-changed-in-git-now-what)
+for a detailed description of the complex build process.)
+
+For Node.js security releases, Debian-based `node` images may be published in advance
+of Alpine-based images. To build an Alpine-based `node` image requires
+a `musl` build. This may not initially be ready at Node.js release time.
+When processing non-security Node.js releases, the build process will wait for
+the `musl` build before proceeding with Debian- and Alpine-based images.
+
+## License
+
+[License information](https://github.com/nodejs/node/blob/main/LICENSE) for
+the software contained in this image. [License information](LICENSE) for the
+Node.js Docker project.
+
+## Supported Docker versions
+
+If you are using [Docker Desktop](https://docs.docker.com/get-started/get-docker/),
+it is recommended to use a recent version, released in the last six months.
+
+Refer to [Docker Engine release notes](https://docs.docker.com/engine/release-notes/)
+for current Engine versions.
+
+## Supported Node.js versions
+
+This project will support Node.js versions as still under active support as per the [Node.js release schedule](https://github.com/nodejs/Release).
+
+## Yarn v1 Classic bundling
+
+[Yarn v1 Classic](https://classic.yarnpkg.com/) is currently bundled in `node` image
+variants. Because Yarn v1 is [frozen](https://github.com/yarnpkg/yarn) and no longer maintained,
+bundling plans have been revised.
+
+As of Node.js 26.0.0 it is planned to no longer bundle Yarn v1 into `node` images.
+For lower versions of Node.js (<26) `node` images will continue to bundle Yarn v1.
+
+Users with legacy requirements for Yarn v1 under Node.js 26 and above may be able
+to follow [Yarn v1 installation instructions](https://classic.yarnpkg.com/en/docs/install)
+and install using `npm install --global yarn`.
+
+## Governance and Current Members
+
+The Node.js Docker Image is governed by an open maintainer model. See
+[GOVERNANCE.md](GOVERNANCE.md)
+for project roles and decision-making, and [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidance. If a final decision cannot be reached using consensus seeking, the Node.js TSC is the final arbiter.
+
+### Docker Maintainers
+
+- Laurent Goderre ([LaurentGoderre](https://github.com/LaurentGoderre))
+- Simen Bekkhus ([SimenB](https://github.com/SimenB))
+- Peter Dave Hello ([PeterDaveHello](https://github.com/PeterDaveHello))
+- Rafael Gonzaga ([rafaelgss](https://github.com/rafaelgss))
+- Matteo Collina ([mcollina](https://github.com/mcollina))
+- Nick Schonning ([nschonni](https://github.com/nschonni))
+
+### Collaborators
+
+- Tianon Gravi ([tianon](https://github.com/tianon))
+- ttshivers ([ttshivers](https://github.com/ttshivers))
+- [yosifkit](https://github.com/yosifkit)
+- Stewart X Addison ([sxa](https://github.com/sxa))
+- Mike McCready ([MikeMcC399](https://github.com/MikeMcC399))
+
+Collaborators are managed via the
+[@nodejs/docker team](https://github.com/orgs/nodejs/teams/docker).
+
+### Emeritus
+
+#### Former Maintainers
+
+- Hans Kristian Flaatten ([Starefossen](https://github.com/Starefossen))
+- Mikeal Rogers ([mikeal](https://github.com/mikeal))
+- Christopher Horrell ([chorrell](https://github.com/chorrell))
+- Peter Petrov ([pesho](https://github.com/pesho))
+- John Mitchell ([jlmitch5](https://github.com/jlmitch5))
+- Hugues Malphettes ([hmalphettes](https://github.com/hmalphettes))

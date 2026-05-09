@@ -6,10 +6,13 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/signal"
 	"runtime"
 	"runtime/debug"
 	"strconv"
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/spf13/cobra"
@@ -18,6 +21,9 @@ import (
 	"mcp-server-magicdev/internal/config"
 	"mcp-server-magicdev/internal/db"
 	"mcp-server-magicdev/internal/handler"
+	"mcp-server-magicdev/internal/integration"
+	"mcp-server-magicdev/internal/lifecycle"
+	"mcp-server-magicdev/internal/logging"
 	"mcp-server-magicdev/internal/sync"
 )
 
@@ -26,6 +32,33 @@ var serveCmd = &cobra.Command{
 	Short: "Start the MagicDev MCP server",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		slog.Info("starting magicdev MCP server")
+
+		// LAYER 1: Single-instance enforcement via OS-level file lock.
+		// If another instance holds the lock, kill it and take over.
+		fileLock, err := lifecycle.AcquireLock()
+		if err != nil {
+			return fmt.Errorf("single-instance check failed: %w", err)
+		}
+		defer fileLock.Unlock()
+
+		// Create cancellable context for coordinated graceful shutdown.
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		// Register OS signal handlers (SIGTERM, SIGINT) → cancel context.
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
+		go func() {
+			select {
+			case sig := <-sigCh:
+				slog.Info("received shutdown signal", "signal", sig)
+				cancel()
+			case <-ctx.Done():
+			}
+		}()
+
+		// LAYER 2: Parent process watchdog — detect orphaned processes.
+		go lifecycle.WatchParent(ctx, cancel)
 
 		// Create MCP server.
 		s := mcp.NewServer(&mcp.Implementation{
@@ -37,6 +70,15 @@ var serveCmd = &cobra.Command{
 		if err := config.LoadConfig(); err != nil {
 			slog.Warn("could not load magicdev.yaml config, proceeding with defaults", "err", err)
 		}
+
+		// Reconfigure logger with persistent file output and configured log level.
+		logPath, err := logging.Reconfigure(viper.GetString("server.log_level"))
+		if err != nil {
+			slog.Warn("failed to initialize file logging, continuing with stderr only", "err", err)
+		} else {
+			slog.Info("file logging initialized", "path", logPath, "level", viper.GetString("server.log_level"))
+		}
+		defer logging.CloseLogFile()
 
 		// Backward compatibility bindings for Kubernetes / Legacy environments
 		viper.BindEnv("confluence.url", "CONFLUENCE_URL")
@@ -81,10 +123,26 @@ var serveCmd = &cobra.Command{
 		}
 		defer store.Close()
 
+		// Add metrics reporter: log BuntDB cache entries every 30 seconds
+		go func() {
+			ticker := time.NewTicker(30 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					slog.Debug("cache metrics",
+						"db_entries", store.DBEntries(),
+					)
+				}
+			}
+		}()
+
 		// Auto-provisioning logic via environment variables
-		provisionVault(store, "gitlab", "GITLAB_USER_TOKEN")
-		provisionVault(store, "jira", "JIRA_USER_TOKEN")
-		provisionVault(store, "confluence", "CONFLUENCE_USER_TOKEN")
+		provisionVault(store, "gitlab", "GITLAB_TOKEN", "GITLAB_PERSONAL_ACCESS_TOKEN", "GITLAB_USER_TOKEN")
+		provisionVault(store, "jira", "JIRA_USER_TOKEN", "JIRA_TOKEN", "JIRA_API_TOKEN")
+		provisionVault(store, "confluence", "CONFLUENCE_USER_TOKEN", "CONFLUENCE_TOKEN", "CONFLUENCE_API_TOKEN")
 
 		// Security & Environment Parameters validation hook
 		checkVaultSecret(store, "confluence")
@@ -94,11 +152,46 @@ var serveCmd = &cobra.Command{
 		// Launch the background baseline standards sync priority cascade
 		go sync.SyncBaselines(store)
 
+		// Semantic Gatekeeper (LLM) initialization and health check closure
+		checkLLMHealth := func() {
+			if client, err := integration.NewLLMClient(store); err != nil {
+				slog.Info("Semantic Gatekeeper (LLM) feature disabled or unconfigured", "reason", err)
+			} else {
+				// Perform a lightweight health check to ensure the model is valid
+				// We use a short timeout context to prevent blocking the reload loop
+				pingCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				
+				if _, err := client.GenerateContent(pingCtx, "ping"); err != nil {
+					slog.Warn("Semantic Gatekeeper (LLM) is configured but failing/unavailable", 
+						"model", viper.GetString("llm.model"),
+						"error", err,
+					)
+				} else {
+					slog.Info("Semantic Gatekeeper (LLM) feature enabled and healthy", 
+						"model", viper.GetString("llm.model"),
+					)
+				}
+			}
+		}
+
+		// Execute health check at startup and register it for hot-reload
+		checkLLMHealth()
+		config.OnConfigReload = append(config.OnConfigReload, checkLLMHealth)
+
 		handler.RegisterTools(s, store)
 		handler.RegisterPrompts(s)
 
 		slog.Info("MCP server ready", "version", Version)
-		return s.Run(context.Background(), &mcp.StdioTransport{})
+
+		// Run MCP server with cancellable context.
+		runErr := s.Run(ctx, &mcp.StdioTransport{})
+
+		// LAYER 3: Shutdown deadline — force exit if cleanup hangs.
+		lifecycle.ShutdownDeadline(5 * time.Second)
+
+		slog.Info("MCP server shutting down gracefully")
+		return runErr
 	},
 }
 
@@ -106,12 +199,15 @@ func init() {
 	rootCmd.AddCommand(serveCmd)
 }
 
-func provisionVault(store *db.Store, service, envKey string) {
-	if envVal := os.Getenv(envKey); envVal != "" {
-		if err := store.SetSecret(service, envVal); err != nil {
-			slog.Error("failed to auto-provision vault", "service", service, "err", err)
-		} else {
-			slog.Info("auto-provisioned vault secret from environment", "service", service)
+func provisionVault(store *db.Store, service string, envKeys ...string) {
+	for _, envKey := range envKeys {
+		if envVal := os.Getenv(envKey); envVal != "" {
+			if err := store.SetSecret(service, envVal); err != nil {
+				slog.Error("failed to auto-provision vault", "service", service, "err", err)
+			} else {
+				slog.Info("auto-provisioned vault secret from environment", "service", service, "env", envKey)
+			}
+			return
 		}
 	}
 }

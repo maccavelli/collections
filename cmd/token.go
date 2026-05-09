@@ -14,7 +14,7 @@ import (
 var tokenCmd = &cobra.Command{
 	Use:   "token",
 	Short: "Manage secure tokens in the BuntDB vault",
-	Long:  `The token command allows you to interactively update or list securely stored tokens (GitLab, Confluence, Jira).`,
+	Long:  `The token command allows you to interactively update or list securely stored tokens (GitLab, Confluence, Jira, LLM).`,
 	Example: `  mcp-server-magicdev token list
   mcp-server-magicdev token reconfigure`,
 }
@@ -31,8 +31,8 @@ var tokenListCmd = &cobra.Command{
 		}
 		defer store.Close()
 
-		services := []string{"gitlab", "confluence", "jira"}
-		fmt.Println("Stored Tokens:")
+		services := []string{"gitlab", "confluence", "jira", "llm_token", "llm_provider", "llm_model"}
+		fmt.Println("Stored Tokens / Values:")
 		for _, svc := range services {
 			token, err := store.GetSecret(svc)
 			if err != nil {
@@ -62,23 +62,32 @@ var tokenReconfigureCmd = &cobra.Command{
 		reader := bufio.NewReader(os.Stdin)
 
 		services := []struct {
-			name   string
-			envVar string
+			name    string
+			envVars []string
 		}{
-			{"gitlab", "GITLAB_USER_TOKEN"},
-			{"confluence", "CONFLUENCE_USER_TOKEN"},
-			{"jira", "JIRA_USER_TOKEN"},
+			{"gitlab", []string{"GITLAB_TOKEN", "GITLAB_PERSONAL_ACCESS_TOKEN", "GITLAB_USER_TOKEN"}},
+			{"confluence", []string{"CONFLUENCE_USER_TOKEN", "CONFLUENCE_TOKEN", "CONFLUENCE_API_TOKEN"}},
+			{"jira", []string{"JIRA_USER_TOKEN", "JIRA_TOKEN", "JIRA_API_TOKEN"}},
+			{"llm_token", []string{"LLM_TOKEN", "LLM_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY"}},
 		}
 
 		for _, svc := range services {
-			val := os.Getenv(svc.envVar)
+			var val, usedEnv string
+			for _, ev := range svc.envVars {
+				if v := os.Getenv(ev); v != "" {
+					val = v
+					usedEnv = ev
+					break
+				}
+			}
+
 			if val != "" {
 				if err := store.SetSecret(svc.name, val); err != nil {
 					return fmt.Errorf("failed to save %s token: %w", svc.name, err)
 				}
-				fmt.Printf("Imported %s token from %s\n", svc.name, svc.envVar)
+				fmt.Printf("Imported %s token from %s\n", svc.name, usedEnv)
 			} else {
-				fmt.Printf("Enter %s Token: ", svc.name)
+				fmt.Printf("Enter %s Token (or press enter to skip): ", svc.name)
 				tokenStr, err := reader.ReadString('\n')
 				if err != nil {
 					return fmt.Errorf("failed to read input: %w", err)
