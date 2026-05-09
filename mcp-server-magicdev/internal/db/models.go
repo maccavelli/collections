@@ -221,7 +221,8 @@ type Blueprint struct {
 	ComplexityScores         map[string]int    `json:"complexity_scores"`                     // feature → 1-13 story points
 	AporiaTraceability       map[string]string `json:"aporia_traceability"`                   // contradiction → resolution pattern
 	ADRs                     []ADR             `json:"adrs,omitempty"`
-	MermaidDiagram           string            `json:"mermaid_diagram,omitzero"`              // Persisted diagram (overridable)
+	D2Source                 string            `json:"d2_source,omitzero"`                // D2 diagram source text (version-controllable)
+	D2SVG                    string            `json:"d2_svg,omitzero"`                   // Rendered SVG output (self-contained, embeddable)
 	FileStructure            []FileEntry       `json:"file_structure,omitzero"`               // Proposed project scaffold
 	SecurityConsiderations   []SecurityItem    `json:"security_considerations,omitzero"`      // OWASP-aligned findings
 	NonFunctionalRequirements []NFR            `json:"non_functional_requirements,omitzero"`  // Performance/scalability targets
@@ -231,6 +232,15 @@ type Blueprint struct {
 	MCPTools                 []MCPTool         `json:"mcp_tools,omitzero"`                    // Tools exposed by the MCP server
 	MCPResources             []MCPResource     `json:"mcp_resources,omitzero"`                // Resources exposed by the MCP server
 	MCPPrompts               []MCPPrompt       `json:"mcp_prompts,omitzero"`                  // Prompts exposed by the MCP server
+}
+
+// SessionMetadata holds intelligence data spanning the Socratic lifecycle.
+type SessionMetadata struct {
+	SessionID         string `json:"session_id"`
+	ComplexityScore   int    `json:"complexity_score"`
+	SecurityFootprint string `json:"security_footprint"`
+	SocraticHistory   string `json:"socratic_history"`
+	PatternPreference string `json:"pattern_preference"`
 }
 
 // SessionState holds the pipeline state for a given session. Each field

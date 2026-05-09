@@ -7,10 +7,11 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"runtime"
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/viper"
+
+	"mcp-server-magicdev/internal/logging"
 )
 
 const DefaultConfigTemplate = `# ==============================================================================
@@ -29,6 +30,9 @@ confluence:
   # Example: https://your-domain.atlassian.net/wiki
   url: "PLACEHOLDER_CONFLUENCE_URL"
 
+  # API tokens are managed exclusively via BuntDB vault.
+  # Run: mcp-server-magicdev token reconfigure
+
   # The space key where documentation will be published.
   # Default: "SPACE"
   space: "SPACE"
@@ -46,9 +50,15 @@ confluence:
 # Jira Integration (Ticketing)
 # ------------------------------------------------------------------------------
 jira:
+  # The user email for Jira authentication.
+  email: "PLACEHOLDER_JIRA_EMAIL"
+
   # The base URL for your Jira instance.
   # Example: https://your-domain.atlassian.net
   url: "PLACEHOLDER_JIRA_URL"
+
+  # API tokens are managed exclusively via BuntDB vault.
+  # Run: mcp-server-magicdev token reconfigure
   
   # The project key where issues should be created.
   # Default: "PROJ"
@@ -57,11 +67,14 @@ jira:
   # An existing issue key to attach documents to.
   # If left unset (""), MagicDev will automatically create a new task.
   issue: ""
+
+  # Enables the Jira mock layer for offline development and testing.
+  mock: false
   
   # The custom field ID used for estimating Story Points in your Jira instance.
   # This varies per Jira workspace. You can find it in your Jira field settings.
-  # Default: "customfield_10016"
-  # story_points_field: "customfield_10016"
+  # If left empty, defaults to "customfield_10016" at runtime.
+  story_points_field: ""
 
 # ------------------------------------------------------------------------------
 # Version Control Integration (Git)
@@ -71,6 +84,9 @@ jira:
 git:
   # Your git service username (e.g., your GitHub or GitLab handle).
   username: "PLACEHOLDER_GIT_USERNAME"
+
+  # API tokens are managed exclusively via BuntDB vault.
+  # Run: mcp-server-magicdev token reconfigure
 
   # The base URL for the GitLab server.
   # Example: "https://gitlab.com" or "https://gitlab.internal.corp"
@@ -111,6 +127,12 @@ runtime:
 # Server Diagnostics & Storage
 # ------------------------------------------------------------------------------
 server:
+  # The log level for the MagicDev server output.
+  # Valid values: DEBUG, INFO, WARN, ERROR
+  # Changes to this value are hot-reloaded via fsnotify.
+  # Default: "INFO"
+  log_level: "INFO"
+
   # The absolute path to the BuntDB persistence file (session.db).
   # If left blank (""), MagicDev will automatically use the OS default cache directory:
   # Linux: $HOME/.cache/mcp-server-magicdev/session.db
@@ -126,18 +148,46 @@ server:
 # You can add local filesystem paths (e.g., /path/to/my/standards.md) or standard URLs.
 standards:
   node:
+    # [runtime, lifecycle] Node.js Release Schedule & LTS
     - "https://raw.githubusercontent.com/nodejs/Release/main/README.md"
-    - "https://raw.githubusercontent.com/goldbergyoni/nodebestpractices/master/sections/projectstructre/readme.md"
-    - "https://raw.githubusercontent.com/goldbergyoni/nodebestpractices/master/sections/errorhandling/readme.md"
-    - "https://raw.githubusercontent.com/goldbergyoni/nodebestpractices/master/sections/security/readme.md"
-    - "https://raw.githubusercontent.com/goldbergyoni/nodebestpractices/master/sections/production/readme.md"
+    # [architecture, security, testing, production, error-handling] Node.js Best Practices
+    - "https://raw.githubusercontent.com/goldbergyoni/nodebestpractices/master/README.md"
+    # [container] Docker Best Practices for Node.js
+    - "https://raw.githubusercontent.com/nodejs/docker-node/main/docs/BestPractices.md"
+    # [container, runtime] Docker Node.js Setup Guide
+    - "https://raw.githubusercontent.com/nodejs/docker-node/main/README.md"
   dotnet:
+    # [runtime, lifecycle] .NET 8.0 Release Notes
     - "https://raw.githubusercontent.com/dotnet/core/main/release-notes/8.0/README.md"
+    # [code-style] C# Coding Conventions
     - "https://raw.githubusercontent.com/dotnet/docs/main/docs/csharp/fundamentals/coding-style/coding-conventions.md"
+    # [architecture] .NET Design Guidelines
     - "https://raw.githubusercontent.com/dotnet/docs/main/docs/standard/design-guidelines/index.md"
-    - "https://raw.githubusercontent.com/dotnet/docs/main/docs/standard/security/best-practices.md"
+    # [security] Secure Coding Guidelines for .NET
+    - "https://raw.githubusercontent.com/dotnet/docs/main/docs/standard/security/secure-coding-guidelines.md"
+    # [testing] Unit Testing Best Practices
     - "https://raw.githubusercontent.com/dotnet/docs/main/docs/core/testing/unit-testing-best-practices.md"
+    # [container] .NET Docker Samples
+    - "https://raw.githubusercontent.com/dotnet/dotnet-docker/main/samples/README.md"
+    # [container, runtime] Installing .NET in Docker
+    - "https://raw.githubusercontent.com/dotnet/dotnet-docker/main/documentation/scenarios/installing-dotnet.md"
+
+# ------------------------------------------------------------------------------
+# Semantic Gatekeeper Intelligence (LLM)
+# ------------------------------------------------------------------------------
+llm:
+  # The chosen model used by the Semantic Gatekeeper during requirement analysis.
+  # This value can be hot-reloaded at runtime.
+  # Examples: "gemini-2.5-flash", "gpt-4o", "claude-3-5-sonnet-latest"
+  model: ""
+
+  # NOTE: The LLM API token and provider are stored securely in the BuntDB vault,
+  # NOT in this configuration file.
+  # To set up the LLM, run: mcp-server-magicdev configure
 `
+
+// OnConfigReload contains functions to be called whenever fsnotify reloads the configuration.
+var OnConfigReload []func()
 
 // ConfigPath returns the absolute path to the magicdev.yaml file.
 func ConfigPath() (string, error) {
@@ -205,6 +255,15 @@ func LoadConfig() error {
 					slog.Info("config file changed, reloading...", "file", event.Name)
 					if err := viper.ReadInConfig(); err != nil {
 						slog.Error("failed to hot-reload config", "error", err)
+					} else {
+						// Hot-reload log level from updated config.
+						logging.SetLevel(viper.GetString("server.log_level"))
+						slog.Info("log level hot-reloaded", "level", viper.GetString("server.log_level"))
+						
+						// Execute any registered hot-reload hooks
+						for _, hook := range OnConfigReload {
+							hook()
+						}
 					}
 				}
 			case err, ok := <-watcher.Errors:
@@ -216,16 +275,12 @@ func LoadConfig() error {
 		}
 	}()
 
-	// Windows locks files heavily; watch the directory instead. Linux/Mac watch the file directly.
-	if runtime.GOOS == "windows" {
-		watchDir := filepath.Dir(path)
-		if err := watcher.Add(watchDir); err != nil {
-			slog.Warn("failed to watch config directory", "dir", watchDir, "error", err)
-		}
-	} else {
-		if err := watcher.Add(path); err != nil {
-			slog.Warn("failed to watch config file", "file", path, "error", err)
-		}
+	// Always watch the directory, not the file. Most editors use atomic
+	// save (write-to-temp + rename) which replaces the inode, causing
+	// file-level watchers to silently detach.
+	watchDir := filepath.Dir(path)
+	if err := watcher.Add(watchDir); err != nil {
+		slog.Warn("failed to watch config directory", "dir", watchDir, "error", err)
 	}
 
 	return nil

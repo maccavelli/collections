@@ -3,14 +3,9 @@ package handler
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log/slog"
-	"net/http"
-	"os"
 	"strings"
 	"time"
 
@@ -123,7 +118,7 @@ type GenerateDocumentsArgs struct {
 	Title           string `json:"title" jsonschema:"Document title"`
 	Markdown        string `json:"markdown" jsonschema:"Supplementary markdown content from the agent."`
 	TargetBranch    string `json:"target_branch" jsonschema:"Target git branch"`
-	DiagramOverride string `json:"diagram_override,omitempty" jsonschema:"Optional manual Mermaid diagram override."`
+	DiagramOverride string `json:"diagram_override,omitempty" jsonschema:"Optional manual D2 diagram override."`
 }
 
 // CompleteDesignArgs defines the CompleteDesignArgs structure.
@@ -133,7 +128,7 @@ type CompleteDesignArgs struct {
 
 // UpdateConfigArgs defines the UpdateConfigArgs structure.
 type UpdateConfigArgs struct {
-	Key   string `json:"key" jsonschema:"Configuration key to update (e.g. 'jira.token')"`
+	Key   string `json:"key" jsonschema:"Configuration key to update. Valid keys: confluence.url, confluence.space, confluence.parent_page_id, confluence.mock, jira.email, jira.url, jira.project, jira.issue, jira.mock, jira.story_points_field, git.username, git.server_url, git.project_path, git.default_branch, agent.default_stack, runtime.gomemlimit, runtime.gomaxprocs, server.log_level, server.db_path, llm.model"`
 	Value string `json:"value" jsonschema:"New value to set"`
 }
 
@@ -226,6 +221,49 @@ func (h *ToolHandler) EvaluateIdea(ctx context.Context, req *mcp.CallToolRequest
 		return errorResult(err.Error())
 	}
 
+	// --- Semantic Gatekeeper Intelligence (Phase 1) ---
+	meta, err := h.store.GetSessionMetadata(sessionID)
+	if err != nil {
+		slog.Warn("Failed to retrieve session metadata", "error", err)
+	}
+	if meta == nil {
+		meta = &db.SessionMetadata{SessionID: sessionID}
+	}
+
+	llmClient, llmErr := integration.NewLLMClient(h.store)
+	if llmErr == nil && llmClient != nil {
+		// Run semantic gatekeeper
+		prompt := fmt.Sprintf("Analyze the following software idea and determine its complexity, security footprint, and pattern preference.\n\nIdea: %s\nTarget Stack: %s\nTarget Environment: %s\nLabels: %s\nBusiness Case: %s\n\nReturn ONLY a JSON object with the following keys: \"complexity_score\" (integer 1-13), \"security_footprint\" (string), \"pattern_preference\" (string).", args.RawIdea, args.TargetStack, args.TargetEnvironment, strings.Join(args.Labels, ", "), args.BusinessCase)
+
+		response, err := llmClient.GenerateContent(ctx, prompt)
+		if err == nil {
+			var gatekeeper struct {
+				ComplexityScore   int    `json:"complexity_score"`
+				SecurityFootprint string `json:"security_footprint"`
+				PatternPreference string `json:"pattern_preference"`
+			}
+			cleaned := strings.TrimPrefix(strings.TrimSpace(response), "```json")
+			cleaned = strings.TrimPrefix(cleaned, "```")
+			cleaned = strings.TrimSuffix(cleaned, "```")
+			cleaned = strings.TrimSpace(cleaned)
+
+			if err := json.Unmarshal([]byte(cleaned), &gatekeeper); err == nil {
+				meta.ComplexityScore = gatekeeper.ComplexityScore
+				meta.SecurityFootprint = gatekeeper.SecurityFootprint
+				meta.PatternPreference = gatekeeper.PatternPreference
+				h.store.SaveSessionMetadata(meta)
+				slog.Info("Semantic gatekeeper completed successfully", "score", meta.ComplexityScore)
+			} else {
+				slog.Warn("Failed to parse semantic gatekeeper response", "error", err, "response", response)
+			}
+		} else {
+			slog.Warn("LLM Semantic Gatekeeper failed, falling back to default behavior", "error", err)
+		}
+	} else {
+		slog.Info("LLM not configured, skipping semantic gatekeeper", "reason", llmErr)
+	}
+	// ---------------------------------------------------
+
 	baselineURLs := sync.GetContextualStandards(args.TargetStack, args.TargetEnvironment, args.Labels)
 
 	hint := "Next, call 'ingest_standards' to pull in applicable project standards."
@@ -236,6 +274,7 @@ func (h *ToolHandler) EvaluateIdea(ctx context.Context, req *mcp.CallToolRequest
 	return hybridMarkdownResult(hint, map[string]any{
 		"session_id":     sessionID,
 		"scope_boundary": args.RawIdea,
+		"gatekeeper_active": llmClient != nil,
 	})
 }
 
@@ -247,6 +286,11 @@ func (h *ToolHandler) ClarifyRequirements(ctx context.Context, req *mcp.CallTool
 	}
 
 	session.IsVetted = args.IsVetted
+
+	meta, err := h.store.GetSessionMetadata(args.SessionID)
+	if err != nil || meta == nil {
+		meta = &db.SessionMetadata{SessionID: args.SessionID}
+	}
 
 	if !args.IsVetted {
 		// Persist the skeptic analysis for audit trail
@@ -270,6 +314,15 @@ func (h *ToolHandler) ClarifyRequirements(ctx context.Context, req *mcp.CallTool
 			}
 		}
 
+		// Record Socratic History
+		historyEntry := fmt.Sprintf("[%s] Conflict Detected: %d questions escalated to user.", time.Now().UTC().Format(time.RFC3339), len(questions))
+		if meta.SocraticHistory == "" {
+			meta.SocraticHistory = historyEntry
+		} else {
+			meta.SocraticHistory += "\n" + historyEntry
+		}
+		_ = h.store.SaveSessionMetadata(meta)
+
 		msg := fmt.Sprintf("SOCRATIC CONFLICT DETECTED: You must prompt the user with the following questions and await their answers. Once answered, re-run 'clarify_requirements' with the updated synthesis.\n\nOutstanding Questions:\n%s", strings.Join(questions, "\n\n"))
 		return errorResult(msg)
 	}
@@ -284,6 +337,15 @@ func (h *ToolHandler) ClarifyRequirements(ctx context.Context, req *mcp.CallTool
 	if err := h.store.SaveSession(session); err != nil {
 		return errorResult(err.Error())
 	}
+
+	// Record resolution in Socratic History
+	historyEntry := fmt.Sprintf("[%s] Synthesis Resolved: Architecture vetted successfully.", time.Now().UTC().Format(time.RFC3339))
+	if meta.SocraticHistory == "" {
+		meta.SocraticHistory = historyEntry
+	} else {
+		meta.SocraticHistory += "\n" + historyEntry
+	}
+	_ = h.store.SaveSessionMetadata(meta)
 
 	hint := "Socratic Trifecta analysis complete. Proceed to 'critique_design' to vet the proposed architecture."
 	resultData := map[string]any{
@@ -304,52 +366,15 @@ func (h *ToolHandler) ClarifyRequirements(ctx context.Context, req *mcp.CallTool
 // IngestStandards performs the IngestStandards operation.
 func (h *ToolHandler) IngestStandards(ctx context.Context, req *mcp.CallToolRequest, args IngestStandardsArgs) (*mcp.CallToolResult, any, error) {
 	standard := args.SourceURL
-	isURL := true
 	if args.FilePath != "" {
 		standard = args.FilePath
-		isURL = false
 	}
 
-	var textContent string
-
-	// Attempt zero-latency lookup from Hybrid-Compressed BuntDB cache
-	cachedContent, err := h.store.GetBaselineContent(standard)
-	if err == nil && cachedContent != "" {
-		textContent = cachedContent
-	} else {
-		// Fallback to manual fetch
-		var content []byte
-		var fetchErr error
-		if isURL {
-			resp, errHTTP := http.Get(standard)
-			if errHTTP == nil && resp.StatusCode < 400 {
-				content, fetchErr = io.ReadAll(resp.Body)
-				resp.Body.Close()
-			} else {
-				if resp != nil {
-					resp.Body.Close()
-				}
-				fetchErr = fmt.Errorf("http fetch failed: %v", errHTTP)
-			}
-		} else {
-			content, fetchErr = os.ReadFile(standard)
-		}
-
-		if fetchErr != nil {
-			slog.Warn("manual fetch failed, attempting embedded fallback", "standard", standard, "error", fetchErr)
-			var embedErr error
-			content, embedErr = sync.GetEmbeddedStandard(standard)
-			if embedErr != nil {
-				return errorResult(fmt.Sprintf("failed to fetch standard and no embedded fallback available: %v", embedErr))
-			}
-		}
-		textContent = string(content)
-
-		hashBytes := sha256.Sum256(content)
-		hashStr := hex.EncodeToString(hashBytes[:])
-		if err := h.store.SetBaseline(standard, textContent, hashStr); err != nil {
-			slog.Warn("failed to cache baseline standard", "url", standard, "error", err)
-		}
+	// Use the shared 3-tier cascade with content return: BuntDB cache → HTTP → embedded.
+	// FetchAndCacheWithContent returns content directly, eliminating double decompression.
+	textContent, err := sync.FetchAndCacheWithContent(h.store, standard)
+	if err != nil {
+		return errorResult(fmt.Sprintf("failed to retrieve standard: %v", err))
 	}
 
 	if err := h.store.AppendStandard(args.SessionID, textContent); err != nil {
@@ -494,8 +519,20 @@ func (h *ToolHandler) BlueprintImplementation(ctx context.Context, req *mcp.Call
 		}
 	}
 
-	// Generate and persist the Mermaid diagram
-	bp.MermaidDiagram = GenerateMermaidDiagram(session, bp)
+	// Generate and persist the D2 diagram
+	bp.D2Source = GenerateD2Diagram(session, bp)
+	svgRendered := false
+	if bp.D2Source != "" {
+		if svg, err := RenderD2ToSVG(bp.D2Source); err != nil {
+			slog.Warn("blueprint_implementation: D2 SVG rendering failed — SVG will not be uploaded",
+				"error", err,
+				"d2_source_len", len(bp.D2Source),
+			)
+		} else if svg != "" {
+			bp.D2SVG = svg
+			svgRendered = true
+		}
+	}
 
 	if session.TechMapping == nil {
 		session.TechMapping = make(map[string]string)
@@ -518,12 +555,14 @@ func (h *ToolHandler) BlueprintImplementation(ctx context.Context, req *mcp.Call
 		"complexity_score":    bp.ComplexityScores,
 		"file_count":          len(bp.FileStructure),
 		"adr_count":           len(bp.ADRs),
+		"d2_generated":        bp.D2Source != "",
+		"svg_rendered":        svgRendered,
 	})
 }
 
 // buildComprehensiveSpec synthesizes all accumulated session state into a
 // machine-optimized markdown document suitable for LLM code generation handoff.
-func buildComprehensiveSpec(session *db.SessionState, bp *db.Blueprint, agentMarkdown, title string) string {
+func buildComprehensiveSpec(session *db.SessionState, bp *db.Blueprint, meta *db.SessionMetadata, agentMarkdown, title string) string {
 	var b strings.Builder
 
 	b.WriteString(fmt.Sprintf("# %s\n\n", title))
@@ -548,6 +587,25 @@ func buildComprehensiveSpec(session *db.SessionState, bp *db.Blueprint, agentMar
 	}
 	if len(session.Labels) > 0 {
 		b.WriteString(fmt.Sprintf("**Labels:** %s\n\n", strings.Join(session.Labels, ", ")))
+	}
+
+	// --- Semantic Gatekeeper Intelligence ---
+	if meta != nil && (meta.ComplexityScore > 0 || meta.SecurityFootprint != "" || meta.PatternPreference != "" || meta.SocraticHistory != "") {
+		b.WriteString("## Semantic Gatekeeper Intelligence\n\n")
+		if meta.ComplexityScore > 0 {
+			b.WriteString(fmt.Sprintf("**Calculated Complexity Score:** %d / 13 SP\n\n", meta.ComplexityScore))
+		}
+		if meta.SecurityFootprint != "" {
+			b.WriteString(fmt.Sprintf("**Security Footprint:** %s\n\n", meta.SecurityFootprint))
+		}
+		if meta.PatternPreference != "" {
+			b.WriteString(fmt.Sprintf("**Pattern Preference:** %s\n\n", meta.PatternPreference))
+		}
+		if meta.SocraticHistory != "" {
+			b.WriteString("**Socratic History Trail:**\n```text\n")
+			b.WriteString(meta.SocraticHistory)
+			b.WriteString("\n```\n\n")
+		}
 	}
 
 	// --- Approved Specification ---
@@ -857,14 +915,10 @@ func buildComprehensiveSpec(session *db.SessionState, bp *db.Blueprint, agentMar
 		b.WriteString("\n")
 	}
 
-	// --- System Architecture Diagram ---
-	diagram := bp.MermaidDiagram
-	if diagram == "" {
-		diagram = GenerateMermaidDiagram(session, bp)
-	}
-	if diagram != "" {
+	// --- System Architecture Diagram (reference only — source in separate .d2 file) ---
+	if bp.D2Source != "" {
 		b.WriteString("## System Architecture\n\n")
-		b.WriteString(diagram)
+		b.WriteString(fmt.Sprintf("Architecture diagram available as separate files: `%s_architecture.d2` (source) and `%s_architecture.svg` (rendered).\n\n", title, title))
 	}
 
 	// --- Agent Supplementary Notes ---
@@ -895,11 +949,20 @@ func (h *ToolHandler) GenerateDocuments(ctx context.Context, req *mcp.CallToolRe
 
 	// Allow diagram override from agent
 	if args.DiagramOverride != "" && bp != nil {
-		bp.MermaidDiagram = args.DiagramOverride
+		bp.D2Source = args.DiagramOverride
+		if svg, err := RenderD2ToSVG(bp.D2Source); err != nil {
+			slog.Warn("generate_documents: D2 SVG rendering failed for diagram override",
+				"error", err,
+				"d2_source_len", len(bp.D2Source),
+			)
+		} else {
+			bp.D2SVG = svg
+		}
 	}
 
 	// Build comprehensive machine-optimized spec from ALL session state
-	markdownPayload := buildComprehensiveSpec(session, bp, args.Markdown, args.Title)
+	meta, _ := h.store.GetSessionMetadata(args.SessionID)
+	markdownPayload := buildComprehensiveSpec(session, bp, meta, args.Markdown, args.Title)
 
 	jiraID, err := integration.ProcessDocumentGeneration(h.store, args.Title, markdownPayload, args.TargetBranch, args.SessionID, bp, aporias)
 	if err != nil {
@@ -922,25 +985,38 @@ func (h *ToolHandler) GenerateDocuments(ctx context.Context, req *mcp.CallToolRe
 func (h *ToolHandler) CompleteDesign(ctx context.Context, req *mcp.CallToolRequest, args CompleteDesignArgs) (*mcp.CallToolResult, any, error) {
 	session, err := h.store.LoadSession(args.SessionID)
 	jiraTask := "UNKNOWN"
-	var diagram string
+	var diagramFiles []string
+	var handoffSummary string
+
 	if err == nil && session != nil {
 		jiraTask = session.JiraID
-		diagram = GenerateMermaidDiagram(session, session.Blueprint)
+		if session.Blueprint != nil {
+			if session.Blueprint.D2Source != "" {
+				diagramFiles = append(diagramFiles, "architecture.d2")
+			}
+			if session.Blueprint.D2SVG != "" {
+				diagramFiles = append(diagramFiles, "architecture.svg")
+			}
+		}
+
+		// Build comprehensive handoff summary BEFORE deleting the session
+		meta, _ := h.store.GetSessionMetadata(args.SessionID)
+		title := "Design Handoff Summary"
+		if jiraTask != "UNKNOWN" && jiraTask != "" {
+			title = fmt.Sprintf("[%s] Design Handoff Summary", jiraTask)
+		}
+		handoffSummary = buildComprehensiveSpec(session, session.Blueprint, meta, "", title)
 	}
 
 	if err := h.store.DeleteSession(args.SessionID); err != nil {
 		slog.Warn("complete_design: session cleanup failed", "error", err, "session_id", args.SessionID)
 	}
-	
-	handoffReport := "All tasks successful."
-	if diagram != "" {
-		handoffReport += "\n" + diagram
-	}
-	
+
 	return hybridMarkdownResult("Session completed and archived.", map[string]any{
-		"handoff_report": handoffReport,
+		"handoff_report": handoffSummary,
 		"jira_task":      jiraTask,
 		"archive_path":   fmt.Sprintf("/archives/%s", args.SessionID),
+		"diagram_files":  diagramFiles,
 	})
 }
 

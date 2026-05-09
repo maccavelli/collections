@@ -276,3 +276,114 @@ func TestPurgeBaselines(t *testing.T) {
 		t.Errorf("Session should survive baseline purge, got err=%v", err)
 	}
 }
+
+func TestHasBaseline(t *testing.T) {
+	viper.Set("server.db_path", ":memory:")
+	store, err := InitStore()
+	if err != nil {
+		t.Fatalf("Failed to init store: %v", err)
+	}
+	defer store.Close()
+
+	url := "https://test.com/standard"
+
+	// Should not exist before setting.
+	if store.HasBaseline(url) {
+		t.Error("HasBaseline should return false for non-existent key")
+	}
+
+	// Set baseline.
+	if err := store.SetBaseline(url, "content", "hash"); err != nil {
+		t.Fatalf("SetBaseline failed: %v", err)
+	}
+
+	// Should exist after setting.
+	if !store.HasBaseline(url) {
+		t.Error("HasBaseline should return true for existing key")
+	}
+
+	// Should not exist for a different URL.
+	if store.HasBaseline("https://other.com") {
+		t.Error("HasBaseline should return false for different key")
+	}
+}
+
+func TestListBaselines(t *testing.T) {
+	viper.Set("server.db_path", ":memory:")
+	store, err := InitStore()
+	if err != nil {
+		t.Fatalf("Failed to init store: %v", err)
+	}
+	defer store.Close()
+
+	// Empty list.
+	metas, err := store.ListBaselines()
+	if err != nil {
+		t.Fatalf("ListBaselines failed: %v", err)
+	}
+	if len(metas) != 0 {
+		t.Errorf("Expected 0 baselines, got %d", len(metas))
+	}
+
+	// Seed 3 baselines.
+	urls := []string{"https://a.com", "https://b.com", "https://c.com"}
+	for i, url := range urls {
+		if err := store.SetBaseline(url, "content", fmt.Sprintf("hash%d", i)); err != nil {
+			t.Fatalf("SetBaseline failed: %v", err)
+		}
+	}
+
+	// Should list all 3.
+	metas, err = store.ListBaselines()
+	if err != nil {
+		t.Fatalf("ListBaselines failed: %v", err)
+	}
+	if len(metas) != 3 {
+		t.Errorf("Expected 3 baselines, got %d", len(metas))
+	}
+
+	// Verify metadata is correct (no payload decompression needed).
+	metaMap := make(map[string]string)
+	for _, m := range metas {
+		metaMap[m.URL] = m.Hash
+	}
+	for i, url := range urls {
+		expectedHash := fmt.Sprintf("hash%d", i)
+		if metaMap[url] != expectedHash {
+			t.Errorf("Expected hash %q for %s, got %q", expectedHash, url, metaMap[url])
+		}
+	}
+}
+
+func TestBaselineCount(t *testing.T) {
+	viper.Set("server.db_path", ":memory:")
+	store, err := InitStore()
+	if err != nil {
+		t.Fatalf("Failed to init store: %v", err)
+	}
+	defer store.Close()
+
+	// Empty count.
+	if count := store.BaselineCount(); count != 0 {
+		t.Errorf("Expected 0 baselines, got %d", count)
+	}
+
+	// Add baselines and verify count increments.
+	for i, url := range []string{"https://a.com", "https://b.com"} {
+		if err := store.SetBaseline(url, "content", fmt.Sprintf("hash%d", i)); err != nil {
+			t.Fatalf("SetBaseline failed: %v", err)
+		}
+	}
+
+	if count := store.BaselineCount(); count != 2 {
+		t.Errorf("Expected 2 baselines, got %d", count)
+	}
+
+	// Add a session — should NOT affect baseline count.
+	if err := store.SaveSession(NewSessionState("session1")); err != nil {
+		t.Fatalf("SaveSession failed: %v", err)
+	}
+	if count := store.BaselineCount(); count != 2 {
+		t.Errorf("Expected 2 baselines (session should not count), got %d", count)
+	}
+}

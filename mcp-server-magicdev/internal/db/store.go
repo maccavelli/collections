@@ -5,8 +5,11 @@ package db
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"time"
 
 	json "github.com/go-json-experiment/json"
@@ -15,6 +18,24 @@ import (
 	"github.com/tidwall/buntdb"
 	"mcp-server-magicdev/internal/vault"
 )
+
+// Pooled zstd encoder and decoder to avoid per-call allocation overhead.
+// The klauspost/compress library is designed for reuse — EncodeAll/DecodeAll
+// are stateless and safe to call on pooled instances without Reset().
+// Do NOT call Close() on pooled objects.
+var zstdEncoderPool = sync.Pool{
+	New: func() any {
+		enc, _ := zstd.NewWriter(nil, zstd.WithEncoderConcurrency(1))
+		return enc
+	},
+}
+
+var zstdDecoderPool = sync.Pool{
+	New: func() any {
+		dec, _ := zstd.NewReader(nil, zstd.WithDecoderConcurrency(0))
+		return dec
+	},
+}
 
 // Store wraps a BuntDB instance for thread-safe session CRUD operations.
 type Store struct {
@@ -25,6 +46,13 @@ type Store struct {
 type BaselineStandard struct {
 	Hash    string `json:"hash"`
 	Payload []byte `json:"payload"` // Zstd compressed markdown
+}
+
+// BaselineMeta contains lightweight metadata about a cached standard
+// without the compressed payload.
+type BaselineMeta struct {
+	URL  string `json:"url"`
+	Hash string `json:"hash"`
 }
 
 // InitStore opens a BuntDB instance.
@@ -59,12 +87,30 @@ func InitStore() (*Store, error) {
 		database.SetConfig(bCfg)
 	}
 
+	// Register baseline prefix index for efficient prefix iteration.
+	if err := database.CreateIndex("idx_baselines", "baseline:*", buntdb.IndexString); err != nil {
+		slog.Warn("failed to create baseline index", "error", err)
+	}
+
 	return &Store{DB: database}, nil
 }
 
 // Close releases the underlying BuntDB resources.
 func (s *Store) Close() error {
 	return s.DB.Close()
+}
+
+// DBEntries returns the total count of keys in the BuntDB store.
+func (s *Store) DBEntries() int {
+	if s == nil || s.DB == nil {
+		return 0
+	}
+	var n int
+	_ = s.DB.View(func(tx *buntdb.Tx) error {
+		n, _ = tx.Len()
+		return nil
+	})
+	return n
 }
 
 // sessionKey returns the canonical BuntDB key for a session.
@@ -99,6 +145,42 @@ func (s *Store) LoadSession(sessionID string) (*SessionState, error) {
 		return nil, err
 	}
 	return &session, nil
+}
+
+// sessionMetadataKey returns the canonical BuntDB key for session metadata.
+func sessionMetadataKey(id string) string {
+	return fmt.Sprintf("session_metadata:%s", id)
+}
+
+// GetSessionMetadata retrieves session metadata.
+func (s *Store) GetSessionMetadata(sessionID string) (*SessionMetadata, error) {
+	var meta SessionMetadata
+	err := s.DB.View(func(tx *buntdb.Tx) error {
+		val, err := tx.Get(sessionMetadataKey(sessionID))
+		if err != nil {
+			return err
+		}
+		return json.Unmarshal([]byte(val), &meta)
+	})
+	if err != nil {
+		if errors.Is(err, buntdb.ErrNotFound) {
+			return &SessionMetadata{SessionID: sessionID}, nil
+		}
+		return nil, err
+	}
+	return &meta, nil
+}
+
+// SaveSessionMetadata saves session metadata.
+func (s *Store) SaveSessionMetadata(meta *SessionMetadata) error {
+	data, err := json.Marshal(meta)
+	if err != nil {
+		return err
+	}
+	return s.DB.Update(func(tx *buntdb.Tx) error {
+		_, _, err := tx.Set(sessionMetadataKey(meta.SessionID), string(data), nil)
+		return err
+	})
 }
 
 // AppendStandard adds a standard to the session's Standards slice within
@@ -228,6 +310,17 @@ func (s *Store) GetBaselineHash(url string) (string, error) {
 	return standard.Hash, nil
 }
 
+// HasBaseline returns true if the baseline key exists and has not expired.
+// This is a zero-decompression, zero-unmarshal check — just a BuntDB key probe.
+// BuntDB handles TTL expiration internally: expired keys return ErrNotFound on Get.
+func (s *Store) HasBaseline(url string) bool {
+	err := s.DB.View(func(tx *buntdb.Tx) error {
+		_, err := tx.Get(baselineKey(url))
+		return err
+	})
+	return err == nil
+}
+
 // GetBaselineContent retrieves and decompresses a baseline standard.
 func (s *Store) GetBaselineContent(url string) (string, error) {
 	var standard BaselineStandard
@@ -242,11 +335,8 @@ func (s *Store) GetBaselineContent(url string) (string, error) {
 		return "", err
 	}
 
-	decoder, err := zstd.NewReader(nil)
-	if err != nil {
-		return "", err
-	}
-	defer decoder.Close()
+	decoder := zstdDecoderPool.Get().(*zstd.Decoder)
+	defer zstdDecoderPool.Put(decoder)
 
 	uncompressed, err := decoder.DecodeAll(standard.Payload, nil)
 	if err != nil {
@@ -256,13 +346,44 @@ func (s *Store) GetBaselineContent(url string) (string, error) {
 	return string(uncompressed), nil
 }
 
+// ListBaselines returns metadata for all cached baseline standards
+// without decompressing payloads. Uses the idx_baselines index for
+// efficient prefix iteration.
+func (s *Store) ListBaselines() ([]BaselineMeta, error) {
+	var metas []BaselineMeta
+	err := s.DB.View(func(tx *buntdb.Tx) error {
+		tx.AscendKeys("baseline:*", func(key, val string) bool {
+			var std BaselineStandard
+			if json.Unmarshal([]byte(val), &std) == nil {
+				metas = append(metas, BaselineMeta{
+					URL:  strings.TrimPrefix(key, "baseline:"),
+					Hash: std.Hash,
+				})
+			}
+			return true
+		})
+		return nil
+	})
+	return metas, err
+}
+
+// BaselineCount returns the number of cached baseline standards.
+func (s *Store) BaselineCount() int {
+	var count int
+	_ = s.DB.View(func(tx *buntdb.Tx) error {
+		tx.AscendKeys("baseline:*", func(_, _ string) bool {
+			count++
+			return true
+		})
+		return nil
+	})
+	return count
+}
+
 // SetBaseline compresses and stores a baseline standard in BuntDB.
 func (s *Store) SetBaseline(url string, content string, hash string) error {
-	encoder, err := zstd.NewWriter(nil)
-	if err != nil {
-		return err
-	}
-	defer encoder.Close()
+	encoder := zstdEncoderPool.Get().(*zstd.Encoder)
+	defer zstdEncoderPool.Put(encoder)
 
 	compressed := encoder.EncodeAll([]byte(content), make([]byte, 0, len(content)))
 

@@ -11,7 +11,25 @@ import (
 
 // UpdateConfigKey surgically updates a single scalar value in the magicdev.yaml
 // configuration file while preserving all existing comments and structure.
+// The key must exist in ValidConfigKeys; boolean-typed keys enforce strict
+// "true"/"false" validation.
 func UpdateConfigKey(key, value string) error {
+	// Validate key against the canonical registry.
+	info, ok := LookupKey(key)
+	if !ok {
+		return fmt.Errorf("unknown configuration key: %q (valid keys: %s)",
+			key, ValidKeyNamesString())
+	}
+
+	// Enforce strict boolean values for bool-typed keys.
+	if info.ValueType == "bool" {
+		normalized := strings.ToLower(strings.TrimSpace(value))
+		if normalized != "true" && normalized != "false" {
+			return fmt.Errorf("key %q requires a boolean value (true/false), got %q", key, value)
+		}
+		value = normalized
+	}
+
 	path, err := ConfigPath()
 	if err != nil {
 		return err
@@ -77,3 +95,4 @@ func updateNode(node *yaml.Node, path []string, value string) bool {
 	}
 	return false
 }
+

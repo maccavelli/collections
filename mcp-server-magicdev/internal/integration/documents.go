@@ -4,6 +4,7 @@
 package integration
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -12,10 +13,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ctreminiom/go-atlassian/v2/confluence"
-	"github.com/ctreminiom/go-atlassian/v2/jira/v3"
-	"github.com/ctreminiom/go-atlassian/v2/pkg/infra/models"
-	"github.com/ericmason/mdadf"
+	"github.com/yuin/goldmark"
+	gmhtml "github.com/yuin/goldmark/renderer/html"
 	"github.com/spf13/viper"
 	"gitlab.com/gitlab-org/api/client-go"
 
@@ -41,15 +40,11 @@ func ProcessDocumentGeneration(store *db.Store, title, markdown, targetBranch, s
 	ctx := context.Background()
 
 	// 1. Jira Ticket Creation or Retrieval
-	jiraClient, err := v3.New(nil, viper.GetString("jira.url"))
-	if err != nil {
-		return "", fmt.Errorf("failed to create jira client: %w", err)
-	}
 	var jiraToken string
 	if store != nil {
 		jiraToken, _ = store.GetSecret("jira")
 	}
-	jiraClient.Auth.SetBasicAuth("", jiraToken)
+	jc := NewJiraClient(viper.GetString("jira.url"), jiraToken)
 
 	jiraID := viper.GetString("jira.issue")
 	if jiraID == "" {
@@ -58,16 +53,13 @@ func ProcessDocumentGeneration(store *db.Store, title, markdown, targetBranch, s
 			projectKey = "PROJ"
 		}
 
-		issuePayload := &models.IssueScheme{
-			Fields: &models.IssueFieldsScheme{
-				Summary:   title,
-				Project:   &models.ProjectScheme{Key: projectKey},
-				IssueType: &models.IssueTypeScheme{Name: "Task"},
-			},
+		fields := map[string]interface{}{
+			"summary":   title,
+			"project":   map[string]string{"key": projectKey},
+			"issuetype": map[string]string{"name": "Task"},
 		}
 
 		// Populate story points from Blueprint complexity scores if available
-		var customFields *models.CustomFields
 		if bp != nil && len(bp.ComplexityScores) > 0 {
 			totalPoints := 0
 			for _, points := range bp.ComplexityScores {
@@ -76,26 +68,18 @@ func ProcessDocumentGeneration(store *db.Store, title, markdown, targetBranch, s
 
 			storyPointsField := viper.GetString("jira.story_points_field")
 			if storyPointsField == "" {
-				storyPointsField = "customfield_10016" // Jira Cloud default
+				storyPointsField = "customfield_10016"
 			}
 
-			customFields = &models.CustomFields{}
-			if err := customFields.Number(storyPointsField, float64(totalPoints)); err != nil {
-				slog.Warn("generate_documents: failed to set story points custom field", "error", err)
-			} else {
-				slog.Info("generate_documents: setting story points from blueprint",
-					"field", storyPointsField,
-					"total_points", totalPoints,
-				)
-			}
+			fields[storyPointsField] = float64(totalPoints)
+			slog.Info("generate_documents: setting story points from blueprint",
+				"field", storyPointsField,
+				"total_points", totalPoints,
+			)
 		}
 
-		issue, resp, jiraErr := jiraClient.Issue.Create(ctx, issuePayload, customFields)
+		issue, status, jiraErr := jc.CreateIssue(ctx, &JiraIssuePayload{Fields: fields})
 		if jiraErr != nil {
-			status := 0
-			if resp != nil {
-				status = resp.StatusCode
-			}
 			slog.Warn("generate_documents: jira issue creation failed",
 				"error", jiraErr,
 				"status", status,
@@ -109,15 +93,11 @@ func ProcessDocumentGeneration(store *db.Store, title, markdown, targetBranch, s
 	}
 
 	// 2. Confluence Page Creation (Markdown -> ADF)
-	confluenceClient, err := confluence.New(nil, viper.GetString("confluence.url"))
-	if err != nil {
-		return "", fmt.Errorf("failed to create confluence client: %w", err)
-	}
 	var confluenceToken string
 	if store != nil {
 		confluenceToken, _ = store.GetSecret("confluence")
 	}
-	confluenceClient.Auth.SetBasicAuth("", confluenceToken)
+	cc := NewConfluenceClient(viper.GetString("confluence.url"), confluenceToken)
 
 	// Enrich markdown with Technical Implementation Roadmap section from Blueprint
 	enrichedMarkdown := markdown
@@ -132,15 +112,35 @@ func ProcessDocumentGeneration(store *db.Store, title, markdown, targetBranch, s
 	// Normalize line endings for Windows
 	enrichedMarkdown = normalizeLineEndings(enrichedMarkdown)
 
-	// Convert Markdown to ADF
-	adfDoc, err := mdadf.Convert(enrichedMarkdown)
-	if err != nil {
-		return "", fmt.Errorf("failed to convert markdown to ADF: %w", err)
+	// 3. Generate Hybrid Markdown & MADR Early
+	hybridBytes, hybridErr := generateHybridMarkdown(jiraID, enrichedMarkdown, bp, synthesis)
+	if hybridErr != nil {
+		return "", hybridErr
 	}
 
-	adfBytes, err := json.Marshal(adfDoc)
+	var session *db.SessionState
+	if store != nil {
+		var loadErr error
+		session, loadErr = store.LoadSession(sessionID)
+		if loadErr != nil {
+			slog.Warn("failed to load session for ADR generation", "error", loadErr)
+		}
+	}
+
+	var adrMarkdown string
+	if bp != nil && len(bp.ADRs) > 0 && session != nil {
+		adrMarkdown = buildMADRDocument(title, session, bp)
+	}
+
+	// Format Hybrid Markdown for Confluence (replace frontmatter with code block)
+	hybridStr := string(hybridBytes)
+	hybridStr = strings.Replace(hybridStr, "---json\n", "```json\n", 1)
+	hybridStr = strings.Replace(hybridStr, "\n---\n\n", "\n```\n\n", 1)
+
+	// Convert Hybrid Markdown to XHTML storage format for Confluence Data Center
+	xhtml, err := markdownToXHTML(hybridStr)
 	if err != nil {
-		return "", fmt.Errorf("failed to marshal ADF document: %w", err)
+		return "", fmt.Errorf("failed to convert markdown to XHTML: %w", err)
 	}
 
 	space := viper.GetString("confluence.space")
@@ -153,30 +153,26 @@ func ProcessDocumentGeneration(store *db.Store, title, markdown, targetBranch, s
 		confluenceTitle = fmt.Sprintf("[%s] %s", jiraID, title)
 	}
 
-	contentPayload := &models.ContentScheme{
+	contentPayload := &ConfluenceContentPayload{
 		Type:  "page",
 		Title: confluenceTitle,
-		Space: &models.SpaceScheme{Key: space},
-		Body: &models.BodyScheme{
-			Storage: &models.BodyNodeScheme{
-				Value:          string(adfBytes),
-				Representation: "atlas_doc_format",
+		Space: ConfluenceSpaceRef{Key: space},
+		Body: ConfluenceBodyPayload{
+			Storage: ConfluenceStoragePayload{
+				Value:          xhtml,
+				Representation: "storage",
 			},
 		},
 	}
 
 	parentPageID := viper.GetString("confluence.parent_page_id")
 	if parentPageID != "" {
-		contentPayload.Ancestors = []*models.ContentScheme{{ID: parentPageID}}
+		contentPayload.Ancestors = []ConfluenceAncestorRef{{ID: parentPageID}}
 	}
 
 	var parentID string
-	createdPage, resp, err := confluenceClient.Content.Create(ctx, contentPayload)
+	createdPage, status, err := cc.CreateContent(ctx, contentPayload)
 	if err != nil {
-		status := 0
-		if resp != nil {
-			status = resp.StatusCode
-		}
 		slog.Warn("generate_documents: confluence page creation failed",
 			"error", err,
 			"status", status,
@@ -185,61 +181,34 @@ func ProcessDocumentGeneration(store *db.Store, title, markdown, targetBranch, s
 		parentID = createdPage.ID
 	}
 
-	// 2.5 Generate Confluence Child Pages for ADRs
-	var session *db.SessionState
-	if store != nil {
-		session, err = store.LoadSession(sessionID)
+	// 2.5 Generate Confluence Child Pages for Original Markdown
+	if parentID != "" && enrichedMarkdown != "" {
+		childXHTML, err := markdownToXHTML(enrichedMarkdown)
 		if err != nil {
-			slog.Warn("failed to load session for ADR generation", "error", err)
-		}
-	}
-
-	var adrMarkdown string
-	if parentID != "" && bp != nil && len(bp.ADRs) > 0 && session != nil {
-		adrMarkdown = buildComprehensiveADRDocument(session, bp)
-
-		// Publish to Confluence
-		adrADF, err := mdadf.Convert(adrMarkdown)
-		if err != nil {
-			slog.Warn("failed to convert Comprehensive ADR to ADF", "error", err)
+			slog.Warn("failed to convert Original Markdown to XHTML", "error", err)
 		} else {
-			adrBytes, err := json.Marshal(adrADF)
-			if err != nil {
-				slog.Warn("failed to marshal ADR ADF", "error", err)
-			} else {
-				adrPayload := &models.ContentScheme{
-					Type:  "page",
-					Title: fmt.Sprintf("%s - Architecture Decision Records", confluenceTitle),
-					Space: &models.SpaceScheme{Key: space},
-					Ancestors: []*models.ContentScheme{
-						{ID: parentID},
+			childPayload := &ConfluenceContentPayload{
+				Type:  "page",
+				Title: fmt.Sprintf("%s - Original Specifications", confluenceTitle),
+				Space: ConfluenceSpaceRef{Key: space},
+				Ancestors: []ConfluenceAncestorRef{
+					{ID: parentID},
+				},
+				Body: ConfluenceBodyPayload{
+					Storage: ConfluenceStoragePayload{
+						Value:          childXHTML,
+						Representation: "storage",
 					},
-					Body: &models.BodyScheme{
-						Storage: &models.BodyNodeScheme{
-							Value:          string(adrBytes),
-							Representation: "atlas_doc_format",
-						},
-					},
-				}
+				},
+			}
 
-				if _, resp, err := confluenceClient.Content.Create(ctx, adrPayload); err != nil {
-					status := 0
-					if resp != nil {
-						status = resp.StatusCode
-					}
-					slog.Warn("generate_documents: confluence adr page creation failed",
-						"error", err,
-						"status", status,
-					)
-				}
+			if _, childStatus, err := cc.CreateContent(ctx, childPayload); err != nil {
+				slog.Warn("generate_documents: confluence child page creation failed",
+					"error", err,
+					"status", childStatus,
+				)
 			}
 		}
-	}
-
-	// 3. Generate Hybrid Markdown
-	hybridBytes, err := generateHybridMarkdown(jiraID, enrichedMarkdown, bp, synthesis)
-	if err != nil {
-		return "", err
 	}
 
 	// 2.6 Jira to Confluence Remote Link and Attachments
@@ -247,38 +216,44 @@ func ProcessDocumentGeneration(store *db.Store, title, markdown, targetBranch, s
 		pageURL := fmt.Sprintf("%s/pages/viewpage.action?pageId=%s", viper.GetString("confluence.url"), createdPage.ID)
 
 		// Create Jira Remote Link
-		linkPayload := &models.RemoteLinkScheme{
-			Object: &models.RemoteLinkObjectScheme{
-				URL:   pageURL,
-				Title: createdPage.Title,
-			},
-		}
-		if _, _, err := jiraClient.Issue.Link.Remote.Create(ctx, jiraID, linkPayload); err != nil {
+		linkPayload := &JiraRemoteLinkPayload{}
+		linkPayload.Object.URL = pageURL
+		linkPayload.Object.Title = createdPage.Title
+		if err := jc.CreateRemoteLink(ctx, jiraID, linkPayload); err != nil {
 			slog.Warn("generate_documents: failed to create jira remote link", "error", err)
 		}
 
-		// Upload Mermaid as attachment
-		if bp != nil && bp.MermaidDiagram != "" {
-			fileName := fmt.Sprintf("%s_architecture.mmd", title)
-			reader := strings.NewReader(bp.MermaidDiagram)
-			if _, _, err := confluenceClient.Content.Attachment.Create(ctx, createdPage.ID, "current", fileName, reader); err != nil {
-				slog.Warn("generate_documents: failed to upload mermaid attachment", "error", err)
+		// Upload D2 SVG as attachment (renders natively in Confluence)
+		if bp != nil && bp.D2SVG != "" {
+			fileName := fmt.Sprintf("%s_architecture.svg", title)
+			reader := strings.NewReader(bp.D2SVG)
+			if err := cc.CreateAttachment(ctx, createdPage.ID, "current", fileName, reader); err != nil {
+				slog.Warn("generate_documents: failed to upload D2 SVG attachment to Confluence", "error", err)
+			} else {
+				slog.Info("generate_documents: D2 SVG attached to Confluence page",
+					"file", fileName,
+					"page_id", createdPage.ID,
+					"svg_bytes", len(bp.D2SVG),
+				)
 			}
+		} else if bp != nil && bp.D2Source != "" {
+			slog.Warn("generate_documents: D2 source exists but SVG is empty — skipping Confluence attachment (rendering likely failed upstream)")
 		}
 	}
 
 	// 2.7 Verify Cross-Links
-	confluencePayload := ""
-	if adfBytes != nil {
-		confluencePayload = string(adfBytes)
-	}
+	confluencePayload := xhtml
 	if err := verifyCrossLinks(hybridBytes, confluencePayload, jiraID); err != nil {
 		slog.Error("cross-link verification failed", "error", err)
 		return "", err
 	}
 
 	// 4. Git Push via GitLab API
-	if err := pushToGitLab(store, jiraID, targetBranch, title, hybridBytes, []byte(adrMarkdown), bp); err != nil {
+	mainGitLabContent := []byte(adrMarkdown)
+	if len(mainGitLabContent) == 0 {
+		mainGitLabContent = hybridBytes
+	}
+	if err := pushToGitLab(store, jiraID, targetBranch, title, mainGitLabContent, nil, bp); err != nil {
 		return "", fmt.Errorf("gitlab push failed: %w", err)
 	}
 
@@ -395,9 +370,12 @@ func pushToGitLab(store *db.Store, jiraID, targetBranch, title string, fileConte
 	var gitToken string
 	if store != nil {
 		gitToken, _ = store.GetSecret("gitlab")
+		if gitToken == "" {
+			gitToken, _ = store.GetSecret("git")
+		}
 	}
 	if gitToken == "" {
-		return fmt.Errorf("git_token must be configured for GitLab API push")
+		return fmt.Errorf("gitlab token must be configured (run: mcp-server-magicdev token reconfigure)")
 	}
 
 	serverURL := viper.GetString("git.server_url")
@@ -460,18 +438,43 @@ func pushToGitLab(store *db.Store, jiraID, targetBranch, title string, fileConte
 		})
 	}
 
-	// Commit standalone Mermaid diagram file alongside the spec
-	if bp != nil && bp.MermaidDiagram != "" {
-		mmdPath := fmt.Sprintf("%s_architecture.mmd", title)
-		mmdAction := gitlab.FileCreate
-		if _, _, err := git.RepositoryFiles.GetFile(projectPath, mmdPath, &gitlab.GetFileOptions{Ref: gitlab.Ptr(targetBranch)}); err == nil {
-			mmdAction = gitlab.FileUpdate
+	// Commit D2 source and rendered SVG alongside the spec
+	if bp != nil && bp.D2Source != "" {
+		d2Path := fmt.Sprintf("%s_architecture.d2", title)
+		d2Action := gitlab.FileCreate
+		if _, _, err := git.RepositoryFiles.GetFile(projectPath, d2Path, &gitlab.GetFileOptions{Ref: gitlab.Ptr(targetBranch)}); err == nil {
+			d2Action = gitlab.FileUpdate
 		}
 		actions = append(actions, &gitlab.CommitActionOptions{
-			Action:   gitlab.Ptr(mmdAction),
-			FilePath: gitlab.Ptr(mmdPath),
-			Content:  gitlab.Ptr(bp.MermaidDiagram),
+			Action:   gitlab.Ptr(d2Action),
+			FilePath: gitlab.Ptr(d2Path),
+			Content:  gitlab.Ptr(bp.D2Source),
 		})
+		slog.Info("generate_documents: committing D2 source to GitLab",
+			"path", d2Path,
+			"action", d2Action,
+			"d2_bytes", len(bp.D2Source),
+		)
+
+		if bp.D2SVG != "" {
+			svgPath := fmt.Sprintf("%s_architecture.svg", title)
+			svgAction := gitlab.FileCreate
+			if _, _, err := git.RepositoryFiles.GetFile(projectPath, svgPath, &gitlab.GetFileOptions{Ref: gitlab.Ptr(targetBranch)}); err == nil {
+				svgAction = gitlab.FileUpdate
+			}
+			actions = append(actions, &gitlab.CommitActionOptions{
+				Action:   gitlab.Ptr(svgAction),
+				FilePath: gitlab.Ptr(svgPath),
+				Content:  gitlab.Ptr(bp.D2SVG),
+			})
+			slog.Info("generate_documents: committing D2 SVG to GitLab",
+				"path", svgPath,
+				"action", svgAction,
+				"svg_bytes", len(bp.D2SVG),
+			)
+		} else {
+			slog.Warn("generate_documents: D2 source exists but SVG is empty — skipping SVG commit (rendering likely failed in BlueprintImplementation)")
+		}
 	}
 
 	opt := &gitlab.CreateCommitOptions{
@@ -488,64 +491,6 @@ func pushToGitLab(store *db.Store, jiraID, targetBranch, title string, fileConte
 	return nil
 }
 
-// buildComprehensiveADRDocument generates a single Markdown string containing all ADRs following the Extended MADR template.
-func buildComprehensiveADRDocument(session *db.SessionState, bp *db.Blueprint) string {
-	var b strings.Builder
-
-	b.WriteString(fmt.Sprintf("# Architecture Decision Records: %s\n\n", session.RefinedIdea))
-	if session.BusinessCase != "" {
-		b.WriteString(fmt.Sprintf("## Business Case / Decision Drivers\n%s\n\n", session.BusinessCase))
-	}
-
-	for i, adr := range bp.ADRs {
-		b.WriteString(fmt.Sprintf("## ADR %d: %s\n\n", i+1, adr.Title))
-		b.WriteString(fmt.Sprintf("**Status:** %s\n", adr.Status))
-		if adr.DecisionDate != "" {
-			b.WriteString(fmt.Sprintf("**Date:** %s\n", adr.DecisionDate))
-		}
-		b.WriteString("\n")
-
-		b.WriteString(fmt.Sprintf("### Context\n%s\n\n", adr.Context))
-
-		if len(adr.DecisionDrivers) > 0 {
-			b.WriteString("### Decision Drivers\n")
-			for _, driver := range adr.DecisionDrivers {
-				b.WriteString(fmt.Sprintf("- %s\n", driver))
-			}
-			b.WriteString("\n")
-		}
-
-		if len(adr.Alternatives) > 0 {
-			b.WriteString("### Considered Options\n")
-			for _, alt := range adr.Alternatives {
-				b.WriteString(fmt.Sprintf("- %s\n", alt.Name))
-			}
-			b.WriteString("\n")
-		}
-
-		b.WriteString(fmt.Sprintf("### Decision Outcome\n%s\n\n", adr.Decision))
-
-		b.WriteString(fmt.Sprintf("### Consequences\n%s\n\n", adr.Consequences))
-
-		if adr.Confirmation != "" {
-			b.WriteString(fmt.Sprintf("### Confirmation\n%s\n\n", adr.Confirmation))
-		}
-
-		// Extended sections
-		if adr.ComplianceCheck != "" {
-			b.WriteString("### Compliance Check\n")
-			b.WriteString(fmt.Sprintf("%s\n\n", adr.ComplianceCheck))
-		}
-
-		if adr.SecurityFootprint != "" {
-			b.WriteString("### Security Footprint\n")
-			b.WriteString(fmt.Sprintf("%s\n\n", adr.SecurityFootprint))
-		}
-		b.WriteString("---\n\n")
-	}
-
-	return b.String()
-}
 
 // verifyCrossLinks ensures that the Jira ID is embedded in both the hybrid markdown and confluence payload.
 // It implements a 3-attempt exponential backoff retry loop.
@@ -564,3 +509,101 @@ func verifyCrossLinks(hybridBytes []byte, confluencePayload string, jiraID strin
 	}
 	return err
 }
+
+// markdownToXHTML converts markdown content to XHTML storage format
+// compatible with Confluence Data Center's /rest/api/content endpoint.
+// Uses goldmark with XHTML rendering to ensure void elements (hr, br, img)
+// use self-closing syntax (<hr />) required by Confluence's strict XHTML parser.
+func markdownToXHTML(md string) (string, error) {
+	// Pre-process: escape angle brackets in C#/Java generics outside code blocks
+	// e.g. List<string> → List&lt;string&gt; but leave ```code blocks``` alone.
+	sanitized := escapeGenericsOutsideCode(md)
+
+	converter := goldmark.New(
+		goldmark.WithRendererOptions(
+			gmhtml.WithXHTML(),
+		),
+	)
+	var buf bytes.Buffer
+	if err := converter.Convert([]byte(sanitized), &buf); err != nil {
+		return "", fmt.Errorf("goldmark conversion failed: %w", err)
+	}
+	return buf.String(), nil
+}
+
+// escapeGenericsOutsideCode escapes angle brackets that look like C#/Java generics
+// (e.g. List<T>, Dictionary<string,object>) in markdown text that is NOT inside
+// fenced code blocks or inline code spans. This prevents Confluence's strict XHTML
+// parser from interpreting them as malformed HTML tags.
+func escapeGenericsOutsideCode(md string) string {
+	var result strings.Builder
+	result.Grow(len(md))
+
+	lines := strings.Split(md, "\n")
+	inFencedBlock := false
+
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+
+		// Toggle fenced code block state
+		if strings.HasPrefix(trimmed, "```") {
+			inFencedBlock = !inFencedBlock
+			result.WriteString(line)
+			if i < len(lines)-1 {
+				result.WriteByte('\n')
+			}
+			continue
+		}
+
+		// Inside fenced code blocks, pass through unchanged
+		if inFencedBlock {
+			result.WriteString(line)
+			if i < len(lines)-1 {
+				result.WriteByte('\n')
+			}
+			continue
+		}
+
+		// Outside code blocks: escape angle brackets that are NOT part of
+		// inline code spans (backtick-delimited). Process segments between backticks.
+		escaped := escapeAngleBracketsPreservingInlineCode(line)
+		result.WriteString(escaped)
+		if i < len(lines)-1 {
+			result.WriteByte('\n')
+		}
+	}
+
+	return result.String()
+}
+
+// escapeAngleBracketsPreservingInlineCode escapes < and > in non-code segments
+// of a single line, preserving content inside `backtick` inline code spans.
+func escapeAngleBracketsPreservingInlineCode(line string) string {
+	var result strings.Builder
+	result.Grow(len(line) + 16)
+
+	inInlineCode := false
+	for i := 0; i < len(line); i++ {
+		ch := line[i]
+		if ch == '`' {
+			inInlineCode = !inInlineCode
+			result.WriteByte(ch)
+			continue
+		}
+		if inInlineCode {
+			result.WriteByte(ch)
+			continue
+		}
+		switch ch {
+		case '<':
+			result.WriteString("&lt;")
+		case '>':
+			result.WriteString("&gt;")
+		default:
+			result.WriteByte(ch)
+		}
+	}
+
+	return result.String()
+}
+
