@@ -66,6 +66,10 @@ type Store struct {
 type ToolMetrics struct {
 	ProxyReliability     float64 `json:"proxy_reliability"`
 	TotalSuccessfulCalls int     `json:"total_successful_calls"`
+	TotalCalls           int     `json:"total_calls"`
+	FailureRate          float64 `json:"failure_rate"`
+	AvgLatencyMs         int64   `json:"avg_latency_ms"`
+	LastErrorClass       string  `json:"last_error_class,omitempty"`
 }
 
 // ToolRecord is undocumented but satisfies standard structural requirements.
@@ -95,9 +99,10 @@ type ToolRecord struct {
 	LastUsedAt   int64          `json:"last_used_at"`
 	TimeoutSecs  int            `json:"timeout_secs,omitempty"`
 	IsNative     bool           `json:"is_native,omitempty"`
-	Intent       string         `json:"intent,omitempty"`
-	ZeroValues   map[string]any `json:"zero_values,omitempty"` // Pre-computed schema defaults and fast auto-coercion fallbacks natively
-	Metrics      ToolMetrics    `json:"-"`
+	Intent         string         `json:"intent,omitempty"`
+	ZeroValues     map[string]any `json:"zero_values,omitempty"` // Pre-computed schema defaults and fast auto-coercion fallbacks natively
+	ParameterNames []string       `json:"parameter_names,omitempty"` // Materialized from InputSchema.properties keys for Bleve keyword + HNSW embedding
+	Metrics        ToolMetrics    `json:"-"`
 
 	// Intelligence
 	AnalysisStatus   string   `json:"-"` // pending, hydrated, failed
@@ -656,7 +661,7 @@ func (s *Store) UpdateToolMetrics(urn string, success bool, confidence float64) 
 	var intel ToolIntelligence
 	var err error
 
-	err = s.DB.Update(func(txn *badger.Txn) error {
+	err = s.UpdateWithRetry(func(txn *badger.Txn) error {
 		item, err := txn.Get([]byte("intel:" + urn))
 		if err == badger.ErrKeyNotFound {
 			// Initialize new if empty
@@ -677,6 +682,7 @@ func (s *Store) UpdateToolMetrics(urn string, success bool, confidence float64) 
 		}
 
 		delta := 0.005
+		intel.Metrics.TotalCalls++
 		if success {
 			intel.Metrics.ProxyReliability += delta
 			intel.Metrics.TotalSuccessfulCalls++
@@ -686,6 +692,11 @@ func (s *Store) UpdateToolMetrics(urn string, success bool, confidence float64) 
 			} else {
 				intel.Metrics.ProxyReliability -= delta
 			}
+		}
+
+		// Recompute failure rate from absolute counters.
+		if intel.Metrics.TotalCalls > 0 {
+			intel.Metrics.FailureRate = 1.0 - float64(intel.Metrics.TotalSuccessfulCalls)/float64(intel.Metrics.TotalCalls)
 		}
 
 		if intel.Metrics.ProxyReliability < 0.5 {
@@ -728,6 +739,74 @@ func (s *Store) UpdateToolMetrics(urn string, success bool, confidence float64) 
 	}()
 
 	return nil
+}
+
+// IncrementToolCalls updates the rolling average latency for a tool after a proxy call.
+// Uses Welford's online algorithm: new_avg = old_avg + (sample - old_avg) / n.
+func (s *Store) IncrementToolCalls(urn string, latencyMs int64) {
+	if s == nil || s.DB == nil {
+		return
+	}
+
+	_ = s.UpdateWithRetry(func(txn *badger.Txn) error {
+		var intel ToolIntelligence
+		item, err := txn.Get([]byte("intel:" + urn))
+		if err == badger.ErrKeyNotFound {
+			return nil // No intel record — skip
+		} else if err != nil {
+			return err
+		}
+
+		if err := item.Value(func(val []byte) error {
+			return json.Unmarshal(val, &intel)
+		}); err != nil {
+			return err
+		}
+
+		// Welford's rolling average for latency.
+		if intel.Metrics.TotalCalls > 0 {
+			intel.Metrics.AvgLatencyMs += (latencyMs - intel.Metrics.AvgLatencyMs) / int64(intel.Metrics.TotalCalls)
+		} else {
+			intel.Metrics.AvgLatencyMs = latencyMs
+		}
+
+		data, err := json.Marshal(intel)
+		if err != nil {
+			return err
+		}
+		return txn.Set([]byte("intel:"+urn), data)
+	})
+}
+
+// RecordToolError records the most recent error class on a tool's intelligence record.
+func (s *Store) RecordToolError(urn string, errorClass string) {
+	if s == nil || s.DB == nil {
+		return
+	}
+
+	_ = s.UpdateWithRetry(func(txn *badger.Txn) error {
+		var intel ToolIntelligence
+		item, err := txn.Get([]byte("intel:" + urn))
+		if err == badger.ErrKeyNotFound {
+			return nil // No intel record — skip
+		} else if err != nil {
+			return err
+		}
+
+		if err := item.Value(func(val []byte) error {
+			return json.Unmarshal(val, &intel)
+		}); err != nil {
+			return err
+		}
+
+		intel.Metrics.LastErrorClass = errorClass
+
+		data, err := json.Marshal(intel)
+		if err != nil {
+			return err
+		}
+		return txn.Set([]byte("intel:"+urn), data)
+	})
 }
 
 // SaveSchema persists a deduplicated tool schema
@@ -1513,7 +1592,13 @@ func (s *Store) ReindexAllTools() error {
 
 // PurgeServerTools removes all tool records for a specific server.
 func (s *Store) PurgeServerTools(serverName string) error {
-	return s.UpdateWithRetry(func(txn *badger.Txn) error {
+	var purgedTools int64
+	var purgedIntel int64
+
+	err := s.UpdateWithRetry(func(txn *badger.Txn) error {
+		purgedTools = 0
+		purgedIntel = 0
+
 		it := txn.NewIterator(badger.DefaultIteratorOptions)
 		defer it.Close()
 
@@ -1523,17 +1608,34 @@ func (s *Store) PurgeServerTools(serverName string) error {
 		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
 			item := it.Item()
 			key := item.KeyCopy(nil)
+			keyStr := string(key)
 
 			err := item.Value(func(val []byte) error {
 				var r ToolRecord
 				if err := json.Unmarshal(val, &r); err != nil {
-					return nil // skip corrupt records
+					// 🛡️ CORRUPT RECORD HANDLING: If JSON is invalid but the key
+					// matches our server prefix, we MUST delete it anyway to prevent permanent orphans.
+					slog.Warn("database: deleting corrupt tool record during purge", "key", keyStr)
+					toDelete = append(toDelete, key)
+					
+					// Attempt to derive intelligence key safely
+					if len(keyStr) > 5 && strings.HasPrefix(keyStr, "tool:") {
+						urn := keyStr[5:]
+						intelKey := []byte("intel:" + urn)
+						toDelete = append(toDelete, intelKey)
+					}
+					return nil
 				}
+				
 				if r.Server == serverName {
 					toDelete = append(toDelete, key)
 					// Also queue category index key for deletion
 					catKey := []byte("cat:" + r.Category + ":" + r.URN)
 					toDelete = append(toDelete, catKey)
+
+					// Also queue intelligence record for deletion
+					intelKey := []byte("intel:" + r.URN)
+					toDelete = append(toDelete, intelKey)
 
 					// Clear from Cache immediately
 					s.Cache.Delete("tool:" + r.URN)
@@ -1547,9 +1649,9 @@ func (s *Store) PurgeServerTools(serverName string) error {
 
 		for _, key := range toDelete {
 			if strings.HasPrefix(string(key), "tool:") {
-				s.toolsCount.Add(-1)
+				purgedTools++
 			} else if strings.HasPrefix(string(key), "intel:") {
-				s.intelCount.Add(-1)
+				purgedIntel++
 			}
 			if err := txn.Delete(key); err != nil {
 				slog.Warn("failed to delete key during purge", "key", string(key), "error", err)
@@ -1557,16 +1659,32 @@ func (s *Store) PurgeServerTools(serverName string) error {
 			// If it's a tool record, remove from search index too
 			keyStr := string(key)
 			if len(keyStr) > 5 && keyStr[:5] == "tool:" {
-				if err := s.Index.DeleteRecord(keyStr[5:]); err != nil {
-					slog.Warn("Failed to remove purged tool from search index", "urn", keyStr[5:], "error", err)
+				urn := keyStr[5:]
+				if err := s.Index.DeleteRecord(urn); err != nil {
+					slog.Warn("Failed to remove purged tool from search index", "urn", urn, "error", err)
+				}
+				if e := vector.GetEngine(); e != nil {
+					e.DeleteDocument(urn)
 				}
 			}
 		}
 
-		s.Cache.SetCategories(nil) // Invalidate category cache after purge
-		slog.Info("purged tools for server", "server", serverName, "keys_deleted", len(toDelete))
+		if len(toDelete) > 0 {
+			s.Cache.SetCategories(nil) // Invalidate category cache after purge
+			slog.Info("purged tools for server", "server", serverName, "keys_deleted", len(toDelete))
+		}
 		return nil
 	})
+
+	if err == nil {
+		if purgedTools > 0 {
+			s.toolsCount.Add(-purgedTools)
+		}
+		if purgedIntel > 0 {
+			s.intelCount.Add(-purgedIntel)
+		}
+	}
+	return err
 }
 
 // PurgeStaleServerTools performs a delta-aware removal of tool records for a server.
@@ -1580,9 +1698,11 @@ func (s *Store) PurgeStaleServerTools(serverName string, validURNs []string) err
 	}
 
 	var purgedCount int64
+	var purgedIntel int64
 
 	err := s.UpdateWithRetry(func(txn *badger.Txn) error {
 		purgedCount = 0 // Reset counter for retry safety
+		purgedIntel = 0
 		it := txn.NewIterator(badger.DefaultIteratorOptions)
 		defer it.Close()
 
@@ -1628,9 +1748,18 @@ func (s *Store) PurgeStaleServerTools(serverName string, validURNs []string) err
 			if entry.catKey != nil {
 				_ = txn.Delete(entry.catKey)
 			}
+
+			intelKey := []byte("intel:" + entry.urn)
+			if _, gErr := txn.Get(intelKey); gErr == nil {
+				purgedIntel++
+				_ = txn.Delete(intelKey)
+			}
 			// Remove from search index
 			if err := s.Index.DeleteRecord(entry.urn); err != nil {
 				slog.Warn("failed to remove stale tool from search index", "urn", entry.urn, "error", err)
+			}
+			if e := vector.GetEngine(); e != nil {
+				e.DeleteDocument(entry.urn)
 			}
 			// Clear cache
 			s.Cache.Delete("tool:" + entry.urn)
@@ -1643,8 +1772,13 @@ func (s *Store) PurgeStaleServerTools(serverName string, validURNs []string) err
 		return nil
 	})
 
-	if err == nil && purgedCount > 0 {
-		s.toolsCount.Add(-purgedCount)
+	if err == nil {
+		if purgedCount > 0 {
+			s.toolsCount.Add(-purgedCount)
+		}
+		if purgedIntel > 0 {
+			s.intelCount.Add(-purgedIntel)
+		}
 	}
 
 	return err
@@ -1733,7 +1867,11 @@ func (s *Store) PruneOrphanedIntelligence(serverName string, validURNs []string)
 		validMap[urn] = true
 	}
 
-	return s.UpdateWithRetry(func(txn *badger.Txn) error {
+	var purgedIntel int64
+
+	err := s.UpdateWithRetry(func(txn *badger.Txn) error {
+		purgedIntel = 0
+
 		it := txn.NewIterator(badger.DefaultIteratorOptions)
 		defer it.Close()
 
@@ -1753,9 +1891,7 @@ func (s *Store) PruneOrphanedIntelligence(serverName string, validURNs []string)
 		}
 
 		for _, key := range toDelete {
-			if strings.HasPrefix(string(key), "intel:") {
-				s.intelCount.Add(-1)
-			}
+			purgedIntel++
 			if err := txn.Delete(key); err != nil {
 				slog.Warn("failed to drop orphaned intelligence key", "key", string(key), "error", err)
 			}
@@ -1766,11 +1902,20 @@ func (s *Store) PruneOrphanedIntelligence(serverName string, validURNs []string)
 		}
 		return nil
 	})
+
+	if err == nil && purgedIntel > 0 {
+		s.intelCount.Add(-purgedIntel)
+	}
+	return err
 }
 
 // PurgeServerIntelligence completely sweeps all LLM semantic states for a particular server namespace.
 func (s *Store) PurgeServerIntelligence(serverName string) error {
-	return s.UpdateWithRetry(func(txn *badger.Txn) error {
+	var purgedIntel int64
+
+	err := s.UpdateWithRetry(func(txn *badger.Txn) error {
+		purgedIntel = 0
+
 		it := txn.NewIterator(badger.DefaultIteratorOptions)
 		defer it.Close()
 
@@ -1783,9 +1928,7 @@ func (s *Store) PurgeServerIntelligence(serverName string) error {
 		}
 
 		for _, key := range toDelete {
-			if strings.HasPrefix(string(key), "intel:") {
-				s.intelCount.Add(-1)
-			}
+			purgedIntel++
 			if err := txn.Delete(key); err != nil {
 				slog.Warn("failed to drop server intelligence key", "key", string(key), "error", err)
 			}
@@ -1796,6 +1939,81 @@ func (s *Store) PurgeServerIntelligence(serverName string) error {
 		}
 		return nil
 	})
+
+	if err == nil && purgedIntel > 0 {
+		s.intelCount.Add(-purgedIntel)
+	}
+	return err
+}
+
+// ReconcileMetrics forces full cross-namespace parity between tool: and intel: keys.
+// It deletes orphaned intel: keys that have no corresponding tool: key, then recalibrates
+// the atomic counters from actual database state. This is the authoritative consistency gate.
+func (s *Store) ReconcileMetrics() (orphansDeleted int64, err error) {
+	// Phase 1: Collect all valid tool URNs in a read-only scan.
+	validTools := make(map[string]bool)
+	err = s.DB.View(func(txn *badger.Txn) error {
+		it := txn.NewIterator(badger.DefaultIteratorOptions)
+		defer it.Close()
+		prefix := []byte("tool:")
+		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
+			keyStr := string(it.Item().Key())
+			urn := keyStr[5:] // strip "tool:" → "server:name"
+			validTools[urn] = true
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("reconcile: failed to scan tool namespace: %w", err)
+	}
+
+	// Phase 2: Find orphaned intel: keys that have no matching tool: key.
+	var orphanedIntelKeys [][]byte
+	err = s.DB.View(func(txn *badger.Txn) error {
+		it := txn.NewIterator(badger.DefaultIteratorOptions)
+		defer it.Close()
+		prefix := []byte("intel:")
+		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
+			keyStr := string(it.Item().Key())
+			urn := keyStr[6:] // strip "intel:" → "server:name"
+			if !validTools[urn] {
+				orphanedIntelKeys = append(orphanedIntelKeys, it.Item().KeyCopy(nil))
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("reconcile: failed to scan intel namespace: %w", err)
+	}
+
+	// Phase 3: Delete orphaned intel keys.
+	if len(orphanedIntelKeys) > 0 {
+		err = s.UpdateWithRetry(func(txn *badger.Txn) error {
+			for _, key := range orphanedIntelKeys {
+				if delErr := txn.Delete(key); delErr != nil {
+					slog.Warn("reconcile: failed to delete orphaned intel key", "key", string(key), "error", delErr)
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			return 0, fmt.Errorf("reconcile: failed to purge orphaned intel keys: %w", err)
+		}
+		orphansDeleted = int64(len(orphanedIntelKeys))
+	}
+
+	// Phase 4: Recalibrate atomic counters from actual key counts.
+	toolCount, _ := s.countKeys("tool:")
+	intelCount, _ := s.countKeys("intel:")
+	s.toolsCount.Store(int64(toolCount))
+	s.intelCount.Store(int64(intelCount))
+
+	slog.Info("database: reconciliation complete",
+		"orphans_deleted", orphansDeleted,
+		"tool_count", toolCount,
+		"intel_count", intelCount,
+	)
+	return orphansDeleted, nil
 }
 
 // HasServerTools checks if any tools exist for the given server using a prefix search.
@@ -1833,6 +2051,54 @@ func (s *Store) GetServerToolCount(serverName string) int {
 		slog.Error("Failed to count server tools", "server", serverName, "error", err)
 	}
 	return count
+}
+
+// GetServerToolsNatively directly scans the LSM tree for a server's tools, bypassing Bleve entirely.
+func (s *Store) GetServerToolsNatively(serverName string, limit int) ([]*ToolRecord, error) {
+	var tools []*ToolRecord
+	err := s.DB.View(func(txn *badger.Txn) error {
+		it := txn.NewIterator(badger.DefaultIteratorOptions)
+		defer it.Close()
+		prefix := []byte("tool:" + serverName + ":")
+		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
+			err := it.Item().Value(func(val []byte) error {
+				var r ToolRecord
+				if err := json.Unmarshal(val, &r); err != nil {
+					return err
+				}
+				tools = append(tools, &r)
+				return nil
+			})
+			if err != nil {
+				return err
+			}
+			if limit > 0 && len(tools) >= limit {
+				break
+			}
+		}
+		return nil
+	})
+	return tools, err
+}
+
+// GetAllToolURNs returns a map of all tool URNs currently stored in BadgerDB.
+// Uses key-only iteration (PrefetchValues=false) for minimal overhead.
+func (s *Store) GetAllToolURNs() map[string]bool {
+	urns := make(map[string]bool)
+	_ = s.DB.View(func(txn *badger.Txn) error {
+		opts := badger.DefaultIteratorOptions
+		opts.PrefetchValues = false
+		it := txn.NewIterator(opts)
+		defer it.Close()
+		prefix := []byte("tool:")
+		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
+			key := string(it.Item().Key())
+			urn := key[5:] // strip "tool:" prefix
+			urns[urn] = true
+		}
+		return nil
+	})
+	return urns
 }
 
 // SaveLog persists a log entry with a TTL for self-cleaning.

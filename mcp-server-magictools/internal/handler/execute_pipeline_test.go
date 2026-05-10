@@ -378,9 +378,9 @@ func TestHandleExecutePipeline_DryRun(t *testing.T) {
 		}
 	}
 
-	// Trigger fresh pipeline with DryRun=true
 	args := map[string]any{
 		"target":       tmpDir,
+		"session_id":   "test-session-123",
 		"intent":       "analyzer and planner for code refactor",
 		"dry_run":      true,
 		"target_roles": []string{"ANALYZER", "PLANNER"},

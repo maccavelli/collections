@@ -525,11 +525,21 @@ func (h *OrchestratorHandler) executeProxyPipeline(ctx context.Context, ps *Prox
 		slog.Error("tool complete", "component", "backplane", "server", server, "tool", name, "urn", urn, "latency_ms", toolLatency, "status", "error", "error", err, "corr_id", corrID)
 		telemetry.GlobalDAGTracker.RecordFault(urn, "halt", 1, 1, "")
 		telemetry.GlobalDAGTracker.CompleteNode(urn, false)
+
+		// 🛡️ TIER 3: Record latency + error class on failure for expanded ToolMetrics.
+		go func(u string, lat int64, e error) {
+			h.Store.IncrementToolCalls(u, lat)
+			h.Store.RecordToolError(u, intelligence.ClassifyError(e.Error()))
+		}(urn, toolLatency, err)
+
 		return nil, fmt.Errorf("invoke proxy error (%s): %w", urn, err)
 	}
 	slog.Info("tool complete", "component", "backplane", "server", server, "tool", name, "urn", urn, "latency_ms", toolLatency, "status", "ok", "corr_id", corrID)
 	telemetry.GlobalToolTracker.Record(urn, toolLatency, false)
 	telemetry.GlobalRouteTracker.RecordRoute(sourceServer, server, false)
+
+	// 🛡️ TIER 3: Record latency on success for expanded ToolMetrics.
+	go h.Store.IncrementToolCalls(urn, toolLatency)
 
 	// 🛡️ TIER-2 HFSC: Detect extreme stream handshake from sub-servers.
 	if tier2Res := h.interceptTier2HFSC(ctx, res, server); tier2Res != nil {

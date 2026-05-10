@@ -81,9 +81,25 @@ type BleveToolDocument struct {
 	Intent           string   `json:"intent"`
 	SyntheticIntents string   `json:"synthetic_intents"`
 	LexicalTokens    []string `json:"lexical_tokens"`
+	NegativeTriggers []string `json:"negative_triggers"`
 	UsageCount       int64    `json:"usage_count"`
 	ProxyReliability float64  `json:"proxy_reliability"`
 	InputSchema      string   `json:"input_schema"`
+	Role             string   `json:"role"`
+	Phase            int      `json:"phase"`
+
+	// Tier 1: Existing ToolRecord fields now indexed for DAG + recency queries.
+	InputContract  string   `json:"input_contract"`
+	OutputContract string   `json:"output_contract"`
+	Requires       []string `json:"requires"`
+	Triggers       []string `json:"triggers"`
+	LastUsedAt     int64    `json:"last_used_at"`
+
+	// Tier 3: Expanded metrics + materialized parameter names.
+	TotalCalls     int      `json:"total_calls"`
+	FailureRate    float64  `json:"failure_rate"`
+	AvgLatencyMs   int64    `json:"avg_latency_ms"`
+	ParameterNames []string `json:"parameter_names"`
 }
 
 // Type natively binds this schema directly to the specific "tool" document mapping in Bleve
@@ -104,9 +120,25 @@ func ToBleveDoc(r *ToolRecord) BleveToolDocument {
 		Intent:           r.Intent,
 		SyntheticIntents: strings.Join(r.SyntheticIntents, " "),
 		LexicalTokens:    r.LexicalTokens,
+		NegativeTriggers: r.NegativeTriggers,
 		UsageCount:       r.UsageCount,
 		ProxyReliability: r.Metrics.ProxyReliability,
 		InputSchema:      string(rawSchema),
+		Role:             r.Role,
+		Phase:            r.Phase,
+
+		// Tier 1: DAG + recency fields.
+		InputContract:  r.InputContract,
+		OutputContract: r.OutputContract,
+		Requires:       r.Requires,
+		Triggers:       r.Triggers,
+		LastUsedAt:     r.LastUsedAt,
+
+		// Tier 3: Expanded metrics + parameter names.
+		TotalCalls:     r.Metrics.TotalCalls,
+		FailureRate:    r.Metrics.FailureRate,
+		AvgLatencyMs:   r.Metrics.AvgLatencyMs,
+		ParameterNames: r.ParameterNames,
 	}
 }
 
@@ -183,6 +215,58 @@ func NewSearchIndex(dbPath string) (*SearchIndex, error) {
 	// - ProxyReliability: Numeric for empirical trust boost natively mapping Handler telemetry to Index Math
 	reliabilityFieldMapping := bleve.NewNumericFieldMapping()
 	toolMapping.AddFieldMappingsAt("proxy_reliability", reliabilityFieldMapping)
+
+	// - Role: Keyword (Exact match for pipeline DAG filtering — ANALYZER, MUTATOR, CRITIC, etc.)
+	roleFieldMapping := bleve.NewKeywordFieldMapping()
+	toolMapping.AddFieldMappingsAt("role", roleFieldMapping)
+
+	// - Phase: Numeric for pipeline execution ordering and range queries
+	phaseFieldMapping := bleve.NewNumericFieldMapping()
+	toolMapping.AddFieldMappingsAt("phase", phaseFieldMapping)
+
+	// - NegativeTriggers: Keyword array for anti-intent exclusion filtering
+	negativeTriggersFieldMapping := bleve.NewKeywordFieldMapping()
+	toolMapping.AddFieldMappingsAt("negative_triggers", negativeTriggersFieldMapping)
+
+	// ═══ TIER 1: Index existing ToolRecord fields ═══
+
+	// - InputContract: Keyword for DAG data-flow type filtering (e.g. "ast_data", "project_context")
+	inputContractFieldMapping := bleve.NewKeywordFieldMapping()
+	toolMapping.AddFieldMappingsAt("input_contract", inputContractFieldMapping)
+
+	// - OutputContract: Keyword for DAG data-flow type filtering
+	outputContractFieldMapping := bleve.NewKeywordFieldMapping()
+	toolMapping.AddFieldMappingsAt("output_contract", outputContractFieldMapping)
+
+	// - Requires: Keyword array for dependency graph queries ("find tools that require discover_project")
+	requiresFieldMapping := bleve.NewKeywordFieldMapping()
+	toolMapping.AddFieldMappingsAt("requires", requiresFieldMapping)
+
+	// - Triggers: Keyword array for forward edge queries
+	triggersFieldMapping := bleve.NewKeywordFieldMapping()
+	toolMapping.AddFieldMappingsAt("triggers", triggersFieldMapping)
+
+	// - LastUsedAt: Numeric for recency-weighted scoring and time-range queries
+	lastUsedAtFieldMapping := bleve.NewNumericFieldMapping()
+	toolMapping.AddFieldMappingsAt("last_used_at", lastUsedAtFieldMapping)
+
+	// ═══ TIER 3: Expanded metrics + materialized parameter names ═══
+
+	// - TotalCalls: Numeric for usage volume signal
+	totalCallsFieldMapping := bleve.NewNumericFieldMapping()
+	toolMapping.AddFieldMappingsAt("total_calls", totalCallsFieldMapping)
+
+	// - FailureRate: Numeric for reliability filtering (0.0 = perfect, 1.0 = always fails)
+	failureRateFieldMapping := bleve.NewNumericFieldMapping()
+	toolMapping.AddFieldMappingsAt("failure_rate", failureRateFieldMapping)
+
+	// - AvgLatencyMs: Numeric for performance-weighted scoring and timeout calibration
+	avgLatencyFieldMapping := bleve.NewNumericFieldMapping()
+	toolMapping.AddFieldMappingsAt("avg_latency_ms", avgLatencyFieldMapping)
+
+	// - ParameterNames: Keyword array for schema-aware parameter matching ("tools with session_id")
+	parameterNamesFieldMapping := bleve.NewKeywordFieldMapping()
+	toolMapping.AddFieldMappingsAt("parameter_names", parameterNamesFieldMapping)
 
 	indexMapping.AddDocumentMapping("tool", toolMapping)
 
@@ -457,7 +541,7 @@ func (si *SearchIndex) GetToolsByServer(serverName string, limit int) ([]string,
 		return nil, fmt.Errorf("search index not initialized")
 	}
 
-	query := bleve.NewMatchQuery(serverName)
+	query := bleve.NewTermQuery(serverName)
 	query.SetField("server")
 
 	req := bleve.NewSearchRequest(query)

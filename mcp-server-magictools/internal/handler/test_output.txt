@@ -1,0 +1,4 @@
+# ./internal/handler
+stat /home/adm_saxsmith/gitrepos/saxsmith-global-context/scripts/go/mcp-server-magictools/internal/handler/internal/handler: directory not found
+FAIL	./internal/handler [setup failed]
+FAIL

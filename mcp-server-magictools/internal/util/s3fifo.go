@@ -36,10 +36,7 @@ func NewS3FIFOCache[K comparable, V any](capacity int) *S3FIFOCache[K, V] {
 	if sLimit < 1 && capacity > 0 {
 		sLimit = 1
 	}
-	mLimit := capacity - sLimit
-	if mLimit < 0 {
-		mLimit = 0
-	}
+	mLimit := max(capacity-sLimit, 0)
 	gLimit := capacity
 
 	return &S3FIFOCache[K, V]{

@@ -371,21 +371,33 @@ func New(version, flagPath string) (*Config, error) {
 		v.SetDefault("configuration.pinnedServers", []string{})
 
 		if err := os.WriteFile(configPath, []byte(`configuration:
+  # =========================================================================
+  # MAGIC TOOLS ORCHESTRATOR CONFIGURATION (config.yaml)
+  # =========================================================================
+  # This file controls the core limits, logging, search weights, and AI providers
+  # for the magictools MCP orchestrator.
+
   # -------------------------------------------------------------------------
   # Core Orchestrator Constraints & System Limits
   # -------------------------------------------------------------------------
 
-  # The maximum concurrent pipeline operations allowed during Socratic generation.
-  # Values > 3 will aggressively parallelize but may overwhelm the LLM context.
+  # squeezeLevel controls the maximum concurrent sub-server requests made during 
+  # Socratic DAG pipeline generation. Higher levels increase parallelism but 
+  # heavily consume your LLM's context window. (Valid: 0-5. 3 is highly recommended).
   squeezeLevel: 3
 
-  # The maximum token budget per operation cycle before protective throttling engages.
+  # tokenSpendThresh is the maximum allowed token budget per operation cycle.
+  # If an operation exceeds this, a circuit-breaker will throttle the request
+  # to prevent infinite loops and runaway billing costs.
   tokenSpendThresh: 1500000
 
-  # Size limit for the orchestrator's internal Least Recently Used (LRU) caches.
+  # lruLimit sets the maximum number of items retained in the orchestrator's
+  # internal Least Recently Used (LRU) memory caches (e.g., Response & Registry Cache).
   lruLimit: 2048
 
-  # If true, proxy endpoints strictly validate payloads against discovered schemas.
+  # validateProxyCalls enforces strict JSON Schema validation natively within the 
+  # proxy execution engine. If true, tools called downstream MUST match their
+  # discovered JSON schemas exactly, or the call is rejected locally.
   validateProxyCalls: true
 
 
@@ -393,13 +405,16 @@ func New(version, flagPath string) (*Config, error) {
   # Observability & Logging Parameters
   # -------------------------------------------------------------------------
 
-  # The orchestrator's internal system debug logging level. (DEBUG, INFO, WARN, ERROR)
+  # logLevel defines the verbosity of the orchestrator's internal system logs.
+  # Values: ERROR, WARN, INFO, DEBUG, TRACE.
   logLevel: DEBUG
 
-  # The logging verbosity for standard MCP protocol communications.
+  # mcpLogLevel defines the logging verbosity expected from downstream sub-servers 
+  # communicating over the MCP protocol (JSON-RPC). 
   mcpLogLevel: INFO
 
-  # Log output format (json or text).
+  # logFormat determines how logs are emitted to the console and log files.
+  # Options: 'json' (structured, machine-readable) or 'text' (human-readable).
   logFormat: json
 
 
@@ -407,49 +422,62 @@ func New(version, flagPath string) (*Config, error) {
   # Search & Intent Matching Weights (HNSW & Bleve)
   # -------------------------------------------------------------------------
 
-  # The Cosine Similarity confidence threshold required for a valid vector match (0.0 to 1.0).
+  # scoreThreshold defines the minimum Cosine Similarity confidence required for 
+  # a valid vector match during tool discovery (Range: 0.0 to 1.0).
   scoreThreshold: 0.3
 
-  # Direct score fusion weight (0.0 = pure BM25 lexical, 1.0 = pure vector semantic).
+  # scoreFusionAlpha dictates the direct score fusion weight blending lexical (BM25)
+  # search and semantic (Vector) search.
+  # 0.0 = Pure BM25 Lexical Search
+  # 1.0 = Pure Vector Semantic Search
   scoreFusionAlpha: 0.5
 
-  # Tri-factor scoring weights for intent matching. (Must sum to 1.0)
-  synthesisBiasVector: 0.7  # Baseline vector semantic similarity weight.
-  synthesisBiasSynergy: 0.3 # Synergy (ghost index) structural weight.
-  synthesisBiasRole: 0.0    # Role boost weight for deterministic overrides.
+  # Tri-factor scoring weights for advanced intent matching. These three biases 
+  # govern how the Bleve engine ranks tools dynamically. They MUST sum to exactly 1.0.
+  synthesisBiasVector: 0.7  # Weight of baseline semantic/vector similarity.
+  synthesisBiasSynergy: 0.3 # Weight of synergy index (structural tool mappings).
+  synthesisBiasRole: 0.0    # Weight of deterministic role-based overrides.
 
 
   # -------------------------------------------------------------------------
   # Advanced Ecosystem Tuning
   # -------------------------------------------------------------------------
 
-  # Servers bypassed by the squeeze parallelism limits.
+  # squeezeBypass: A list of specific server names that are completely exempt from 
+  # the 'squeezeLevel' concurrency/minification limits.
   squeezeBypass: []
 
-  # Diagnostic endpoints tracked tightly by the telemetry ring buffers.
+  # ringBufferTargets: A list of specific targets (format: 'server' or 'server:tool')
+  # that are tracked at high fidelity in the telemetry diagnostic ring buffers.
   ringBufferTargets: []
 
-  # Critical servers guaranteed to load synchronously at boot.
+  # pinnedServers: A list of critical sub-servers that are guaranteed to load 
+  # synchronously at orchestrator boot and are immune to idle eviction.
   pinnedServers: []
 
 
   # -------------------------------------------------------------------------
-  # Intelligence Engines (Generative & Vector)
+  # Intelligence Engines (Generative Hydrator & Vector Memory)
   # -------------------------------------------------------------------------
   intelligence:
 
     # 1. Generative Hydrator Settings (LLM Context & Task Resolution)
-    # Supported providers: ollama, gemini, openai, claude
+    # The primary LLM orchestrator used for parsing tasks and composing DAG pipelines.
+    # Supported providers: ollama, gemini, openai, claude, voyage
     provider: ""
     model: ""
     api_key: ""
+    
+    # Optional list of models to fallback to if the primary model rate-limits or fails.
     fallback_models: []
+    
+    # Retry logic for transient API failures.
     retry_count: 2
     retry_delay_seconds: 5
     timeout_seconds: 120
 
     # 2. Vector Search Engine Settings (HNSW Spatial Embeddings)
-    # Enable the semantic HNSW search. Must be true to use vector operations.
+    # Enable semantic HNSW search. Must be true to utilize embedding-based search.
     vector_enabled: false
 
     # Supported embedding providers: ollama, gemini, openai, voyage
@@ -457,10 +485,11 @@ func New(version, flagPath string) (*Config, error) {
     embedding_model: ""
     embedding_api_key: ""
     
-    # Custom endpoint for local models (defaults to http://localhost:11434 for Ollama)
+    # Custom endpoint for local models (e.g., http://localhost:11434 for Ollama)
     embedding_api_url: ""
 
-    # Dimensional footprint (e.g. 384, 768, 1536). Critical for static HNSW graph sizing.
+    # Dimensional footprint of your chosen embedding model (e.g. 384, 768, 1536). 
+    # Critical for static HNSW graph initialization!
     embedding_dimensionality: 0
 `), 0644); err != nil {
 			return nil, fmt.Errorf("failed to create default config: %w", err)
@@ -803,112 +832,176 @@ func LoadFromViper(v *viper.Viper) (*Config, error) {
 	if err != nil {
 		slog.Info("config: servers.yaml not found, generating defaults", "error", err)
 
-		homeDir, _ := os.UserHomeDir()
-		binPath := filepath.Join(homeDir, ".local", "bin")
+		serversPath := filepath.Join(DefaultConfigDir(), ServersConfigFile)
+		if err := os.MkdirAll(filepath.Dir(serversPath), 0755); err != nil {
+			slog.Warn("config: failed to create config directory", "path", serversPath, "error", err)
+		}
 
-		managed = append(managed, []ServerConfig{
-			{
-				Name:          "brainstorm",
-				Command:       filepath.Join(binPath, "mcp-server-brainstorm"),
-				Args:          []string{},
-				Env:           map[string]string{"HOME": homeDir, "MCP_API_URL": "http://localhost:7000/mcp"},
-				DisabledTools: []string{},
-				MemoryLimitMB: 4096,
-				GoMemLimitMB:  1024,
-				MaxCPULimit:   2,
-				DeferredBoot:  false,
-				Disabled:      true,
-			},
-			{
-				Name:          "duckduckgo",
-				Command:       filepath.Join(binPath, "mcp-server-duckduckgo"),
-				Args:          []string{},
-				Env:           map[string]string{"HOME": homeDir},
-				DisabledTools: []string{},
-				MemoryLimitMB: 1024,
-				GoMemLimitMB:  1024,
-				MaxCPULimit:   2,
-				DeferredBoot:  true,
-				Disabled:      true,
-			},
-			{
-				Name:    "filesystem",
-				Command: filepath.Join(binPath, "mcp-server-filesystem"),
-				Args: []string{
-					filepath.Join(homeDir, "gitrepos"),
-					filepath.Join(homeDir, ".local"),
-					filepath.Join(homeDir, ".gemini"),
-					filepath.Join(homeDir, ".venv-global"),
-				},
-				Env: map[string]string{
-					"HOME": homeDir,
-					"PATH": filepath.Join(homeDir, ".local", "bin") + ":/usr/local/bin:/usr/bin",
-				},
-				DisabledTools: []string{},
-				MemoryLimitMB: 1024,
-				GoMemLimitMB:  1024,
-				MaxCPULimit:   2,
-				DeferredBoot:  true,
-				Disabled:      true,
-			},
-			{
-				Name:    "go-refactor",
-				Command: filepath.Join(binPath, "mcp-server-go-refactor"),
-				Args:    []string{},
-				Env: map[string]string{
-					"HOME":        homeDir,
-					"MCP_API_URL": "http://localhost:7000/mcp",
-					"PATH":        filepath.Join(homeDir, ".local", "go", "bin") + ":" + filepath.Join(homeDir, ".local", "bin") + ":/usr/local/bin:/usr/bin",
-				},
-				DisabledTools: []string{},
-				MemoryLimitMB: 6144,
-				GoMemLimitMB:  2048,
-				MaxCPULimit:   2,
-				DeferredBoot:  false,
-				Disabled:      true,
-			},
-			{
-				Name:          "magicskills",
-				Command:       filepath.Join(binPath, "mcp-server-magicskills"),
-				Args:          []string{},
-				Env:           map[string]string{"HOME": homeDir, "MCP_API_URL": "http://localhost:7000/mcp"},
-				DisabledTools: []string{},
-				MemoryLimitMB: 2048,
-				GoMemLimitMB:  1024,
-				MaxCPULimit:   2,
-				DeferredBoot:  false,
-				Disabled:      true,
-			},
-			{
-				Name:          "recall",
-				Command:       filepath.Join(binPath, "mcp-server-recall"),
-				Args:          []string{},
-				Env:           map[string]string{"HOME": homeDir, "MCP_RECALL_API_PORT": "7000"},
-				DisabledTools: []string{},
-				MemoryLimitMB: 4096,
-				GoMemLimitMB:  1024,
-				MaxCPULimit:   2,
-				DeferredBoot:  false,
-				Disabled:      true,
-			},
-			{
-				Name:          "sequential-thinking",
-				Command:       filepath.Join(binPath, "mcp-server-sequential-thinking"),
-				Args:          []string{},
-				Env:           map[string]string{"HOME": homeDir},
-				DisabledTools: []string{},
-				MemoryLimitMB: 1024,
-				GoMemLimitMB:  1024,
-				MaxCPULimit:   2,
-				DeferredBoot:  false,
-				Disabled:      true,
-			},
-		}...)
+		defaultServersYAML := `# =========================================================================
+# MAGIC TOOLS SUB-SERVER REGISTRY (servers.yaml)
+# =========================================================================
+# This file dynamically registers and configures all downstream MCP sub-servers
+# managed by the orchestrator.
+#
+# Key Properties:
+# - name: The unique identifier for the sub-server.
+# - command: Absolute path to the server executable.
+# - args: Command-line arguments passed to the server on startup.
+# - env: Environment variables securely injected into the server process.
+# - disabled_tools: Array of specific tool names to explicitly block from discovery.
+# - memory_limit_mb: Soft memory limit (requires cgroup setup in linux).
+# - gomemlimit_mb: Go-specific runtime memory limit (sets GOMEMLIMIT).
+# - max_cpu_limit: CPU core limit allocation.
+# - deferred_boot: If true, server boots lazily on first invocation instead of at startup.
+# - disabled: If true, the server is completely ignored and will not boot.
 
-		idePath, _ := DiscoverIDEConfig()
-		if data, err := os.ReadFile(idePath); err == nil {
+servers:
+  # Example: Standard Go MCP Server (Brainstorm)
+  - name: brainstorm
+    command: /usr/local/bin/mcp-server-brainstorm
+    # env:
+    #   MCP_API_URL: http://localhost:18001/mcp
+    disabled_tools: []
+    memory_limit_mb: 6144
+    # This setting only applies to Go-based MCP servers
+    gomemlimit_mb: 4096
+    max_cpu_limit: 2
+    deferred_boot: false
+    disabled: true
+
+  # Example: Standard Go MCP Server (DuckDuckGo Search)
+  - name: ddg-search
+    command: /usr/local/bin/mcp-server-duckduckgo
+    disabled_tools: []
+    memory_limit_mb: 1024
+    gomemlimit_mb: 1024
+    max_cpu_limit: 2
+    deferred_boot: false
+    disabled: true
+
+  # Example: File System Server with generic paths
+  - name: filesystem
+    command: /usr/local/bin/mcp-server-filesystem
+    args:
+      # List of allowed filesystem paths the server can read/write
+      - /example/path/workspace
+      - /example/path/projects
+      - /tmp
+    # env:
+    #   PATH: /usr/local/bin:/usr/bin
+    disabled_tools: []
+    memory_limit_mb: 1024
+    gomemlimit_mb: 1024
+    max_cpu_limit: 2
+    deferred_boot: true
+    disabled: true
+
+  # Example: Python MCP Server (Git)
+  - name: git
+    command: /example/path/to/venv/bin/python
+    args:
+      - -u
+      - -m
+      - mcp_server_git
+    # env:
+    #   PYTHONUNBUFFERED: "1"
+    disabled_tools: []
+    memory_limit_mb: 1024
+    max_cpu_limit: 2
+    deferred_boot: true
+    disabled: true
+
+  # Example: Node.js MCP Server (GitHub)
+  - name: github
+    command: node
+    args:
+      - /example/path/to/node_modules/@modelcontextprotocol/server-github/dist/index.js
+    # env:
+    #   GITHUB_PERSONAL_ACCESS_TOKEN: <YOUR_GITHUB_TOKEN>
+    disabled_tools:
+      - search_users
+      - search_code
+    memory_limit_mb: 1024
+    max_cpu_limit: 2
+    deferred_boot: true
+    disabled: true
+
+  # Example: Python MCP Server (GitLab Wrapper)
+  - name: glab
+    command: /example/path/to/venv/bin/python
+    args:
+      - -u
+      - /example/path/bin/glab-wrapper.py
+    # env:
+    #   GITLAB_HOST: gitlab.example.com
+    #   GITLAB_INSTANCE_URL: https://gitlab.example.com
+    #   GL_DISABLE_STREAMING: "true"
+    #   PYTHONUNBUFFERED: "1"
+    disabled_tools: []
+    memory_limit_mb: 1024
+    max_cpu_limit: 2
+    deferred_boot: true
+    disabled: true
+
+  # Example: Standard Go MCP Server (Go Refactor)
+  - name: go-refactor
+    command: /usr/local/bin/mcp-server-go-refactor
+    # env:
+    #   MCP_API_URL: http://localhost:18001/mcp
+    #   PATH: /usr/local/go/bin:/usr/local/bin:/usr/bin
+    disabled_tools: []
+    memory_limit_mb: 6144
+    gomemlimit_mb: 4096
+    max_cpu_limit: 2
+    deferred_boot: false
+    disabled: true
+
+  # Example: Standard Go MCP Server (MagicSkills)
+  - name: magicskills
+    command: /usr/local/bin/mcp-server-magicskills
+    # env:
+    #   MCP_API_URL: http://localhost:18001/mcp
+    disabled_tools: []
+    memory_limit_mb: 2048
+    gomemlimit_mb: 1848
+    max_cpu_limit: 2
+    deferred_boot: false
+    disabled: true
+
+  # Example: Standard Go MCP Server (Recall)
+  - name: recall
+    command: /usr/local/bin/mcp-server-recall
+    # env:
+    #   MCP_RECALL_API_PORT: "18001"
+    disabled_tools: []
+    memory_limit_mb: 6144
+    gomemlimit_mb: 4096
+    max_cpu_limit: 2
+    deferred_boot: false
+    disabled: true
+
+  # Example: Standard Go MCP Server (Sequential Thinking)
+  - name: seq-thinking
+    command: /usr/local/bin/mcp-server-sequential-thinking
+    disabled_tools: []
+    memory_limit_mb: 1024
+    gomemlimit_mb: 1024
+    max_cpu_limit: 2
+    deferred_boot: false
+    disabled: true
+`
+		if err := os.WriteFile(serversPath, []byte(defaultServersYAML), 0644); err != nil {
+			slog.Warn("config: failed to write default servers.yaml", "error", err)
+		} else {
+			slog.Info("config: generated default servers.yaml")
+		}
+
+		managed, _ = LoadManagedServers()
+
+		if data, err := os.ReadFile(ideConfigPath); err == nil {
 			var rawIDE IDEConfig
 			if err := json.Unmarshal(data, &rawIDE); err == nil {
+				migrationCount := 0
 				for name, entry := range rawIDE.McpServers {
 					if name == SelfName {
 						continue // strictly never migrate the magictools orchestrator
@@ -931,15 +1024,17 @@ func LoadFromViper(v *viper.Viper) (*Config, error) {
 							DisabledTools: entry.DisabledTools,
 							Disabled:      false, // actively migrate them as enabled so they boot
 						})
+						migrationCount++
+					}
+				}
+				if migrationCount > 0 {
+					if saveErr := SaveManagedServers(managed); saveErr != nil {
+						slog.Warn("config: failed to write servers.yaml during IDE migration", "error", saveErr)
+					} else {
+						slog.Info("config: migrated IDE servers to servers.yaml", "count", migrationCount)
 					}
 				}
 			}
-		}
-
-		if saveErr := SaveManagedServers(managed); saveErr != nil {
-			slog.Warn("config: failed to write servers.yaml during generation", "error", saveErr)
-		} else {
-			slog.Info("config: generated default servers.yaml", "count", len(managed))
 		}
 	}
 
@@ -1257,12 +1352,34 @@ func SaveManagedServers(servers []ServerConfig) error {
 	}
 
 	yamlStr := string(data)
+	
+	header := `# =========================================================================
+# MAGIC TOOLS SUB-SERVER REGISTRY (servers.yaml)
+# =========================================================================
+# This file dynamically registers and configures all downstream MCP sub-servers
+# managed by the orchestrator.
+#
+# Key Properties:
+# - name: The unique identifier for the sub-server.
+# - command: Absolute path to the server executable.
+# - args: Command-line arguments passed to the server on startup.
+# - env: Environment variables securely injected into the server process.
+# - disabled_tools: Array of specific tool names to explicitly block from discovery.
+# - memory_limit_mb: Soft memory limit (requires cgroup setup in linux).
+# - gomemlimit_mb: Go-specific runtime memory limit (sets GOMEMLIMIT).
+# - max_cpu_limit: CPU core limit allocation.
+# - deferred_boot: If true, server boots lazily on first invocation instead of at startup.
+# - disabled: If true, the server is completely ignored and will not boot.
+
+`
+	yamlStr = header + yamlStr
+
 	// Inject filesystem arguments comment natively before writing
-	yamlStr = strings.Replace(yamlStr, "      args:\n        - ", "      args:\n        # List of allowed filesystem paths\n        - ", 1)
+	yamlStr = strings.Replace(yamlStr, "      args:\n        - ", "      args:\n        # List of allowed filesystem paths the server can read/write\n        - ", 1)
 
 	// Inject gomemlimit_mb comment for go servers
 	re := regexp.MustCompile(`( +)gomemlimit_mb: ([0-9]+)`)
-	yamlStr = re.ReplaceAllString(yamlStr, "${1}# This setting only applies to go mcp servers\n${1}gomemlimit_mb: ${2}")
+	yamlStr = re.ReplaceAllString(yamlStr, "${1}# This setting only applies to Go-based MCP servers\n${1}gomemlimit_mb: ${2}")
 
 	if err := os.WriteFile(path, []byte(yamlStr), 0644); err != nil {
 		return fmt.Errorf("failed to write servers.yaml: %w", err)

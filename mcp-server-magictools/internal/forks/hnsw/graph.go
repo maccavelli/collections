@@ -488,3 +488,17 @@ func (h *Graph[K]) Lookup(key K) (Vector, bool) {
 	}
 	return node.Value, ok
 }
+
+// Keys returns all node keys in the graph.
+// Layer 0 contains every node (higher layers are strict subsets),
+// so iterating it produces the complete key set.
+func (h *Graph[K]) Keys() []K {
+	if len(h.layers) == 0 {
+		return nil
+	}
+	keys := make([]K, 0, len(h.layers[0].nodes))
+	for k := range h.layers[0].nodes {
+		keys = append(keys, k)
+	}
+	return keys
+}

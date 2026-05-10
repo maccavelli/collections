@@ -44,7 +44,9 @@ func FlushMetricBucket(store *Store, snapshot map[string]any) {
 	// Trigger a background non-blocking sync so ReadOnly dashboards
 	// instantly pick up the flush without crashing on un-truncated logs.
 	go func() {
-		_ = store.DB.Sync()
+		if store.DB != nil {
+			_ = store.DB.Sync()
+		}
 	}()
 }
 

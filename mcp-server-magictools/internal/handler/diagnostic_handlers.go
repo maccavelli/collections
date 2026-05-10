@@ -480,17 +480,15 @@ func (h *OrchestratorHandler) ListToolsInfo(ctx context.Context, req *mcp.CallTo
 	}
 
 	for _, srv := range serversToScan {
-		urns, bErr := h.Store.Index.GetToolsByServer(srv, *input.Options.MaxTools)
+		tools, bErr := h.Store.GetServerToolsNatively(srv, *input.Options.MaxTools)
 		if bErr != nil {
-			slog.Warn("diagnostic_handlers: bleve server mapping error", "error", bErr)
+			slog.Warn("diagnostic_handlers: badgerdb server mapping error", "error", bErr)
 			continue
 		}
-		for _, urn := range urns {
-			if r, err := h.Store.GetTool(urn); err == nil {
-				if r.Server != "magictools" {
-					serverTools[r.Server] = append(serverTools[r.Server], r)
-					count++
-				}
+		for _, r := range tools {
+			if r.Server != "magictools" {
+				serverTools[r.Server] = append(serverTools[r.Server], r)
+				count++
 			}
 			if count >= *input.Options.MaxTools {
 				break
