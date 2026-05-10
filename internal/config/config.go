@@ -41,7 +41,6 @@ type HarvestConfig struct {
 // State holds the actual configuration values mapped to yaml.
 type State struct {
 	Name              string        `mapstructure:"name"`
-	Version           string        `mapstructure:"version"`
 	DBPath            string        `mapstructure:"dbPath"`
 	ExportDir         string        `mapstructure:"exportDir"`
 	SearchEnabled     bool          `mapstructure:"searchEnabled"`
@@ -70,7 +69,6 @@ func New(version string) *Config {
 	}
 
 	viper.SetEnvPrefix(EnvPrefix)
-	viper.AutomaticEnv()
 	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 
 	// Explicit bindings to accommodate both camelCase YAML parsing and standard underscore bash environments.
@@ -86,6 +84,17 @@ func New(version string) *Config {
 	}
 	appConfigDir := filepath.Join(configDir, Name)
 
+	// DB data belongs in the OS cache directory, not the config directory.
+	// Linux: ~/.cache/mcp-server-recall/
+	// macOS: ~/Library/Caches/mcp-server-recall/
+	// Windows: %LocalAppData%\mcp-server-recall\
+	cacheDir, cacheErr := os.UserCacheDir()
+	if cacheErr != nil {
+		slog.Warn("failed to isolate OS UserCacheDir; falling back to temp directory", "error", cacheErr)
+		cacheDir = os.TempDir()
+	}
+	appCacheDir := filepath.Join(cacheDir, Name)
+
 	viper.SetConfigName("recall")
 	viper.SetConfigType("yaml")
 	viper.AddConfigPath(appConfigDir)
@@ -93,13 +102,12 @@ func New(version string) *Config {
 
 	// Set Defaults
 	viper.SetDefault("name", Name)
-	viper.SetDefault("version", version)
-	viper.SetDefault("dbPath", filepath.Join(appConfigDir, DefaultDBName))
+	viper.SetDefault("dbPath", filepath.Join(appCacheDir, DefaultDBName))
 	viper.SetDefault("exportDir", os.TempDir())
 	viper.SetDefault("searchEnabled", true)
 	viper.SetDefault("searchLimit", 25000)
 	viper.SetDefault("dedupThreshold", 0.8)
-	viper.SetDefault("apiPort", 0)
+	viper.SetDefault("apiPort", 18001)
 	viper.SetDefault("sessionpurgedays", 5)
 
 	// Batch settings defaults
@@ -143,13 +151,52 @@ func New(version string) *Config {
 
 	if err := viper.ReadInConfig(); err != nil {
 		if _, ok := err.(viper.ConfigFileNotFoundError); ok {
-			slog.Debug("no recall.yaml config file found; relying on defaults and environment variables")
+			slog.Debug("no recall.yaml config file found; relying on defaults")
 		} else {
 			slog.Warn("error parsing recall.yaml", "error", err)
 		}
 	}
 
+	// apiPort: single source of truth is the config file (recall.yaml) only.
+	// Resolve from config file or default BEFORE AutomaticEnv is active, so
+	// no environment variable can contaminate the value.
+	resolvedPort := viper.GetInt("apiPort")
+
+	// Migrate legacy port 7000 → 18001 (changed in v2.x).
+	if resolvedPort == 7000 {
+		slog.Warn("[config] Migrating legacy apiPort 7000 → 18001. Update your recall.yaml to suppress this warning.")
+		resolvedPort = 18001
+	}
+
+	// Lock apiPort at highest viper precedence, sealing it from env var contamination.
+	viper.Set("apiPort", resolvedPort)
+
+	// Deprecation: warn if the removed env vars are still set in the process environment.
+	for _, envKey := range []string{"MCP_RECALL_API_PORT", "MCP_RECALL_APIPORT"} {
+		if _, exists := os.LookupEnv(envKey); exists {
+			slog.Warn("[config] Environment variable is deprecated and ignored. Configure apiPort in recall.yaml only.",
+				"env_var", envKey)
+		}
+	}
+
+	// Enable AutomaticEnv AFTER apiPort is locked. This allows other config keys
+	// (e.g. encryptionKey) to still benefit from automatic env var resolution.
+	viper.AutomaticEnv()
+
 	cfg.refreshState()
+
+	// Migration: warn if legacy DB exists at the old config-dir location
+	oldDBPath := filepath.Join(appConfigDir, DefaultDBName)
+	if _, statErr := os.Stat(oldDBPath); statErr == nil {
+		resolvedDB := viper.GetString("dbPath")
+		if resolvedDB != oldDBPath {
+			slog.Warn("[config] Legacy database detected at config directory. "+
+				"Move it to the new cache directory or set dbpath explicitly in recall.yaml.",
+				"old_path", oldDBPath,
+				"new_default", resolvedDB,
+			)
+		}
+	}
 
 	// Enable True Hot-Reloading Sequence
 	viper.WatchConfig()
@@ -180,9 +227,8 @@ func (c *Config) refreshState() {
 		return
 	}
 
-	// Always enforce the binary-linked version
+	// Always enforce the binary-linked name
 	newState.Name = Name
-	newState.Version = c.Version
 
 	c.mu.Lock()
 	defer c.mu.Unlock()

@@ -1386,7 +1386,7 @@ func (s *MemoryStore) rankCandidates(ctx context.Context, query string, candidat
 	workerCount := min(len(candidates), 4)
 
 	chunkSize := (len(candidates) + workerCount - 1) / workerCount
-	for i := 0; i < workerCount; i++ {
+	for i := range workerCount {
 		start := i * chunkSize
 		if start >= len(candidates) {
 			break
@@ -2937,6 +2937,11 @@ func (s *MemoryStore) DeleteStandards(ctx context.Context, category, pkg string)
 		return 0, fmt.Errorf("category %q is not a valid standards category", category)
 	}
 
+	// Global Domain Sweep Delegation - move before lock to avoid deadlock
+	if category == "" && pkg == "" {
+		return s.DeleteDomain(ctx, DomainStandards)
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -2959,11 +2964,6 @@ func (s *MemoryStore) DeleteStandards(ctx context.Context, category, pkg string)
 			slog.Warn("Failed to read record value during standards deletion", "key", key, "error", vErr)
 		}
 		return rec, nil
-	}
-
-	// Global Domain Sweep Delegation
-	if category == "" && pkg == "" {
-		return s.DeleteDomain(ctx, DomainStandards)
 	}
 
 	// First pass: collect matching domains logic
@@ -3032,10 +3032,7 @@ func (s *MemoryStore) DeleteStandards(ctx context.Context, category, pkg string)
 	// Purge from Bleve search index
 	if s.search != nil && len(keysToDelete) > 0 {
 		for start := 0; start < len(keysToDelete); start += s.maxBatchSize {
-			end := start + s.maxBatchSize
-			if end > len(keysToDelete) {
-				end = len(keysToDelete)
-			}
+			end := min(start+s.maxBatchSize, len(keysToDelete))
 			chunk := keysToDelete[start:end]
 			if dErr := s.search.DeleteBatch(chunk); dErr != nil {
 				slog.Warn("Failed to purge batch from search index", "error", dErr)
@@ -3050,6 +3047,14 @@ func (s *MemoryStore) DeleteStandards(ctx context.Context, category, pkg string)
 // DeleteProjects removes projects by category or specific package path prefix.
 func (s *MemoryStore) DeleteProjects(ctx context.Context, category, pkg string) (int, error) {
 	// Allow empty category and pkg to denote a global domain sweep
+	if category != "" && !HarvestedCategories[category] {
+		return 0, fmt.Errorf("category %q is not a valid projects category", category)
+	}
+
+	// Global Domain Sweep Delegation - move before lock to avoid deadlock
+	if category == "" && pkg == "" {
+		return s.DeleteDomain(ctx, DomainProjects)
+	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -3072,11 +3077,6 @@ func (s *MemoryStore) DeleteProjects(ctx context.Context, category, pkg string) 
 			slog.Warn("Failed to read record value during projects deletion", "key", key, "error", vErr)
 		}
 		return rec, nil
-	}
-
-	// Global Domain Sweep Delegation
-	if category == "" && pkg == "" {
-		return s.DeleteDomain(ctx, DomainProjects)
 	}
 
 	if category != "" {
@@ -3146,10 +3146,7 @@ func (s *MemoryStore) DeleteProjects(ctx context.Context, category, pkg string) 
 
 	if s.search != nil && len(keysToDelete) > 0 {
 		for start := 0; start < len(keysToDelete); start += s.maxBatchSize {
-			end := start + s.maxBatchSize
-			if end > len(keysToDelete) {
-				end = len(keysToDelete)
-			}
+			end := min(start+s.maxBatchSize, len(keysToDelete))
 			chunk := keysToDelete[start:end]
 			if dErr := s.search.DeleteBatch(chunk); dErr != nil {
 				slog.Warn("Failed to purge batch from search index", "error", dErr)

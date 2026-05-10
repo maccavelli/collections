@@ -658,6 +658,8 @@ func (rs *MCPRecallServer) handleGetMetrics(ctx context.Context, _ *mcp.CallTool
 		},
 		"storage": map[string]any{
 			"db_entries":            count,
+			"memories_count":        metrics.Memories,
+			"sessions_count":        metrics.Sessions,
 			"standards_count":       metrics.Standards,
 			"projects_count":        metrics.Projects,
 			"size_formatted":        fmt.Sprintf("%.2f KB", float64(size)/1024),
@@ -684,6 +686,8 @@ func (rs *MCPRecallServer) handleGetMetrics(ctx context.Context, _ *mcp.CallTool
 	sb.WriteString(fmt.Sprintf("- Memory Alloc: %.0f MB\n", float64(vMem.Used)/1024/1024))
 	sb.WriteString("\n## Storage\n")
 	sb.WriteString(fmt.Sprintf("- DB Entries: %d\n", count))
+	sb.WriteString(fmt.Sprintf("- Memories: %d\n", metrics.Memories))
+	sb.WriteString(fmt.Sprintf("- Sessions: %d\n", metrics.Sessions))
 	sb.WriteString(fmt.Sprintf("- Standards: %d\n", metrics.Standards))
 	sb.WriteString(fmt.Sprintf("- Projects: %d\n", metrics.Projects))
 	sb.WriteString(fmt.Sprintf("- Size: %.2f KB\n", float64(size)/1024))
@@ -745,6 +749,8 @@ func (rs *MCPRecallServer) handleBatchRemember(ctx context.Context, req *mcp.Cal
 				IsError: true,
 			}, nil, nil
 		}
+		// 🛡️ Namespace enforcement: batch_remember is scoped exclusively to the memories domain.
+		args.Entries[i].Domain = memory.DomainMemories
 	}
 
 	stored, batchErrors, err := rs.store.SaveBatch(ctx, args.Entries)
@@ -783,6 +789,14 @@ func (rs *MCPRecallServer) handleBatchRecall(ctx context.Context, req *mcp.CallT
 			Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Batch recall error: %v", err)}},
 			IsError: true,
 		}, nil, nil
+	}
+
+	// 🛡️ Namespace isolation: batch_recall only returns memories-domain records.
+	for key, rec := range found {
+		if rec.Domain != memory.DomainMemories {
+			delete(found, key)
+			missing = append(missing, key)
+		}
 	}
 
 	summary := fmt.Sprintf("Batch recall complete: %d found, %d missing.", len(found), len(missing))

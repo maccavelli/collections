@@ -42,7 +42,7 @@ var harvestProjectsCmd = &cobra.Command{
 func runHarvestViaMCP(namespace, pkgPath string) error {
 	port := Cfg.APIPort()
 	if port == 0 {
-		port = 7000
+		port = 18001
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

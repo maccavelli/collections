@@ -4,10 +4,14 @@ package cmd
 // Viper's automated write destroys YAML comments; writing this explicit template prevents that.
 const FullConfigTemplate = `# --- General recall configuration settings --- 
 # The internal network port the server listens on (used by other MCP servers like brainstorm and go-refactor)
-apiport: 7000
+apiport: 18001
 # Cosine similarity threshold (0.0 to 1.0) above which documents are considered duplicates
 dedupthreshold: 0.8
-# The absolute physical path where BadgerDB and Bleve persist their state to disk
+# The absolute physical path where BadgerDB and Bleve persist their state to disk.
+# Leave empty to use the OS default cache directory:
+#   Linux:   ~/.cache/mcp-server-recall/.mcp_recall
+#   macOS:   ~/Library/Caches/mcp-server-recall/.mcp_recall
+#   Windows: %%LocalAppData%%\mcp-server-recall\.mcp_recall
 dbpath: ""
 # A short organizational description of this memory pool
 description: Cross-Session RAG Memory Architecture

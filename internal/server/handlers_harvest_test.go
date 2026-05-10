@@ -1,9 +1,11 @@
 package server
 
 import (
+	"context"
 	"testing"
 
 	"mcp-server-recall/internal/harvest"
+	"mcp-server-recall/internal/memory"
 )
 
 func TestDetectDomainTags(t *testing.T) {
@@ -89,5 +91,60 @@ func TestBuildSymbolEntry(t *testing.T) {
 		if !found {
 			t.Errorf("expected tag %s but got %v", exp, entry.Tags)
 		}
+	}
+}
+
+func TestHandlers_HarvestMethods(t *testing.T) {
+	srv, _, cleanup := createTestServer(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	// 1. hasDrifted should return true for new package
+	if !srv.hasDrifted(ctx, memory.DomainStandards, "test/pkg", "checksum123") {
+		t.Errorf("expected true for uningested package")
+	}
+
+	// 2. ingestHarvestResult
+	res := &harvest.HarvestResult{
+		Checksum: "checksum123",
+		Symbols: []harvest.HarvestedSymbol{
+			{Name: "Func1", PkgPath: "test/pkg", SymbolType: "func", Doc: "Testing domain:auth"},
+		},
+		PackageDocs: map[string]string{
+			"test/pkg": "This is a package doc",
+		},
+	}
+	stored, errs, err := srv.ingestHarvestResult(ctx, "test/pkg", res, memory.DomainStandards)
+	if err != nil {
+		t.Errorf("ingestHarvestResult failed: %v", err)
+	}
+	if stored != 3 { // 1 symbol + 1 package doc + 1 drift checksum = 3 entries stored
+		t.Errorf("expected 3 stored entries, got %d", stored)
+	}
+	if len(errs) > 0 {
+		t.Errorf("expected 0 batch errors, got %d", len(errs))
+	}
+
+	// 3. hasDrifted should return false now with same checksum
+	if srv.hasDrifted(ctx, memory.DomainStandards, "test/pkg", "checksum123") {
+		t.Errorf("expected false for unchanged checksum")
+	}
+
+	// 4. hasDrifted should return true for different checksum
+	if !srv.hasDrifted(ctx, memory.DomainStandards, "test/pkg", "checksum456") {
+		t.Errorf("expected true for changed checksum")
+	}
+
+	// 5. handleHarvestStandards (Error path: engine.Run failure on invalid package)
+	req := makeReq(`{"target_path":"invalid/path"}`)
+	callRes, _, _ := srv.handleHarvestStandards(ctx, req, HarvestStandardsInput{TargetPath: "invalid/path"})
+	if callRes == nil || !callRes.IsError {
+		t.Errorf("expected error from handleHarvestStandards for invalid path")
+	}
+
+	// 6. handleHarvestProjects (Error path: engine.Run failure on invalid package)
+	callRes, _, _ = srv.handleHarvestProjects(ctx, req, HarvestProjectsInput{TargetPath: "invalid/path"})
+	if callRes == nil || !callRes.IsError {
+		t.Errorf("expected error from handleHarvestProjects for invalid path")
 	}
 }

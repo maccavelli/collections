@@ -64,7 +64,7 @@ func migrateRecord(data []byte) (*Record, error) {
 	return migrateRecordCtx(context.TODO(), data)
 }
 
-func migrateRecordCtx(ctx context.Context, data []byte) (*Record, error) {
+func migrateRecordCtx(_ context.Context, data []byte) (*Record, error) {
 	// Transparently handle Zstd-compressed records by sniffing the magic bytes
 	if bytes.HasPrefix(data, zstdMagic) {
 		var err error

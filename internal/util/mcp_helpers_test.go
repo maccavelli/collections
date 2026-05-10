@@ -16,18 +16,18 @@ func TestHardenedAddTool(t *testing.T) {
 			Content: []mcp.Content{
 				&mcp.TextContent{Text: "success"},
 			},
-		}, nil
+		}, nil, nil
 	}
 
-	InternalWrapHandler[any, any]("test", handler)
+	InternalWrapHandler[any, any](&mcp.Tool{Name: "test"}, handler)
 }
 
 func TestSafeToolHandler_PanicRecovery(t *testing.T) {
 	handler := func(ctx context.Context, req *mcp.CallToolRequest, input any) (*mcp.CallToolResult, any, error) {
 		panic("simulated panic")
 	}
-	safeHandler := InternalWrapHandler[any, any]("test", handler)
-	res, err := safeHandler(context.Background(), &mcp.CallToolRequest{})
+	safeHandler := InternalWrapHandler[any, any](&mcp.Tool{Name: "test"}, handler)
+	res, _, err := safeHandler(context.Background(), &mcp.CallToolRequest{}, nil)
 	if err != nil {
 		t.Errorf("expected no error (suppressed by handler), got %v", err)
 	}
@@ -40,10 +40,10 @@ func TestSafeToolHandler_JSONMandate(t *testing.T) {
 	handler := func(ctx context.Context, req *mcp.CallToolRequest, input any) (*mcp.CallToolResult, any, error) {
 		return &mcp.CallToolResult{
 			StructuredContent: map[string]interface{}{"key": "value"},
-		}, nil
+		}, nil, nil
 	}
-	safeHandler := InternalWrapHandler[any, any]("test", handler)
-	res, _ := safeHandler(context.Background(), &mcp.CallToolRequest{})
+	safeHandler := InternalWrapHandler[any, any](&mcp.Tool{Name: "test"}, handler)
+	res, _, _ := safeHandler(context.Background(), &mcp.CallToolRequest{}, nil)
 	if res.Content == nil {
 		t.Errorf("expected Content to be initialized as empty slice to satisfy JSON mandate")
 	}
@@ -58,10 +58,10 @@ func TestSafeToolHandler_AuditLog(t *testing.T) {
 	handler := func(ctx context.Context, req *mcp.CallToolRequest, input any) (*mcp.CallToolResult, any, error) {
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{&mcp.TextContent{Text: "ok"}},
-		}, nil
+		}, nil, nil
 	}
-	safeHandler := InternalWrapHandler[any, any]("test", handler)
-	_, _ = safeHandler(context.Background(), &mcp.CallToolRequest{})
+	safeHandler := InternalWrapHandler[any, any](&mcp.Tool{Name: "test"}, handler)
+	_, _, _ = safeHandler(context.Background(), &mcp.CallToolRequest{}, nil)
 
 	output := buf.String()
 	if !strings.Contains(output, `"msg":"audit"`) {
@@ -84,12 +84,12 @@ func TestSafeToolHandler_AuditLogWithClient(t *testing.T) {
 	handler := func(ctx context.Context, req *mcp.CallToolRequest, input any) (*mcp.CallToolResult, any, error) {
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{&mcp.TextContent{Text: "ok"}},
-		}, nil
+		}, nil, nil
 	}
 
 	ctx := WithClient(context.Background(), "mcp-server-brainstorm")
-	safeHandler := InternalWrapHandler[any, any]("test", handler)
-	_, _ = safeHandler(ctx, &mcp.CallToolRequest{})
+	safeHandler := InternalWrapHandler[any, any](&mcp.Tool{Name: "test"}, handler)
+	_, _, _ = safeHandler(ctx, &mcp.CallToolRequest{}, nil)
 
 	output := buf.String()
 	if !strings.Contains(output, `"client":"mcp-server-brainstorm"`) {
@@ -107,10 +107,10 @@ func TestSafeToolHandler_AuditLogError(t *testing.T) {
 		return &mcp.CallToolResult{
 			IsError: true,
 			Content: []mcp.Content{&mcp.TextContent{Text: "failed"}},
-		}, nil
+		}, nil, nil
 	}
-	safeHandler := InternalWrapHandler[any, any]("test", handler)
-	_, _ = safeHandler(context.Background(), &mcp.CallToolRequest{})
+	safeHandler := InternalWrapHandler[any, any](&mcp.Tool{Name: "test"}, handler)
+	_, _, _ = safeHandler(context.Background(), &mcp.CallToolRequest{}, nil)
 
 	output := buf.String()
 	if !strings.Contains(output, `"ok":false`) {
@@ -152,4 +152,16 @@ func TestNopWriteCloser(t *testing.T) {
 	if err := nwc.Close(); err != nil {
 		t.Errorf("expected no error from Close, got %v", err)
 	}
+}
+
+func TestHardenedAddTool_RealServer(t *testing.T) {
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1"}, &mcp.ServerOptions{})
+	tool := mcp.Tool{Name: "test_tool"}
+
+	handler := func(ctx context.Context, req *mcp.CallToolRequest, input any) (*mcp.CallToolResult, any, error) {
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "success"}}}, nil, nil
+	}
+
+	HardenedAddTool(srv, &tool, handler)
+
 }

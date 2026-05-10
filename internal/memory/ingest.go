@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"iter"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -14,7 +15,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"iter"
 
 	"github.com/dgraph-io/badger/v4"
 )
@@ -554,7 +554,7 @@ func (s *MemoryStore) ProcessPath(ctx context.Context, rootPath string) (int, er
 
 	recordCh := make(chan []BatchEntry, 100)
 
-	for i := 0; i < workers; i++ {
+	for range workers {
 		go func(c context.Context) {
 			defer wg.Done()
 			for p := range pathsCh {

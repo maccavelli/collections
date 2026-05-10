@@ -2,6 +2,7 @@ package memory
 
 import (
 	"mcp-server-recall/internal/config"
+	"os"
 
 	"context"
 	"testing"
@@ -20,7 +21,9 @@ func TestSearch_MemoryLimitFallback(t *testing.T) {
 	defer store.Close()
 
 	ctx := context.Background()
-	engine, _ := search.InitStorage(t.TempDir())
+	tmpDir2, _ := os.MkdirTemp("", "TestSearch_MemoryLimitFallback*")
+	defer os.RemoveAll(tmpDir2)
+	engine, _ := search.InitStorage(tmpDir2)
 	if err := store.SetSearchEngine(ctx, engine); err != nil {
 		t.Fatalf("failed to set search engine: %v", err)
 	}

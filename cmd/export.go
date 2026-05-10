@@ -21,7 +21,7 @@ var exportCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		port := Cfg.APIPort()
 		if port == 0 {
-			port = 7000
+			port = 18001
 		}
 
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
