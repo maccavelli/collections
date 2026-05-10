@@ -39,7 +39,8 @@ var zstdDecoderPool = sync.Pool{
 
 // Store wraps a BuntDB instance for thread-safe session CRUD operations.
 type Store struct {
-	DB *buntdb.DB
+	DB       *buntdb.DB
+	FilePath string
 }
 
 // BaselineStandard represents a Zstd-compressed hybrid Markdown standard.
@@ -67,7 +68,10 @@ func InitStore() (*Store, error) {
 	} else if dbPath != ":memory:" {
 		dbPath = filepath.Clean(filepath.FromSlash(dbPath))
 	}
+	return InitStoreWithPath(dbPath)
+}
 
+func InitStoreWithPath(dbPath string) (*Store, error) {
 	if dbPath != ":memory:" {
 		if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
 			return nil, err
@@ -92,12 +96,40 @@ func InitStore() (*Store, error) {
 		slog.Warn("failed to create baseline index", "error", err)
 	}
 
-	return &Store{DB: database}, nil
+	return &Store{DB: database, FilePath: dbPath}, nil
 }
 
 // Close releases the underlying BuntDB resources.
 func (s *Store) Close() error {
 	return s.DB.Close()
+}
+
+// DBSize returns the physical size of the BuntDB file in bytes.
+func (s *Store) DBSize() int64 {
+	if s == nil || s.FilePath == "" || s.FilePath == ":memory:" {
+		return 0
+	}
+	info, err := os.Stat(s.FilePath)
+	if err != nil {
+		return 0
+	}
+	return info.Size()
+}
+
+// View wraps buntdb.View and tracks read latency.
+func (s *Store) View(fn func(tx *buntdb.Tx) error) error {
+	start := time.Now()
+	err := s.DB.View(fn)
+	slog.Debug("buntdb_transaction", "latency_us", time.Since(start).Microseconds(), "op", "view")
+	return err
+}
+
+// Update wraps buntdb.Update and tracks write latency.
+func (s *Store) Update(fn func(tx *buntdb.Tx) error) error {
+	start := time.Now()
+	err := s.DB.Update(fn)
+	slog.Debug("buntdb_transaction", "latency_us", time.Since(start).Microseconds(), "op", "update")
+	return err
 }
 
 // DBEntries returns the total count of keys in the BuntDB store.
@@ -106,7 +138,7 @@ func (s *Store) DBEntries() int {
 		return 0
 	}
 	var n int
-	_ = s.DB.View(func(tx *buntdb.Tx) error {
+	_ = s.View(func(tx *buntdb.Tx) error {
 		n, _ = tx.Len()
 		return nil
 	})
@@ -124,7 +156,7 @@ func (s *Store) SaveSession(session *SessionState) error {
 	if err != nil {
 		return err
 	}
-	return s.DB.Update(func(tx *buntdb.Tx) error {
+	return s.Update(func(tx *buntdb.Tx) error {
 		_, _, err := tx.Set(sessionKey(session.SessionID), string(data), nil)
 		return err
 	})
@@ -134,7 +166,7 @@ func (s *Store) SaveSession(session *SessionState) error {
 // Returns (nil, nil) if the session does not exist.
 func (s *Store) LoadSession(sessionID string) (*SessionState, error) {
 	var session SessionState
-	err := s.DB.View(func(tx *buntdb.Tx) error {
+	err := s.View(func(tx *buntdb.Tx) error {
 		val, err := tx.Get(sessionKey(sessionID))
 		if err != nil {
 			return err
@@ -147,6 +179,24 @@ func (s *Store) LoadSession(sessionID string) (*SessionState, error) {
 	return &session, nil
 }
 
+// ListSessions returns all active session states.
+func (s *Store) ListSessions() ([]SessionState, error) {
+	var sessions []SessionState
+	err := s.View(func(tx *buntdb.Tx) error {
+		tx.AscendKeys("session:*", func(key, val string) bool {
+			if !strings.HasPrefix(key, "session_metadata:") {
+				var session SessionState
+				if err := json.Unmarshal([]byte(val), &session); err == nil {
+					sessions = append(sessions, session)
+				}
+			}
+			return true
+		})
+		return nil
+	})
+	return sessions, err
+}
+
 // sessionMetadataKey returns the canonical BuntDB key for session metadata.
 func sessionMetadataKey(id string) string {
 	return fmt.Sprintf("session_metadata:%s", id)
@@ -155,7 +205,7 @@ func sessionMetadataKey(id string) string {
 // GetSessionMetadata retrieves session metadata.
 func (s *Store) GetSessionMetadata(sessionID string) (*SessionMetadata, error) {
 	var meta SessionMetadata
-	err := s.DB.View(func(tx *buntdb.Tx) error {
+	err := s.View(func(tx *buntdb.Tx) error {
 		val, err := tx.Get(sessionMetadataKey(sessionID))
 		if err != nil {
 			return err
@@ -177,7 +227,7 @@ func (s *Store) SaveSessionMetadata(meta *SessionMetadata) error {
 	if err != nil {
 		return err
 	}
-	return s.DB.Update(func(tx *buntdb.Tx) error {
+	return s.Update(func(tx *buntdb.Tx) error {
 		_, _, err := tx.Set(sessionMetadataKey(meta.SessionID), string(data), nil)
 		return err
 	})
@@ -208,7 +258,7 @@ func (s *Store) UpdateCurrentStep(sessionID, step string) error {
 
 // DeleteSession removes a session from the DB.
 func (s *Store) DeleteSession(sessionID string) error {
-	return s.DB.Update(func(tx *buntdb.Tx) error {
+	return s.Update(func(tx *buntdb.Tx) error {
 		_, err := tx.Delete(sessionKey(sessionID))
 		return err
 	})
@@ -218,7 +268,7 @@ func (s *Store) DeleteSession(sessionID string) error {
 // baseline:* and secret:* keys intact. Returns the count of deleted keys.
 func (s *Store) PurgeSessions() (int, error) {
 	var count int
-	err := s.DB.Update(func(tx *buntdb.Tx) error {
+	err := s.Update(func(tx *buntdb.Tx) error {
 		var keys []string
 		tx.AscendKeys("session:*", func(key, _ string) bool {
 			keys = append(keys, key)
@@ -239,7 +289,7 @@ func (s *Store) PurgeSessions() (int, error) {
 // session:* and secret:* keys intact. Returns the count of deleted keys.
 func (s *Store) PurgeBaselines() (int, error) {
 	var count int
-	err := s.DB.Update(func(tx *buntdb.Tx) error {
+	err := s.Update(func(tx *buntdb.Tx) error {
 		var keys []string
 		tx.AscendKeys("baseline:*", func(key, _ string) bool {
 			keys = append(keys, key)
@@ -266,7 +316,7 @@ func (s *Store) AppendStepStatus(sessionID, step, status string) error {
 // updateSession is a generic read-modify-write helper that eliminates the
 // duplicated unmarshal/modify/marshal pattern across all mutating operations.
 func (s *Store) updateSession(sessionID string, mutate func(*SessionState)) error {
-	return s.DB.Update(func(tx *buntdb.Tx) error {
+	return s.Update(func(tx *buntdb.Tx) error {
 		val, err := tx.Get(sessionKey(sessionID))
 		if err != nil {
 			return err
@@ -297,7 +347,7 @@ func baselineKey(url string) string {
 // GetBaselineHash fetches only the hash for a stored baseline standard.
 func (s *Store) GetBaselineHash(url string) (string, error) {
 	var standard BaselineStandard
-	err := s.DB.View(func(tx *buntdb.Tx) error {
+	err := s.View(func(tx *buntdb.Tx) error {
 		val, err := tx.Get(baselineKey(url))
 		if err != nil {
 			return err
@@ -314,7 +364,7 @@ func (s *Store) GetBaselineHash(url string) (string, error) {
 // This is a zero-decompression, zero-unmarshal check — just a BuntDB key probe.
 // BuntDB handles TTL expiration internally: expired keys return ErrNotFound on Get.
 func (s *Store) HasBaseline(url string) bool {
-	err := s.DB.View(func(tx *buntdb.Tx) error {
+	err := s.View(func(tx *buntdb.Tx) error {
 		_, err := tx.Get(baselineKey(url))
 		return err
 	})
@@ -324,7 +374,7 @@ func (s *Store) HasBaseline(url string) bool {
 // GetBaselineContent retrieves and decompresses a baseline standard.
 func (s *Store) GetBaselineContent(url string) (string, error) {
 	var standard BaselineStandard
-	err := s.DB.View(func(tx *buntdb.Tx) error {
+	err := s.View(func(tx *buntdb.Tx) error {
 		val, err := tx.Get(baselineKey(url))
 		if err != nil {
 			return err
@@ -351,7 +401,7 @@ func (s *Store) GetBaselineContent(url string) (string, error) {
 // efficient prefix iteration.
 func (s *Store) ListBaselines() ([]BaselineMeta, error) {
 	var metas []BaselineMeta
-	err := s.DB.View(func(tx *buntdb.Tx) error {
+	err := s.View(func(tx *buntdb.Tx) error {
 		tx.AscendKeys("baseline:*", func(key, val string) bool {
 			var std BaselineStandard
 			if json.Unmarshal([]byte(val), &std) == nil {
@@ -370,7 +420,7 @@ func (s *Store) ListBaselines() ([]BaselineMeta, error) {
 // BaselineCount returns the number of cached baseline standards.
 func (s *Store) BaselineCount() int {
 	var count int
-	_ = s.DB.View(func(tx *buntdb.Tx) error {
+	_ = s.View(func(tx *buntdb.Tx) error {
 		tx.AscendKeys("baseline:*", func(_, _ string) bool {
 			count++
 			return true
@@ -397,7 +447,7 @@ func (s *Store) SetBaseline(url string, content string, hash string) error {
 		return err
 	}
 
-	return s.DB.Update(func(tx *buntdb.Tx) error {
+	return s.Update(func(tx *buntdb.Tx) error {
 		opts := &buntdb.SetOptions{Expires: true, TTL: 30 * 24 * time.Hour}
 		_, _, err := tx.Set(baselineKey(url), string(data), opts)
 		return err
@@ -416,7 +466,7 @@ func (s *Store) SetSecret(service, token string) error {
 		return fmt.Errorf("failed to encrypt secret for %s: %w", service, err)
 	}
 
-	return s.DB.Update(func(tx *buntdb.Tx) error {
+	return s.Update(func(tx *buntdb.Tx) error {
 		_, _, err := tx.Set(secretKey(service), encryptedToken, nil)
 		return err
 	})
@@ -426,7 +476,7 @@ func (s *Store) SetSecret(service, token string) error {
 // Returns an empty string if the secret does not exist.
 func (s *Store) GetSecret(service string) (string, error) {
 	var encryptedToken string
-	err := s.DB.View(func(tx *buntdb.Tx) error {
+	err := s.View(func(tx *buntdb.Tx) error {
 		val, err := tx.Get(secretKey(service))
 		if err != nil {
 			return err

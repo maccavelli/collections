@@ -204,6 +204,8 @@ func (h *ToolHandler) EvaluateIdea(ctx context.Context, req *mcp.CallToolRequest
 	session.CurrentStep = "evaluate_idea"
 	session.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 
+	RecordStepTiming(session, "evaluate_idea")
+
 	// Populate forward-thinking session metadata from agent-provided args
 	if len(args.Tags) > 0 {
 		session.Tags = args.Tags
@@ -220,6 +222,17 @@ func (h *ToolHandler) EvaluateIdea(ctx context.Context, req *mcp.CallToolRequest
 	if len(args.ComplianceRequirements) > 0 {
 		session.ComplianceRequirements = args.ComplianceRequirements
 	}
+
+	populated := 0
+	if args.RawIdea != "" { populated++ }
+	if args.TargetStack != "" { populated++ }
+	if args.SessionID != "" { populated++ }
+	if len(args.Tags) > 0 { populated++ }
+	if len(args.Labels) > 0 { populated++ }
+	if args.TargetEnvironment != "" { populated++ }
+	if len(args.ComplianceRequirements) > 0 { populated++ }
+	if args.BusinessCase != "" { populated++ }
+	CheckPayloadCompleteness("evaluate_idea", populated, 8)
 
 	if err := h.store.SaveSession(session); err != nil {
 		return errorResult(err.Error())
@@ -318,6 +331,8 @@ func (h *ToolHandler) EvaluateIdea(ctx context.Context, req *mcp.CallToolRequest
 		hint = fmt.Sprintf("Before proceeding to clarify_requirements, you MUST call 'ingest_standards' for each of the following baseline URLs:\n- %s\n\nOnce all baseline standards are ingested, proceed to 'clarify_requirements'.", strings.Join(baselineURLs, "\n- "))
 	}
 
+	LogSessionHash(session, "evaluate_idea")
+
 	return hybridMarkdownResult(hint, map[string]any{
 		"session_id":     sessionID,
 		"scope_boundary": args.RawIdea,
@@ -344,6 +359,7 @@ func (h *ToolHandler) ClarifyRequirements(ctx context.Context, req *mcp.CallTool
 		if args.SkepticAnalysis != nil {
 			session.SkepticAnalysis = args.SkepticAnalysis
 		}
+		RecordStepTiming(session, "clarify_requirements")
 		if err := h.store.SaveSession(session); err != nil {
 			return errorResult(err.Error())
 		}
@@ -419,6 +435,16 @@ func (h *ToolHandler) ClarifyRequirements(ctx context.Context, req *mcp.CallTool
 	session.StepStatus["clarify_requirements"] = "COMPLETED"
 	session.CurrentStep = "clarify_requirements"
 
+	RecordStepTiming(session, "clarify_requirements")
+
+	populated := 0
+	if args.SessionID != "" { populated++ }
+	if args.DesignProposal != nil { populated++ }
+	if args.SkepticAnalysis != nil { populated++ }
+	if args.ChaosAnalysis != nil { populated++ }
+	if args.SynthesisResolution != nil { populated++ }
+	CheckPayloadCompleteness("clarify_requirements", populated, 5)
+
 	if err := h.store.SaveSession(session); err != nil {
 		return errorResult(err.Error())
 	}
@@ -455,6 +481,8 @@ func (h *ToolHandler) ClarifyRequirements(ctx context.Context, req *mcp.CallTool
 		resultData["llm_enhanced"] = session.SynthesisResolution.LLMEnhanced
 		resultData["chaos_vetted"] = session.SynthesisResolution.ChaosVetted
 	}
+	
+	LogSessionHash(session, "clarify_requirements")
 	return hybridMarkdownResult(hint, resultData)
 }
 
@@ -474,6 +502,18 @@ func (h *ToolHandler) IngestStandards(ctx context.Context, req *mcp.CallToolRequ
 
 	if err := h.store.AppendStandard(args.SessionID, textContent); err != nil {
 		return errorResult(err.Error())
+	}
+
+	populated := 0
+	if args.SessionID != "" { populated++ }
+	if args.SourceURL != "" { populated++ }
+	if args.FilePath != "" { populated++ }
+	CheckPayloadCompleteness("ingest_standards", populated, 3)
+
+	if session, loadErr := h.store.LoadSession(args.SessionID); loadErr == nil && session != nil {
+		RecordStepTiming(session, "ingest_standards")
+		_ = h.store.SaveSession(session)
+		LogSessionHash(session, "ingest_standards")
 	}
 
 	hint := "Standard ingested successfully. You may ingest another, or proceed to 'clarify_requirements'.\n\n" +
@@ -522,11 +562,13 @@ func (h *ToolHandler) CritiqueDesign(ctx context.Context, req *mcp.CallToolReque
 
 	session.StepStatus["critique_design"] = "COMPLETED"
 	session.CurrentStep = "critique_design"
+	RecordStepTiming(session, "critique_design")
 	if err := h.store.SaveSession(session); err != nil {
 		return errorResult(err.Error())
 	}
 
 	hint := "Next, call 'finalize_requirements' to generate the golden copy."
+	LogSessionHash(session, "critique_design")
 	return hybridMarkdownResult(hint, map[string]any{
 		"is_vetted":    true,
 		"critique_log": "Vetting passed successfully.",
@@ -543,11 +585,19 @@ func (h *ToolHandler) FinalizeRequirements(ctx context.Context, req *mcp.CallToo
 	session.FinalSpec = args.ApprovalSignature
 	session.StepStatus["finalize_requirements"] = "COMPLETED"
 	session.CurrentStep = "finalize_requirements"
+	RecordStepTiming(session, "finalize_requirements")
+
+	populated := 0
+	if args.SessionID != "" { populated++ }
+	if args.ApprovalSignature != "" { populated++ }
+	CheckPayloadCompleteness("finalize_requirements", populated, 2)
+
 	if err := h.store.SaveSession(session); err != nil {
 		return errorResult(err.Error())
 	}
 
 	hint := "Next, call 'blueprint_implementation' to generate the technical mapping."
+	LogSessionHash(session, "finalize_requirements")
 	return hybridMarkdownResult(hint, map[string]any{
 		"golden_copy_json": args.ApprovalSignature,
 		"status":           "APPROVED",
@@ -687,9 +737,32 @@ func (h *ToolHandler) BlueprintImplementation(ctx context.Context, req *mcp.Call
 	}
 	session.TechMapping["Pattern"] = args.PatternPreference
 	session.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	session.CurrentStep = "blueprint_implementation"
+	RecordStepTiming(session, "blueprint_implementation")
+
+	populated := 0
+	if args.SessionID != "" { populated++ }
+	if args.PatternPreference != "" { populated++ }
+	if len(args.ImplementationStrategy) > 0 { populated++ }
+	if len(args.Dependencies) > 0 { populated++ }
+	if len(args.ComplexityScores) > 0 { populated++ }
+	if len(args.FileStructure) > 0 { populated++ }
+	if len(args.SecurityConsiderations) > 0 { populated++ }
+	if len(args.NFRs) > 0 { populated++ }
+	if len(args.TestingStrategy) > 0 { populated++ }
+	if len(args.ADRs) > 0 { populated++ }
+	if len(args.APIContracts) > 0 { populated++ }
+	if len(args.DataModel) > 0 { populated++ }
+	if len(args.MCPTools) > 0 { populated++ }
+	if len(args.MCPResources) > 0 { populated++ }
+	if len(args.MCPPrompts) > 0 { populated++ }
+	CheckPayloadCompleteness("blueprint_implementation", populated, 15)
 
 	if err := h.store.SaveBlueprint(args.SessionID, bp); err != nil {
 		return errorResult(fmt.Sprintf("failed to save blueprint: %v", err))
+	}
+	if err := h.store.SaveSession(session); err != nil {
+		slog.Error("blueprint_implementation: failed to save session telemetry", "error", err)
 	}
 	if err := h.store.UpdateCurrentStep(args.SessionID, "blueprint_implementation"); err != nil {
 		slog.Error("blueprint_implementation: failed to update step", "error", err)
@@ -698,6 +771,7 @@ func (h *ToolHandler) BlueprintImplementation(ctx context.Context, req *mcp.Call
 	_ = h.store.AppendStepStatus(args.SessionID, "blueprint_implementation", "COMPLETED")
 
 	hint := "Next, call 'generate_documents' to sync the artifacts with Jira, Confluence, and GitLab."
+	LogSessionHash(session, "blueprint_implementation")
 	return hybridMarkdownResult(hint, map[string]any{
 		"dependency_manifest": bp.DependencyManifest,
 		"complexity_score":    bp.ComplexityScores,

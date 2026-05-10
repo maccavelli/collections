@@ -1,0 +1,76 @@
+package handler
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"log/slog"
+	"time"
+
+	"mcp-server-magicdev/internal/db"
+)
+
+// RecordStepTiming calculates and records the phase dwell time for a specific step.
+// It assumes that the previous step's StartedAt was already populated. If not, it just sets it.
+func RecordStepTiming(session *db.SessionState, step string) {
+	if session.StepTimings == nil {
+		session.StepTimings = make(map[string]db.StepTiming)
+	}
+
+	now := time.Now().UTC()
+	nowStr := now.Format(time.RFC3339)
+
+	// Complete the previous step if there is one
+	if session.CurrentStep != "" && session.CurrentStep != step {
+		if prev, ok := session.StepTimings[session.CurrentStep]; ok {
+			if prev.CompletedAt == "" {
+				prev.CompletedAt = nowStr
+				if startedAt, err := time.Parse(time.RFC3339, prev.StartedAt); err == nil {
+					prev.DurationMs = now.Sub(startedAt).Milliseconds()
+				}
+				session.StepTimings[session.CurrentStep] = prev
+			}
+		}
+	}
+
+	// Start the new step
+	if _, ok := session.StepTimings[step]; !ok {
+		session.StepTimings[step] = db.StepTiming{
+			StartedAt: nowStr,
+		}
+	}
+}
+
+// LogSessionHash generates a SHA-256 hash of the session state for inter-tool integrity verification.
+func LogSessionHash(session *db.SessionState, step string) {
+	b, err := json.Marshal(session)
+	if err != nil {
+		slog.Warn("Failed to marshal session for telemetry hashing", "step", step, "error", err)
+		return
+	}
+	hash := sha256.Sum256(b)
+	hexHash := hex.EncodeToString(hash[:])
+	slog.Info("Session state integrity hash", 
+		"step", step, 
+		"session_id", session.SessionID,
+		"sha256", hexHash,
+	)
+}
+
+// CheckPayloadCompleteness calculates the hydration ratio of a payload.
+// Emits a telemetry warning if the payload is poorly populated.
+func CheckPayloadCompleteness(step string, populated, total int) {
+	if total == 0 {
+		return
+	}
+	ratio := float64(populated) / float64(total)
+	slog.Info("Payload completeness evaluated", "step", step, "ratio", ratio, "populated", populated, "total", total)
+	if ratio < 0.8 {
+		slog.Warn("TELEMETRY WARNING: Sub-optimal payload hydration detected", 
+			"step", step, 
+			"ratio", ratio, 
+			"populated", populated, 
+			"total", total,
+		)
+	}
+}

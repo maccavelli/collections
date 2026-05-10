@@ -15,6 +15,10 @@ var rootCmd = &cobra.Command{
 	Long:  `MagicDev provides an "Idea-to-Asset" pipeline for technical planning, integrated with BuntDB, Atlassian, and GitLab.`,
 }
 
+func init() {
+	rootCmd.AddCommand(dashboardCmd)
+}
+
 // Execute runs the root command tree. Called from main().
 func Execute() error {
 	return rootCmd.Execute()
