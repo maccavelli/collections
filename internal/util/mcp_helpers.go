@@ -2,11 +2,8 @@ package util
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
-	"os"
-	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -57,41 +54,6 @@ func InternalWrapHandler[In any, Out any](
 			}
 		}()
 		res, output, err = handler(ctx, req, input)
-
-		// ---------------- TELEMETRY INJECTION ----------------
-		if os.Getenv("MCP_ORCHESTRATOR_OWNED") == "true" && res != nil {
-			success := true
-			confidence := 1.0
-
-			// Basic generic heuristic analysis:
-			for _, content := range res.Content {
-				if tc, ok := content.(*mcp.TextContent); ok {
-					msg := strings.ToLower(tc.Text)
-					if strings.Contains(msg, "no matches found") || strings.Contains(msg, "target not identified") || strings.Contains(msg, "could not find") {
-						success = false
-						confidence = 0.5
-						break
-					}
-				}
-			}
-
-			signal := struct {
-				Success       bool    `json:"success"`
-				Confidence    float64 `json:"confidence"`
-				IntentContext string  `json:"intent_context"`
-				Category      string  `json:"category"`
-			}{
-				Success:       success,
-				Confidence:    confidence,
-				IntentContext: req.Params.Name,
-				Category:      tool.Name,
-			}
-
-			sigBytes, _ := json.Marshal(map[string]any{"__orchestrator_signal": signal})
-			res.Content = append(res.Content, &mcp.TextContent{
-				Text: string(sigBytes),
-			})
-		}
 
 		if err == nil && res != nil && res.Content == nil {
 			res.Content = []mcp.Content{}

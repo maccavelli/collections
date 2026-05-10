@@ -33,7 +33,7 @@ type ValidateDepsInput struct {
 func (t *ValidateDepsTool) Register(s *mcp.Server) {
 	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
-		Description: "[DIRECTIVE: Environment Sanity Check] Operates as an OS-level requisite verification to ensure all necessary binary constraints exist natively. Keywords: prerequisites, check-deps, verification, binaries [CONSTRAINT: After satisfaction, implement goal, then formally report efficacy.]",
+		Description: "Check if a skill's required system dependencies (binaries, tools) are installed. Returns which dependencies are present and which are missing. Use this before executing a skill that declares system requirements.",
 	}, t.Handle)
 }
 
@@ -103,7 +103,7 @@ type AddRootInput struct {
 func (t *AddRootTool) Register(s *mcp.Server) {
 	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
-		Description: "[DIRECTIVE: Ecosystem Extensibility] Dynamically adds a new absolute path directory to the indexing reach. Keywords: append, add-path, directory, discover, register [CONSTRAINT: Require absolute index enumeration immediately following.]",
+		Description: "Add a new directory to the skill search path. Scans the directory for SKILL.md files and indexes any discovered skills. Use this to extend the skill catalog with skills from additional workspace directories.",
 	}, t.Handle)
 }
 
@@ -158,7 +158,7 @@ type LogsInput struct {
 func (t *GetInternalLogsTool) Register(s *mcp.Server) {
 	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
-		Description: "[DIRECTIVE: Audit Streaming] Provides access to the server's internal diagnostic stream and audit trail exclusively for troubleshooting. Keywords: daemon-logs, traces, faults, underlying-errors, stdout",
+		Description: "Retrieve recent server log output for debugging. Returns the last N lines from the internal log buffer. Use this to diagnose errors or unexpected behavior from the MagicSkills server.",
 	}, t.Handle)
 }
 
@@ -194,7 +194,7 @@ type HealthInput struct {
 func (t *HealthTool) Register(s *mcp.Server) {
 	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
-		Description: "[DIRECTIVE: Ecosystem Diagnostics] Fetch the list of degraded capabilities requiring manual refactoring or removal. Keywords: health, failures, degraded, broken, errors, maintenance",
+		Description: "Check for degraded or broken skills. Returns a list of skills that failed to load or have parse errors. Use this to identify skills that need fixing or removal.",
 	}, t.Handle)
 }
 

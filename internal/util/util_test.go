@@ -33,25 +33,37 @@ func TestAsyncWriter_Buffer(t *testing.T) {
 func TestOpenHardenedLogFile_Cap(t *testing.T) {
 	tmpFile := t.TempDir() + "/test2.log"
 
+	// Write 60MB of data (above the 10MB truncation threshold)
 	f, _ := os.Create(tmpFile)
-	_ = f.Truncate(60 * 1024 * 1024) // 60MB
+	data := make([]byte, 60*1024*1024)
+	for i := range data {
+		data[i] = 'x'
+	}
+	// Insert newlines so truncation can snap to a boundary
+	for i := 1024; i < len(data); i += 1024 {
+		data[i] = '\n'
+	}
+	_, _ = f.Write(data)
 	f.Close()
 
 	hf := OpenHardenedLogFile(tmpFile)
 	defer hf.Close()
 
 	info, _ := os.Stat(tmpFile)
-	if info.Size() != 0 {
-		t.Errorf("expected file to be truncated to 0, got %d", info.Size())
+	// Graceful truncation retains ~5MB tail. Allow some tolerance for newline snapping.
+	const truncateTarget = 5 * 1024 * 1024
+	if info.Size() > int64(truncateTarget+1024) {
+		t.Errorf("expected file to be truncated to ~%d bytes, got %d", truncateTarget, info.Size())
+	}
+	if info.Size() == 0 {
+		t.Error("expected file to retain tail data, got 0 bytes")
 	}
 }
 
 func TestHardenedAddTool_DeepClosure(t *testing.T) {
-	t.Setenv("MCP_ORCHESTRATOR_OWNED", "true")
-
 	tool := &mcp.Tool{Name: "test-tool"}
 
-	// Test Success Path with Telemetry
+	// Test Success Path
 	handler := func(ctx context.Context, req *mcp.CallToolRequest, in struct{}) (*mcp.CallToolResult, struct{}, error) {
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{&mcp.TextContent{Text: "all clear"}},
@@ -66,24 +78,8 @@ func TestHardenedAddTool_DeepClosure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("wrapper failed: %v", err)
 	}
-	if len(res.Content) < 2 {
-		t.Error("expected telemetry signal in content")
-	}
-
-	// Test "No matches found" heuristic
-	negHandler := func(ctx context.Context, req *mcp.CallToolRequest, in struct{}) (*mcp.CallToolResult, struct{}, error) {
-		return &mcp.CallToolResult{
-			Content: []mcp.Content{&mcp.TextContent{Text: "could not find any tool"}},
-		}, struct{}{}, nil
-	}
-	negWrapper := InternalWrapHandler(tool, negHandler)
-	resNeg, _, _ := negWrapper(context.Background(), &mcp.CallToolRequest{
-		Params: &mcp.CallToolParamsRaw{Name: "test-tool"},
-	}, struct{}{})
-
-	sig := resNeg.Content[1].(*mcp.TextContent).Text
-	if !strings.Contains(sig, `"success":false`) {
-		t.Errorf("expected negative success signal, got: %s", sig)
+	if len(res.Content) != 1 {
+		t.Errorf("expected 1 content item, got %d", len(res.Content))
 	}
 
 	// Test Panic Recovery

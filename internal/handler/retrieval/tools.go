@@ -2,12 +2,10 @@ package retrieval
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 
 	"mcp-server-magicskills/internal/engine"
-	"mcp-server-magicskills/internal/external"
 	"mcp-server-magicskills/internal/models"
 	"mcp-server-magicskills/internal/registry"
 	"mcp-server-magicskills/internal/util"
@@ -18,8 +16,7 @@ import (
 
 // GetTool implements the magicskills_get tool.
 type GetTool struct {
-	Engine       *engine.Engine
-	RecallClient *external.MCPClient
+	Engine *engine.Engine
 }
 
 func (t *GetTool) Name() string { return "magicskills_get" }
@@ -35,7 +32,7 @@ type GetInput struct {
 func (t *GetTool) Register(s *mcp.Server) {
 	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
-		Description: "[DIRECTIVE: Rule Extraction] Fetch, read, and retrieve the full fundamental Markdown source code and logic directives natively. Keywords: read-skill, obtain, pull-rules, exact-markdown, read-file",
+		Description: "Retrieve the full content of a skill by name, including parsed metadata, version-validated rules, and structured output. This is the canonical interface for loading skills — provides semver validation, section extraction, and error handling that raw file reads cannot. Use this instead of view_file on SKILL.md files.",
 	}, t.Handle)
 }
 
@@ -78,26 +75,8 @@ func (t *GetTool) Handle(ctx context.Context, request *mcp.CallToolRequest, inpu
 
 	output := struct {
 		*models.Skill
-		RecallStandards []map[string]any `json:"recall_standards,omitempty"`
 	}{
 		Skill: skill,
-	}
-
-	// Standards-Aware Enrichment (orchestrator mode only)
-	if t.RecallClient != nil && t.RecallClient.RecallEnabled() {
-		searchArgs := map[string]any{
-			"query": skill.Metadata.Name,
-			"limit": 3,
-		}
-		res := t.RecallClient.CallDatabaseTool(ctx, "search", appendNamespace(searchArgs, "standards"))
-		if res != "" {
-			var searchRes struct {
-				Entries []map[string]any `json:"entries"`
-			}
-			if json.Unmarshal([]byte(res), &searchRes) == nil {
-				output.RecallStandards = searchRes.Entries
-			}
-		}
 	}
 
 	section := strings.ToLower(input.Section)
@@ -116,14 +95,6 @@ func (t *GetTool) Handle(ctx context.Context, request *mcp.CallToolRequest, inpu
 }
 
 // Register registers retrieval tools with the global registry.
-func Register(eng *engine.Engine, cl *external.MCPClient) {
-	registry.Global.Register(&GetTool{Engine: eng, RecallClient: cl})
-}
-
-func appendNamespace(m map[string]any, ns string) map[string]any {
-	if m == nil {
-		m = make(map[string]any)
-	}
-	m["namespace"] = ns
-	return m
+func Register(eng *engine.Engine) {
+	registry.Global.Register(&GetTool{Engine: eng})
 }

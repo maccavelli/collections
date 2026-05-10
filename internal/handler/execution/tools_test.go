@@ -17,7 +17,7 @@ func TestExecutionTools(t *testing.T) {
 
 	eng, _ := engine.NewEngine(store, t.TempDir()+"/idx")
 	close(eng.ReadyCh)
-	Register(eng, nil)
+	Register(eng)
 
 	tool1 := &DecomposeTool{Engine: eng}
 	if tool1.Name() != "magicskills_decompose_task" {

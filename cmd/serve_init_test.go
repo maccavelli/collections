@@ -29,5 +29,5 @@ func TestInitSubsystems(t *testing.T) {
 	defer func() { _ = store.Close() }()         // nolint:errcheck // ignore close error
 	defer func() { _ = scn.Watcher.Close() }()   // nolint:errcheck // ignore close error
 
-	initSubsystems(t.Context(), eng, scn, lb, nil)
+	initSubsystems(t.Context(), eng, scn, lb)
 }

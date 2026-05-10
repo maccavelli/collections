@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"mcp-server-magicskills/internal/engine"
-	"mcp-server-magicskills/internal/external"
 	"mcp-server-magicskills/internal/registry"
 	"mcp-server-magicskills/internal/util"
 
@@ -29,7 +28,7 @@ type DecomposeInput struct {
 func (t *DecomposeTool) Register(s *mcp.Server) {
 	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
-		Description: "[DIRECTIVE: Strategic Pipeline Generation] Split and divide complex multi-step prompts into a sequential mapped capability plan autonomously. Keywords: split, chain, complex, multi-step, plan, pipeline [CONSTRAINT: Require exact retrieval of the first extracted boundary next.]",
+		Description: "Break a complex multi-step prompt into a sequence of skill-mapped steps. Analyzes the prompt, identifies sub-tasks, and matches each to the most relevant skill. Use this when a task involves multiple skills and you need an execution plan.",
 	}, t.Handle)
 }
 
@@ -106,8 +105,7 @@ func (t *DecomposeTool) Handle(ctx context.Context, request *mcp.CallToolRequest
 
 // EfficacyTool implements magicskills_record_efficacy.
 type EfficacyTool struct {
-	Engine       *engine.Engine
-	RecallClient *external.MCPClient
+	Engine *engine.Engine
 }
 
 func (t *EfficacyTool) Name() string { return "magicskills_record_efficacy" }
@@ -123,7 +121,7 @@ type EfficacyInput struct {
 func (t *EfficacyTool) Register(s *mcp.Server) {
 	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
-		Description: "[DIRECTIVE: Feedback Loop Telemetry] Terminal execution step confirming operational status natively. Call IMMEDIATELY after completing or failing a driven execution block. Keywords: report, validate, success, failed, log-result, metrics",
+		Description: "Record whether a skill succeeded or failed after execution. Tracks success rates and reliability metrics per skill. Call this after using a skill to improve future match quality.",
 	}, t.Handle)
 }
 
@@ -172,8 +170,7 @@ func (t *EfficacyTool) Handle(ctx context.Context, request *mcp.CallToolRequest,
 }
 
 // Register registers execution tools with the global registry.
-func Register(eng *engine.Engine, cl *external.MCPClient) {
+func Register(eng *engine.Engine) {
 	registry.Global.Register(&DecomposeTool{Engine: eng})
-	registry.Global.Register(&EfficacyTool{Engine: eng, RecallClient: cl})
-	registry.Global.Register(&UpsertTool{Engine: eng})
+	registry.Global.Register(&EfficacyTool{Engine: eng})
 }

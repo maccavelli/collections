@@ -8,9 +8,8 @@ import (
 
 // Config holds the application-wide configuration for MagicSkills.
 type Config struct {
-	Version   string
-	Roots     []string
-	RecallURL string // Canonical endpoint for mcp-server-recall (HTTP-streaming)
+	Version string
+	Roots   []string
 }
 
 const (
@@ -76,23 +75,14 @@ func ResolveDataDir() string {
 	if val := os.Getenv("MAGIC_SKILLS_DATA_DIR"); val != "" {
 		return val
 	}
-	configDir, err := os.UserConfigDir()
+	cacheDir, err := os.UserCacheDir()
 	if err != nil {
-		return "/tmp/mcp-server-magicskills-data"
+		return filepath.Join(os.TempDir(), "mcp-server-magicskills")
 	}
-	return filepath.Join(configDir, "mcp-server-magicskills")
+	return filepath.Join(cacheDir, "mcp-server-magicskills")
 }
 
-// ResolveRecallURL identifies the MCP recall server endpoint for cross-server talk.
-func ResolveRecallURL() string {
-	if val := os.Getenv("MCP_RECALL_URL"); val != "" {
-		return val
-	}
-	if val := os.Getenv("MCP_API_URL"); val != "" {
-		return val
-	}
-	return "http://localhost:8080/sse"
-}
+
 
 // ResolveRedactionPattern fetches the standard redaction regex for logs or defaults it.
 func ResolveRedactionPattern() string {
