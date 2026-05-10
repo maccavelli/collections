@@ -473,6 +473,7 @@ func isZeroNumeric(v any) bool {
 	}
 	return false
 }
+
 // snapToEnum uses Levenshtein distance to automatically "snap" minor enum hallucinations
 // to valid schema bounds. This minimizes orchestrator retries for trivial mismatches.
 func (ps *ProxyService) snapToEnum(val string, enum []any) string {
@@ -512,11 +513,11 @@ func (ps *ProxyService) repairJSONHeuristic(input string) string {
 	}
 
 	// 1. Handle Markdown code block escapes
-	if strings.HasPrefix(trimmed, "```json") {
-		trimmed = strings.TrimPrefix(trimmed, "```json")
+	if after, ok := strings.CutPrefix(trimmed, "```json"); ok {
+		trimmed = after
 		trimmed = strings.TrimSuffix(trimmed, "```")
-	} else if strings.HasPrefix(trimmed, "```") {
-		trimmed = strings.TrimPrefix(trimmed, "```")
+	} else if after, ok := strings.CutPrefix(trimmed, "```"); ok {
+		trimmed = after
 		trimmed = strings.TrimSuffix(trimmed, "```")
 	}
 	trimmed = strings.TrimSpace(trimmed)

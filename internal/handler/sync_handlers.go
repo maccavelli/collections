@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"mcp-server-magictools/internal/config"
+	"mcp-server-magictools/internal/vector"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -49,12 +50,21 @@ func (h *OrchestratorHandler) SyncEcosystem(ctx context.Context, req *mcp.CallTo
 	msg.WriteString(fmt.Sprintf("Ecosystem synchronized. Connected: %d/%d servers.\n",
 		len(result.Connected), len(result.Connected)+len(result.Failed)))
 
-	var active []string
-	for _, sc := range h.Config.GetManagedServers() {
-		active = append(active, sc.Name)
+	// 🛡️ VECTOR RECONCILIATION: Cross-reference HNSW graph against BadgerDB
+	// to purge stale nodes persisted on disk from previously removed servers.
+	if e := vector.GetEngine(); e != nil && e.VectorEnabled() {
+		validURNs := h.Store.GetAllToolURNs()
+		if len(validURNs) > 0 {
+			if pruned := e.PruneOrphanedNodes(validURNs); pruned > 0 {
+				msg.WriteString(fmt.Sprintf("  Vector alignment: Pruned %d orphaned HNSW graph nodes.\n", pruned))
+			}
+		}
 	}
-	if count, pruneErr := h.Store.PruneOrphans(active); pruneErr == nil && count > 0 {
-		msg.WriteString(fmt.Sprintf("  Metric alignment: Pruned %d orphaned internal sub-server tools structurally.\n", count))
+
+	// 🛡️ METRIC RECONCILIATION: Force cross-namespace parity between tool: and intel: keys.
+	// Deletes orphaned intel records and recalibrates atomic counters from actual DB state.
+	if orphans, reconcileErr := h.Store.ReconcileMetrics(); reconcileErr == nil && orphans > 0 {
+		msg.WriteString(fmt.Sprintf("  Metric reconciliation: Purged %d orphaned intel records.\n", orphans))
 	}
 
 	if len(result.Connected) > 0 {

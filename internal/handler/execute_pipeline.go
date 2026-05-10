@@ -1159,12 +1159,11 @@ func applyASTTransformations(path string, src []byte) ([]byte, bool) {
 	// Split source into lines, insert comments, rejoin.
 	lines := strings.Split(string(src), "\n")
 	for _, ins := range insertions {
-		idx := max(
+		idx := min(
 			// Convert to 0-indexed.
-			ins.line-1, 0)
-		if idx > len(lines) {
-			idx = len(lines)
-		}
+			max(
+
+				ins.line-1, 0), len(lines))
 		// Insert the comment line before the target line.
 		newLines := make([]string, 0, len(lines)+1)
 		newLines = append(newLines, lines[:idx]...)

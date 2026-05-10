@@ -671,10 +671,10 @@ func (m *WarmRegistry) prepareProcessEnvironment(name string, env map[string]str
 	pathVal := ""
 
 	for i, e := range cmdEnv {
-		if strings.HasPrefix(e, "GOROOT=") {
-			goroot = strings.TrimPrefix(e, "GOROOT=")
-		} else if strings.HasPrefix(e, "GOPATH=") {
-			gopath = strings.TrimPrefix(e, "GOPATH=")
+		if after, ok := strings.CutPrefix(e, "GOROOT="); ok {
+			goroot = after
+		} else if after, ok := strings.CutPrefix(e, "GOPATH="); ok {
+			gopath = after
 		} else if strings.HasPrefix(e, "PATH=") {
 			pathIdx = i
 			pathVal = strings.TrimPrefix(e, "PATH=")

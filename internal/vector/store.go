@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 
 	"github.com/coder/hnsw"
 
@@ -26,6 +27,7 @@ type Engine struct {
 	dbPath      string
 	metaPath    string
 	initialized bool
+	corrupt     atomic.Bool // set when a search panic is intercepted
 }
 
 var (
@@ -296,6 +298,16 @@ func (e *Engine) AddDocument(ctx context.Context, id string, text string) error 
 	return nil
 }
 
+// DeleteDocument removes a natively embedded document from the HNSW index.
+func (e *Engine) DeleteDocument(id string) bool {
+	if !e.VectorEnabled() || e.graph == nil {
+		return false
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.graph.Delete(id)
+}
+
 // HasDocument returns true if the URN natively exists within the active HNSW graph graph.
 func (e *Engine) HasDocument(id string) bool {
 	if !e.VectorEnabled() || e.graph == nil {
@@ -327,12 +339,149 @@ func (e *Engine) Len() int {
 	return e.graph.Len()
 }
 
+// Keys returns all node keys currently in the HNSW graph.
+func (e *Engine) Keys() []string {
+	if !e.VectorEnabled() || e.graph == nil {
+		return nil
+	}
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.graph.Keys()
+}
+
+// PruneOrphanedNodes reconciles the HNSW graph against a set of valid keys.
+// Any node whose key is NOT in validKeys is removed from the graph.
+// Returns the number of pruned nodes. Persists the cleaned graph to disk.
+//
+// 🛡️ REBUILD STRATEGY: Instead of calling graph.Delete() which corrupts
+// HNSW layer topology (leaving nil entry points that cause SIGSEGV on
+// subsequent Search calls), we extract all valid node embeddings and
+// reconstruct the graph from scratch. This is safe because Lookup()
+// returns stored vectors without any API calls.
+func (e *Engine) PruneOrphanedNodes(validKeys map[string]bool) int {
+	if !e.VectorEnabled() || e.graph == nil {
+		return 0
+	}
+
+	e.mu.Lock()
+	allKeys := e.graph.Keys()
+
+	// Collect valid nodes with their embeddings
+	type nodeEntry struct {
+		key string
+		vec hnsw.Vector
+	}
+	var validNodes []nodeEntry
+	var pruned int
+	for _, key := range allKeys {
+		if validKeys[key] {
+			if vec, ok := e.graph.Lookup(key); ok && len(vec) > 0 {
+				validNodes = append(validNodes, nodeEntry{key: key, vec: vec})
+			}
+		} else {
+			pruned++
+		}
+	}
+
+	if pruned > 0 {
+		// Rebuild the graph from valid nodes only
+		newGraph := createHNSWGraph()
+		for _, entry := range validNodes {
+			newGraph.Add(hnsw.MakeNode(entry.key, entry.vec))
+		}
+		e.graph = newGraph
+		e.corrupt.Store(false)
+	}
+	e.mu.Unlock()
+
+	if pruned > 0 {
+		slog.Info("vector engine: pruned orphaned HNSW nodes via rebuild",
+			"component", "vector",
+			"pruned", pruned,
+			"remaining", e.Len())
+		if err := e.Save(); err != nil {
+			slog.Warn("vector engine: failed to persist rebuilt graph",
+				"component", "vector", "error", err)
+		}
+	}
+
+	return pruned
+}
+
+// rebuildGraph extracts all valid node embeddings from the current graph
+// and reconstructs it from scratch. This heals corrupt HNSW layer topology
+// caused by Delete operations without requiring any embedding API calls.
+// MUST be called with e.mu held exclusively (write lock).
+func (e *Engine) rebuildGraph() {
+	if e.graph == nil {
+		e.graph = createHNSWGraph()
+		e.corrupt.Store(false)
+		return
+	}
+
+	keys := e.graph.Keys()
+	type nodeEntry struct {
+		key string
+		vec hnsw.Vector
+	}
+	var validNodes []nodeEntry
+	for _, key := range keys {
+		if vec, ok := e.graph.Lookup(key); ok && len(vec) > 0 {
+			validNodes = append(validNodes, nodeEntry{key: key, vec: vec})
+		}
+	}
+
+	newGraph := createHNSWGraph()
+	for _, entry := range validNodes {
+		newGraph.Add(hnsw.MakeNode(entry.key, entry.vec))
+	}
+	e.graph = newGraph
+	e.corrupt.Store(false)
+
+	slog.Info("vector engine: self-healing rebuild completed",
+		"component", "vector",
+		"recovered_nodes", len(validNodes))
+
+	// Persist the healed graph
+	if e.dbPath != "" {
+		go func() {
+			if err := e.Save(); err != nil {
+				slog.Warn("vector engine: failed to persist healed graph",
+					"component", "vector", "error", err)
+			}
+		}()
+	}
+}
+
+// healIfCorrupt checks the corruption flag and triggers a self-healing rebuild.
+// Returns true if the graph was corrupt and a rebuild was performed.
+func (e *Engine) healIfCorrupt() bool {
+	if !e.corrupt.Load() {
+		return false
+	}
+
+	// Upgrade from RLock to exclusive Lock for rebuild
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	// Double-check after acquiring write lock (another goroutine may have healed)
+	if !e.corrupt.Load() {
+		return false
+	}
+
+	e.rebuildGraph()
+	return true
+}
+
 // Search queries the HNSW index for nearest neighbors to the intent.
 // For Gemini, this uses RETRIEVAL_QUERY task type for asymmetric search.
 func (e *Engine) Search(ctx context.Context, intent string, k int) ([]string, error) {
 	if !e.VectorEnabled() {
 		return nil, fmt.Errorf("cannot search: Vector capability is offline")
 	}
+
+	// 🛡️ SELF-HEALING: Rebuild graph if previous search detected corruption
+	e.healIfCorrupt()
 
 	// 🛡️ ASYMMETRIC EMBEDDING: Mark as query for searching
 	queryCtx := WithTaskType(ctx, "RETRIEVAL_QUERY")
@@ -346,14 +495,14 @@ func (e *Engine) Search(ctx context.Context, intent string, k int) ([]string, er
 	var nodes []hnsw.Node[string]
 
 	// 🛡️ NIL DEREF GUARD: The `github.com/coder/hnsw` library has a critical native fault
-	// where it fails to bounds-check structurally corrupted layer hierarchies.
-	// If a graph's `h.layers` is allocated but empty, `searchPoint` initializes as `nil`,
-	// causing a SIGSEGV index-out-of-bounds at offset 0x10 during `CosineDistance` calls.
+	// where Delete() removes nodes from layer maps but never trims empty layers from the
+	// layers slice. This leaves nil entry points that cause SIGSEGV during Search traversal.
 	if e.graph.Len() > 0 {
 		func() {
 			defer func() {
 				if r := recover(); r != nil {
-					slog.Warn("vector engine: intercepted native HNSW search panic from corrupt topology. Bypassing search natively.", "component", "vector", "panic", r)
+					slog.Warn("vector engine: intercepted native HNSW search panic from corrupt topology, scheduling self-healing rebuild.", "component", "vector", "panic", r)
+					e.corrupt.Store(true)
 				}
 			}()
 			nodes = e.graph.Search(targetVec, k)
@@ -409,6 +558,9 @@ func (e *Engine) SearchWithScores(ctx context.Context, intent string, k int) ([]
 		return nil, fmt.Errorf("cannot search: Vector capability is offline")
 	}
 
+	// 🛡️ SELF-HEALING: Rebuild graph if previous search detected corruption
+	e.healIfCorrupt()
+
 	queryCtx := WithTaskType(ctx, "RETRIEVAL_QUERY")
 
 	targetVec, err := e.embedder.Embed(queryCtx, intent)
@@ -422,7 +574,8 @@ func (e *Engine) SearchWithScores(ctx context.Context, intent string, k int) ([]
 		func() {
 			defer func() {
 				if r := recover(); r != nil {
-					slog.Warn("vector engine: intercepted native HNSW SearchWithScores panic from corrupt topology.", "component", "vector", "panic", r)
+					slog.Warn("vector engine: intercepted native HNSW SearchWithScores panic from corrupt topology, scheduling self-healing rebuild.", "component", "vector", "panic", r)
+					e.corrupt.Store(true)
 				}
 			}()
 			nodes = e.graph.Search(targetVec, k)
@@ -467,6 +620,9 @@ func (e *Engine) SearchByNode(ctx context.Context, urn string, k int) ([]ScoredR
 		return nil, fmt.Errorf("cannot search: Vector capability is offline")
 	}
 
+	// 🛡️ SELF-HEALING: Rebuild graph if previous search detected corruption
+	e.healIfCorrupt()
+
 	e.mu.RLock()
 	targetVec, ok := e.graph.Lookup(urn)
 	if !ok {
@@ -479,7 +635,8 @@ func (e *Engine) SearchByNode(ctx context.Context, urn string, k int) ([]ScoredR
 		func() {
 			defer func() {
 				if r := recover(); r != nil {
-					slog.Warn("vector engine: intercepted native HNSW SearchByNode panic from corrupt topology.", "component", "vector", "panic", r)
+					slog.Warn("vector engine: intercepted native HNSW SearchByNode panic from corrupt topology, scheduling self-healing rebuild.", "component", "vector", "panic", r)
+					e.corrupt.Store(true)
 				}
 			}()
 			nodes = e.graph.Search(targetVec, k+1) // Request k+1 because it will find itself

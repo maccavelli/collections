@@ -20,6 +20,8 @@ func DiscoverIDEConfig() (string, error) {
 		// Linux: VS Code, Cursor, Claude
 		filepath.Join(home, ".config", "Code", "User", "globalStorage", "saoudrizwan.claude-dev", "settings", "mcp_config.json"),
 		filepath.Join(home, ".config", "Cursor", "User", "globalStorage", "saoudrizwan.claude-dev", "settings", "mcp_config.json"),
+		filepath.Join(home, ".config", "Code", "User", "globalStorage", "rooveterinaryinc.roo-cline", "settings", "mcp_config.json"),
+		filepath.Join(home, ".config", "Cursor", "User", "globalStorage", "rooveterinaryinc.roo-cline", "settings", "mcp_config.json"),
 		filepath.Join(home, ".config", "Claude", "claude_desktop_config.json"),
 		filepath.Join(home, ".claude-code", "mcp_config.json"),
 	}
@@ -29,6 +31,8 @@ func DiscoverIDEConfig() (string, error) {
 		paths = append(paths,
 			filepath.Join(configDir, "Code", "User", "globalStorage", "saoudrizwan.claude-dev", "settings", "mcp_config.json"),
 			filepath.Join(configDir, "Cursor", "User", "globalStorage", "saoudrizwan.claude-dev", "settings", "mcp_config.json"),
+			filepath.Join(configDir, "Code", "User", "globalStorage", "rooveterinaryinc.roo-cline", "settings", "mcp_config.json"),
+			filepath.Join(configDir, "Cursor", "User", "globalStorage", "rooveterinaryinc.roo-cline", "settings", "mcp_config.json"),
 			filepath.Join(configDir, "Claude", "claude_desktop_config.json"),
 		)
 	}

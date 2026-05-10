@@ -762,12 +762,11 @@ func primeFromRecall(ctx context.Context, rc *external.MCPClient, cfg *config.Co
 	// Only override if the current value is at the default (1,500,000).
 	const defaultTokenThresh = 1500000
 	if profile.AvgTokenSpend > 0 && cfg.TokenSpendThresh == defaultTokenThresh {
-		calibrated := max(
+		calibrated := min(
 			// Clamp to reasonable bounds [500_000, 5_000_000]
-			int(profile.AvgTokenSpend*1.2), 500000)
-		if calibrated > 5000000 {
-			calibrated = 5000000
-		}
+			max(
+
+				int(profile.AvgTokenSpend*1.2), 500000), 5000000)
 		slog.Info("operational priming: TokenSpendThresh auto-calibrated from recall",
 			"component", "priming",
 			"old_value", cfg.TokenSpendThresh,

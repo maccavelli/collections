@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"log/slog"
 	"runtime"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -317,8 +319,19 @@ func (m *WarmRegistry) parseAndSaveTools(sc config.ServerConfig, srv *SubServer,
 		// 🛡️ PIPELINE TAXONOMY: Hydrate Role and Phase for compose_pipeline DAG intelligence
 		hydrateRoleAndPhase(record)
 
+		// 🛡️ TIER 3: Materialize parameter names from InputSchema for Bleve keyword + HNSW embedding.
+		schemaMap := m.toSchemaMap(st.InputSchema)
+		if props, ok := schemaMap["properties"].(map[string]any); ok {
+			names := make([]string, 0, len(props))
+			for name := range props {
+				names = append(names, name)
+			}
+			sort.Strings(names) // Deterministic ordering for consistent hashing
+			record.ParameterNames = names
+		}
+
 		batchRecords = append(batchRecords, record)
-		batchSchemas[h] = m.toSchemaMap(st.InputSchema)
+		batchSchemas[h] = schemaMap
 		indexed++
 	}
 
@@ -459,8 +472,37 @@ func (m *WarmRegistry) parseAndSaveTools(sc config.ServerConfig, srv *SubServer,
 	return indexed, nil
 }
 
+// buildEmbeddingText constructs a rich composite text for HNSW vector embedding.
+// Combines all semantic signals from the ToolRecord so cosine similarity matches
+// on intents, tokens, category, role, and parameter names — not just raw description.
+func buildEmbeddingText(rec *db.ToolRecord) string {
+	var parts []string
+	parts = append(parts, rec.Description)
+	if rec.Intent != "" {
+		parts = append(parts, rec.Intent)
+	}
+	if len(rec.SyntheticIntents) > 0 {
+		parts = append(parts, strings.Join(rec.SyntheticIntents, " "))
+	}
+	if len(rec.LexicalTokens) > 0 {
+		parts = append(parts, strings.Join(rec.LexicalTokens, " "))
+	}
+	if rec.Category != "" {
+		parts = append(parts, rec.Category)
+	}
+	if rec.Role != "" {
+		parts = append(parts, rec.Role)
+	}
+	if len(rec.ParameterNames) > 0 {
+		parts = append(parts, strings.Join(rec.ParameterNames, " "))
+	}
+	return strings.Join(parts, " ")
+}
+
 // HydrateToolGraph asynchronously embeds all sub-server tools into the HNSW vector
 // database core to enable semantic search across the entire tool ecosystem.
+// Uses composite embedding text (Tier 2) combining all semantic signals for richer
+// cosine similarity matching.
 func (m *WarmRegistry) HydrateToolGraph(records []*db.ToolRecord) {
 	e := vector.GetEngine()
 	if e == nil || !e.VectorEnabled() {
@@ -475,13 +517,14 @@ func (m *WarmRegistry) HydrateToolGraph(records []*db.ToolRecord) {
 		if rec == nil {
 			continue
 		}
-		if err := e.AddDocument(ctx, rec.URN, rec.Description); err != nil {
+		embeddingText := buildEmbeddingText(rec)
+		if err := e.AddDocument(ctx, rec.URN, embeddingText); err != nil {
 			slog.Warn("sync: background graph hydration failed", "urn", rec.URN, "error", err)
 		} else {
 			count++
 		}
 	}
 	if count > 0 {
-		slog.Info("sync: semantic mapped vectors natively hydrated", "tools", count)
+		slog.Info("sync: semantic mapped vectors natively hydrated", "tools", count, "mode", "composite-embedding")
 	}
 }
