@@ -72,7 +72,7 @@ func TestRegister(t *testing.T) {
 	eng, _ := engine.NewEngine(store, t.TempDir()+"/idx")
 	close(eng.ReadyCh)
 	defer store.Close()
-	Register(eng, nil)
+	Register(eng)
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test"}, &mcp.ServerOptions{})
 	tool := &GetTool{Engine: eng}

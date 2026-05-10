@@ -27,15 +27,27 @@ func TestOpenHardenedLogFile(t *testing.T) {
 	f := OpenHardenedLogFile(path)
 	f.Close()
 
-	content := bytes.Repeat([]byte("a"), 51*1024*1024)
-	os.WriteFile(path, content, 0644)
+	// Write 51MB of data with newlines so truncation can snap to a boundary
+	data := make([]byte, 51*1024*1024)
+	for i := range data {
+		data[i] = 'a'
+	}
+	for i := 1024; i < len(data); i += 1024 {
+		data[i] = '\n'
+	}
+	os.WriteFile(path, data, 0644)
 
 	f2 := OpenHardenedLogFile(path)
 	f2.Close()
 
 	info, _ := os.Stat(path)
-	if info.Size() != 0 {
-		t.Errorf("expected file to be truncated to 0, got size %d", info.Size())
+	// Graceful truncation retains ~5MB tail
+	const truncateTarget = 5 * 1024 * 1024
+	if info.Size() > int64(truncateTarget+1024) {
+		t.Errorf("expected file to be truncated to ~%d bytes, got size %d", truncateTarget, info.Size())
+	}
+	if info.Size() == 0 {
+		t.Error("expected file to retain tail data, got 0 bytes")
 	}
 }
 

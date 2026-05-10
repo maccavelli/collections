@@ -10,7 +10,6 @@ import (
 
 	"mcp-server-magicskills/internal/config"
 	"mcp-server-magicskills/internal/engine"
-	"mcp-server-magicskills/internal/external"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -59,9 +58,8 @@ func (lb *LogBuffer) String() string {
 
 // MagicSkillsHandler provides shared resources for MagicSkills tools and resources.
 type MagicSkillsHandler struct {
-	Engine       *engine.Engine
-	Logs         *LogBuffer
-	RecallClient *external.MCPClient
+	Engine *engine.Engine
+	Logs   *LogBuffer
 }
 
 // HandleReadResource handles dashboard and log resource requests.

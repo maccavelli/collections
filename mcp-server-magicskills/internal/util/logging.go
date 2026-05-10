@@ -1,11 +1,13 @@
 package util
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -88,15 +90,43 @@ func (aw *AsyncWriter) Close() error {
 	return nil
 }
 
-// OpenHardenedLogFile opens a file with a 10MB safety cap for Bastion environments.
-// If the file exceeds 10MB, it is truncated to 0.
-func OpenHardenedLogFile(path string) *os.File {
-	const maxLogSize = 50 * 1024 * 1024 // 50MB
-	if info, err := os.Stat(path); err == nil && info.Size() > maxLogSize {
-		if err := os.Truncate(path, 0); err != nil {
-			slog.Warn("mcp-server: failed to truncate log file", "path", path, "error", err)
-		}
+var sanitizeRegex = regexp.MustCompile(`(?i)(token_|sk_|key_|secret_|bearer |authorization: )[a-zA-Z0-9_./-]+`)
+
+type SanitizingWriter struct {
+	inner io.Writer
+}
+
+func (sw *SanitizingWriter) Write(p []byte) (int, error) {
+	redacted := sanitizeRegex.ReplaceAll(p, []byte("${1}[REDACTED]"))
+	_, err := sw.inner.Write(redacted)
+	return len(p), err
+}
+
+func truncateIfOversized(path string) {
+	const maxLogSize = 10 * 1024 * 1024    // 10MB
+	const truncateTarget = 5 * 1024 * 1024 // 5MB
+
+	info, err := os.Stat(path)
+	if err != nil || info.Size() <= maxLogSize {
+		return
 	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	start := len(data) - truncateTarget
+	if start < 0 {
+		return
+	}
+	if idx := bytes.IndexByte(data[start:], '\n'); idx >= 0 {
+		start += idx + 1
+	}
+	_ = os.WriteFile(path, data[start:], 0600)
+}
+
+// OpenHardenedLogFile opens a file with a 10MB safety cap, retaining the tail if oversized.
+func OpenHardenedLogFile(path string) *os.File {
+	truncateIfOversized(path)
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
 	if err != nil {
 		return os.Stderr
@@ -107,15 +137,18 @@ func OpenHardenedLogFile(path string) *os.File {
 // SetupStandardLogging configures a non-blocking JSON logger for the bastion host.
 // It ensures that No MCP server logs to Stdout.
 func SetupStandardLogging(serverName string, buffer io.Writer) func() {
-	// 🛡️ Stderr Isolation: Redirect logs to a dedicated file to keep stderr clean for JSON-RPC
 	var writers []io.Writer
 
-	logDir := filepath.Join(os.TempDir(), "mcp-server-"+serverName)
+	cacheDir, err := os.UserCacheDir()
+	if err != nil {
+		cacheDir = os.TempDir()
+	}
+	logDir := filepath.Join(cacheDir, "mcp-server-"+serverName)
 	if err := os.MkdirAll(logDir, 0700); err != nil {
 		slog.Error("failed to create secure log directory", "dir", logDir, "error", err)
 		logDir = os.TempDir()
 	}
-	localLogPath := filepath.Join(logDir, "mcp-subserver-"+serverName+".log")
+	localLogPath := filepath.Join(logDir, serverName+"-output.log")
 
 	localLogFile := OpenHardenedLogFile(localLogPath)
 
@@ -135,13 +168,22 @@ func SetupStandardLogging(serverName string, buffer io.Writer) func() {
 		writers = append(writers, buffer)
 	}
 
+	// Always output to Stderr for standard MCP integrations
+	writers = append(writers, os.Stderr)
+
 	sw := io.MultiWriter(writers...)
+	sanitized := &SanitizingWriter{inner: sw}
 
 	lvl := new(slog.LevelVar)
 	lvl.Set(slog.LevelInfo) // Baseline default standalone protection
 
-	if val := os.Getenv("ORCHESTRATOR_LOG_LEVEL"); val != "" {
-		switch strings.ToUpper(val) {
+	logLevelVal := os.Getenv("MCP_LOG_LEVEL")
+	if logLevelVal == "" {
+		logLevelVal = os.Getenv("ORCHESTRATOR_LOG_LEVEL")
+	}
+
+	if logLevelVal != "" {
+		switch strings.ToUpper(logLevelVal) {
 		case "DEBUG":
 			lvl.Set(slog.LevelDebug)
 		case "INFO":
@@ -160,9 +202,9 @@ func SetupStandardLogging(serverName string, buffer io.Writer) func() {
 
 	var handler slog.Handler
 	if strings.EqualFold(format, "text") {
-		handler = slog.NewTextHandler(sw, &slog.HandlerOptions{Level: lvl})
+		handler = slog.NewTextHandler(sanitized, &slog.HandlerOptions{Level: lvl})
 	} else {
-		handler = slog.NewJSONHandler(sw, &slog.HandlerOptions{Level: lvl})
+		handler = slog.NewJSONHandler(sanitized, &slog.HandlerOptions{Level: lvl})
 	}
 	slog.SetDefault(slog.New(handler).With("server", serverName))
 

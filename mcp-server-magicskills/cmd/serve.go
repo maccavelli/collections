@@ -7,8 +7,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net"
-	"net/url"
 	"os"
 	"os/signal"
 	"strings"
@@ -19,13 +17,13 @@ import (
 
 	"mcp-server-magicskills/internal/config"
 	"mcp-server-magicskills/internal/engine"
-	"mcp-server-magicskills/internal/external"
 	"mcp-server-magicskills/internal/handler"
 	"mcp-server-magicskills/internal/handler/discovery"
 	"mcp-server-magicskills/internal/handler/execution"
 	"mcp-server-magicskills/internal/handler/retrieval"
 	"mcp-server-magicskills/internal/handler/sync"
 	"mcp-server-magicskills/internal/handler/system"
+	"mcp-server-magicskills/internal/lifecycle"
 	"mcp-server-magicskills/internal/registry"
 	"mcp-server-magicskills/internal/scanner"
 	"mcp-server-magicskills/internal/server"
@@ -46,6 +44,15 @@ var serveCmd = &cobra.Command{
 		logBuffer := &handler.LogBuffer{}
 		cleanupLogs := util.SetupStandardLogging("magicskills", logBuffer)
 		defer cleanupLogs()
+
+		fileLock, err := lifecycle.AcquireLock()
+		if err != nil {
+			slog.Error("failed to acquire single-instance lock", "error", err)
+			return err
+		}
+		defer fileLock.Unlock()
+
+		go lifecycle.WatchParent(ctx, stop)
 
 		slog.Info("[BACKPLANE] SPAWN mcp-server-magicskills", "version", Version)
 
@@ -115,13 +122,9 @@ func initServer(logBuffer *handler.LogBuffer, extraRoots []string) (*state.Store
 		return nil, nil, nil, nil, fmt.Errorf("engine init: %w", err)
 	}
 
-	recallURL := config.ResolveRecallURL()
-	cl := external.NewMCPClient(recallURL)
-
 	h := &handler.MagicSkillsHandler{
-		Engine:       eng,
-		Logs:         logBuffer,
-		RecallClient: cl,
+		Engine: eng,
+		Logs:   logBuffer,
 	}
 
 	scn, err := scanner.NewScanner(roots)
@@ -133,10 +136,10 @@ func initServer(logBuffer *handler.LogBuffer, extraRoots []string) (*state.Store
 	return store, eng, scn, h, nil
 }
 
-func initSubsystems(ctx context.Context, eng *engine.Engine, scn *scanner.Scanner, logBuffer *handler.LogBuffer, cl *external.MCPClient) {
-	discovery.Register(eng, cl)
-	retrieval.Register(eng, cl)
-	execution.Register(eng, cl)
+func initSubsystems(ctx context.Context, eng *engine.Engine, scn *scanner.Scanner, logBuffer *handler.LogBuffer) {
+	discovery.Register(eng)
+	retrieval.Register(eng)
+	execution.Register(eng)
 	sync.Register(eng, scn)
 	system.Register(eng, scn, logBuffer)
 
@@ -178,16 +181,7 @@ func runServe(ctx context.Context, cancel context.CancelFunc, logBuffer *handler
 	defer func() { _ = store.Close() }()       // nolint:errcheck // ignore error on close
 	defer func() { _ = scn.Watcher.Close() }() // nolint:errcheck // ignore error on close
 
-	initSubsystems(ctx, eng, scn, logBuffer, h.RecallClient)
-
-	if h.RecallClient != nil {
-		go func() {
-			if err := waitForRecallSocketReady(); err != nil {
-				slog.Error("recall socket wait failed", "error", err)
-			}
-			h.RecallClient.Start(ctx)
-		}()
-	}
+	initSubsystems(ctx, eng, scn, logBuffer)
 
 	go func(c context.Context) {
 		ticker := time.NewTicker(30 * time.Second)
@@ -231,8 +225,10 @@ func runServe(ctx context.Context, cancel context.CancelFunc, logBuffer *handler
 
 	select {
 	case <-ctx.Done():
+		lifecycle.ShutdownDeadline(5 * time.Second)
 		slog.Info("context cancelled; initiating graceful shutdown")
 	case err := <-errChan:
+		lifecycle.ShutdownDeadline(5 * time.Second)
 		if isExpectedShutdownErr(err) {
 			slog.Info("stdio transport closed gracefully", "reason", err.Error())
 			return nil
@@ -274,36 +270,3 @@ func (a *autoFlusher) Write(p []byte) (n int, err error) {
 	return n, err
 }
 
-func waitForRecallSocketReady() error {
-	val := os.Getenv("MCP_API_URL")
-	if val == "" {
-		// Standalone execution bound; ignore ping.
-		return nil
-	}
-
-	// Parse first chunk natively ignoring trailing commas
-	urls := strings.Split(val, ",")
-	u, err := url.Parse(strings.TrimSpace(urls[0]))
-	if err != nil || u.Host == "" {
-		return nil
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer cancel()
-
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("recall connection timeout threshold exceeded")
-		case <-ticker.C:
-			conn, err := net.DialTimeout("tcp", u.Host, 100*time.Millisecond)
-			if err == nil && conn != nil {
-				_ = conn.Close() // nolint:errcheck // ignore error on close
-				return nil
-			}
-		}
-	}
-}

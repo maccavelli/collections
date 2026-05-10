@@ -2,12 +2,10 @@ package discovery
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"mcp-server-magicskills/internal/util"
 
 	"mcp-server-magicskills/internal/engine"
-	"mcp-server-magicskills/internal/external"
 	"mcp-server-magicskills/internal/registry"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -23,7 +21,7 @@ func (t *ListTool) Name() string { return "magicskills_list" }
 func (t *ListTool) Register(s *mcp.Server) {
 	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
-		Description: "[DIRECTIVE: Complete Enumeration] Enumerate and show the full exhaustive inventory of all valid capabilities. Keywords: list-all, inventory, catalog, show-index, global-array [CONSTRAINT: Must execute semantic pairing step following this.]",
+		Description: "List all available skills with their names, descriptions, and versions. Skills are reusable markdown instruction files that extend agent capabilities for specialized tasks. This is the canonical skill catalog — use this instead of scanning the filesystem for SKILL.md files.",
 	}, t.Handle)
 }
 
@@ -56,8 +54,7 @@ func (t *ListTool) Handle(ctx context.Context, request *mcp.CallToolRequest, inp
 
 // MatchTool implements the magicskills_match tool.
 type MatchTool struct {
-	Engine       *engine.Engine
-	RecallClient *external.MCPClient
+	Engine *engine.Engine
 }
 
 func (t *MatchTool) Name() string { return "magicskills_match" }
@@ -73,7 +70,7 @@ type MatchInput struct {
 func (t *MatchTool) Register(s *mcp.Server) {
 	util.HardenedAddTool(s, &mcp.Tool{
 		Name:        t.Name(),
-		Description: "[DIRECTIVE: Semantic Retrieval] Search, query, and find highly relevant strategic capabilities matching high-level goals. Keywords: find, recommendations, query, search, match, intent [CONSTRAINT: Must fetch exact Markdown rules next. If fundamentally enormous, natively split the prompt sequentially instead.]",
+		Description: "Search for skills matching a goal or intent using semantic matching. Returns the top matching skills ranked by relevance score. Use this instead of manually scanning skill names from the system prompt. Follow up with magicskills_get to retrieve the full instructions.",
 	}, t.Handle)
 }
 
@@ -91,37 +88,9 @@ func (t *MatchTool) Handle(ctx context.Context, request *mcp.CallToolRequest, in
 
 	matches := t.Engine.MatchSkills(ctx, input.Intent, input.Category, input.Target, 3)
 
-	// Standards-Aware Contextual Weighting (orchestrator mode only)
-	var standards []string
-	if t.RecallClient != nil && t.RecallClient.RecallEnabled() {
-		searchArgs := map[string]any{
-			"query": input.Intent,
-			"limit": 5,
-		}
-		if input.Category != "" {
-			searchArgs["category"] = input.Category
-		}
-		res := t.RecallClient.CallDatabaseTool(ctx, "search", appendNamespace(searchArgs, "standards"))
-		if res != "" {
-			var searchRes struct {
-				Entries []map[string]any `json:"entries"`
-			}
-			if json.Unmarshal([]byte(res), &searchRes) == nil {
-				for _, entry := range searchRes.Entries {
-					if sym, ok := entry["symbol"].(string); ok {
-						standards = append(standards, sym)
-					}
-				}
-			}
-		}
-	}
-
 	summary := "No matching skills found for your intent."
 	if len(matches) > 0 {
 		summary = fmt.Sprintf("Found %d matching skills for intent: %s", len(matches), input.Intent)
-		if len(standards) > 0 {
-			summary += fmt.Sprintf(" (Cross-referenced with %d Recall standards)", len(standards))
-		}
 	}
 
 	var matchData []map[string]any
@@ -147,15 +116,7 @@ func (t *MatchTool) Handle(ctx context.Context, request *mcp.CallToolRequest, in
 }
 
 // Register registers discovery tools with the global registry.
-func Register(eng *engine.Engine, cl *external.MCPClient) {
+func Register(eng *engine.Engine) {
 	registry.Global.Register(&ListTool{Engine: eng})
-	registry.Global.Register(&MatchTool{Engine: eng, RecallClient: cl})
-}
-
-func appendNamespace(m map[string]any, ns string) map[string]any {
-	if m == nil {
-		m = make(map[string]any)
-	}
-	m["namespace"] = ns
-	return m
+	registry.Global.Register(&MatchTool{Engine: eng})
 }

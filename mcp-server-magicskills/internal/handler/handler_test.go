@@ -24,7 +24,7 @@ func TestToolRegistry(t *testing.T) {
 	eng, _ := engine.NewEngine(store, t.TempDir()+"/idx")
 	close(eng.ReadyCh)
 	defer store.Close()
-	discovery.Register(eng, nil)
+	discovery.Register(eng)
 
 	tool, ok := registry.Global.Get("magicskills_list")
 	if !ok {
