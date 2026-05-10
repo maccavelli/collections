@@ -329,5 +329,6 @@ func NewSessionState(sessionID string) *SessionState {
 		SchemaVersion: CurrentSchemaVersion,
 		StepStatus:    make(map[string]string),
 		TechMapping:   make(map[string]string),
+		StepTimings:   make(map[string]StepTiming),
 	}
 }
