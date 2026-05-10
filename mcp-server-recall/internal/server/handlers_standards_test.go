@@ -20,15 +20,6 @@ func buildReq(argJSON string) *mcp.CallToolRequest {
 	}
 }
 
-func TestHandleListStandardsCategories_InvalidJSON(t *testing.T) {
-	rs := &MCPRecallServer{}
-	req := buildReq(`{invalid json}`)
-	_, err := rs.handleListStandardsCategories(context.Background(), req)
-	if err == nil {
-		t.Errorf("expected error on invalid json arguments")
-	}
-}
-
 func TestHandleGetStandard_NotFound(t *testing.T) {
 	tmpDir, _ := os.MkdirTemp("", "standards-test-*")
 	defer os.RemoveAll(tmpDir)
@@ -39,7 +30,7 @@ func TestHandleGetStandard_NotFound(t *testing.T) {
 	rs := &MCPRecallServer{store: store}
 	req := buildReq(`{"key": "non-existent-key"}`)
 
-	res, err := rs.handleGetStandard(context.Background(), req)
+	res, _, err := rs.handleGetStandard(context.Background(), req, GetStandardInput{Key: "non-existent-key"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -49,19 +40,10 @@ func TestHandleGetStandard_NotFound(t *testing.T) {
 	}
 }
 
-func TestHandleDeleteStandards_InvalidJSON(t *testing.T) {
-	rs := &MCPRecallServer{}
-	req := buildReq(`{not a json`)
-	_, err := rs.handleDeleteStandards(context.Background(), req)
-	if err == nil {
-		t.Errorf("expected error on invalid json arguments")
-	}
-}
-
 func TestHandleDeleteStandards_NoArgs(t *testing.T) {
 	rs := &MCPRecallServer{}
 	req := buildReq(`{}`)
-	res, err := rs.handleDeleteStandards(context.Background(), req)
+	res, _, err := rs.handleDeleteStandards(context.Background(), req, DeleteStandardsInput{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

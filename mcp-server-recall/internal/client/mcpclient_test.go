@@ -50,3 +50,21 @@ func TestClient_ExtractErrorText(t *testing.T) {
 		t.Error("expected unknown error")
 	}
 }
+
+
+func TestClientCallDatabaseTool_Disabled(t *testing.T) {
+	c := NewMCPClient("http://localhost:1234")
+	_, err := c.CallDatabaseTool(context.Background(), "test", nil)
+	if err == nil || err.Error() != "recall unavailable: circuit breaker active" {
+		t.Errorf("Expected circuit breaker error, got %v", err)
+	}
+}
+
+func TestClientCallDatabaseTool_NoSession(t *testing.T) {
+	c := NewMCPClient("http://localhost:1234")
+	c.setRecallEnabled(true) // artificially enable
+	_, err := c.CallDatabaseTool(context.Background(), "test", nil)
+	if err == nil || err.Error() != "recall unavailable: session not initialized" {
+		t.Errorf("Expected session not initialized error, got %v", err)
+	}
+}

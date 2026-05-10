@@ -8,17 +8,21 @@ import (
 	"io"
 
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
-	"mcp-server-recall/internal/config"
 )
 
 var configureCmd = &cobra.Command{
 	Use:   "configure",
-	Short: "Interactive setup to securely generate the encryption key and create the configuration standard",
+	Short: "Interactive setup to securely generate or update the encryption key",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		// Guard: configuration file must exist (created by 'init')
+		configPath := configFilePath()
+		if _, err := os.Stat(configPath); os.IsNotExist(err) {
+			return fmt.Errorf("configuration not found at %s\nRun 'mcp-server-recall init' first", configPath)
+		}
+
 		existingKey := Cfg.EncryptionKey()
 		if len(existingKey) >= 32 {
 			fmt.Fprintf(os.Stderr, "✓ Valid encryption key already mapped in configuration.\n")
@@ -57,20 +61,10 @@ var configureCmd = &cobra.Command{
 			}
 		}
 
-		configDir, err := os.UserConfigDir()
-		if err != nil {
-			configDir = "."
-		}
-		appConfigDir := filepath.Join(configDir, config.Name)
-		if err := os.MkdirAll(appConfigDir, 0700); err != nil {
-			return fmt.Errorf("failed to create config directory structurally: %w", err)
-		}
-
-		configPath := filepath.Join(appConfigDir, "recall.yaml")
-
+		// Re-render the full template to preserve all YAML comments
 		fullConfig := fmt.Sprintf(FullConfigTemplate, input)
 		if err := os.WriteFile(configPath, []byte(fullConfig), 0600); err != nil {
-			return fmt.Errorf("failed to write config output natively: %w", err)
+			return fmt.Errorf("failed to write config output: %w", err)
 		}
 
 		fmt.Fprintf(os.Stderr, "\nConfiguration Successful!\n")

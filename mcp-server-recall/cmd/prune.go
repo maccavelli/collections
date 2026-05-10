@@ -34,7 +34,7 @@ var pruneCmd = &cobra.Command{
 func runPruneViaMCP(namespace string, days int) error {
 	port := Cfg.APIPort()
 	if port == 0 {
-		port = 7000
+		port = 18001
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -59,7 +59,7 @@ func runPruneViaMCP(namespace string, days int) error {
 
 	fmt.Fprintf(os.Stderr, "Connected. Pruning namespace: %s (older than %d days)\n", namespace, days)
 
-	toolArgs := map[string]interface{}{
+	toolArgs := map[string]any{
 		"namespace": namespace,
 		"days_old":  days,
 	}

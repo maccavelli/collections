@@ -281,6 +281,76 @@ func TestDocCount(t *testing.T) {
 	}
 }
 
+func TestSearchScoped(t *testing.T) {
+	engine := newTestEngine(t, map[string]*Document{
+		"pkg:domainA:mod1:func": {Content: "test authentication", Category: "code"},
+		"pkg:domainA:mod2:func": {Content: "test authorization", Category: "code"},
+		"pkg:domainB:mod1:func": {Content: "test database", Category: "other"},
+	})
+	defer engine.Close()
+
+	// Should only find the ones in category "code"
+	hits, err := engine.SearchScoped(context.Background(), "test", []string{"code"}, nil, 10)
+	if err != nil {
+		t.Fatalf("SearchScoped() error: %v", err)
+	}
+	if len(hits) != 2 {
+		t.Errorf("expected 2 hits, got %d", len(hits))
+	}
+	for _, h := range hits {
+		if h.ID == "pkg:domainB:mod1:func" {
+			t.Errorf("expected domainB to be filtered out")
+		}
+	}
+}
+
+func TestSearchScopedSeq(t *testing.T) {
+	engine := newTestEngine(t, map[string]*Document{
+		"seq:sess1:mem1": {Content: "what is the best db?", Category: "session"},
+		"seq:sess1:mem2": {Content: "badgerdb is fast", Category: "session"},
+		"seq:sess2:mem1": {Content: "badgerdb config", Category: "session"},
+	})
+	defer engine.Close()
+
+	// Find badgerdb within category "session"
+	seq := engine.SearchScopedSeq(context.Background(), "badgerdb", []string{"session"}, nil, 10)
+	
+	count := 0
+	foundFast := false
+	for id, score := range seq {
+		count++
+		if score <= 0 {
+			t.Errorf("expected positive score, got %f for %s", score, id)
+		}
+		if id == "seq:sess1:mem2" {
+			foundFast = true
+		}
+	}
+	
+	if count != 2 {
+		t.Errorf("expected 2 hits, got %d", count)
+	}
+	if !foundFast {
+		t.Errorf("expected hit seq:sess1:mem2")
+	}
+}
+
+func TestHas(t *testing.T) {
+	engine := newTestEngine(t, map[string]*Document{
+		"existing": {Content: "test"},
+	})
+	defer engine.Close()
+
+	has, _ := engine.Has("existing")
+	if !has {
+		t.Error("expected Has to return true for existing doc")
+	}
+	has, _ = engine.Has("missing")
+	if has {
+		t.Error("expected Has to return false for missing doc")
+	}
+}
+
 func TestMergeHits_Deduplication(t *testing.T) {
 	bleveHits := []SearchHit{
 		{ID: "shared", Score: 0.8, Source: "bleve"},
