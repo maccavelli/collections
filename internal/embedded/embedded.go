@@ -1,3 +1,4 @@
+// Package embedded provides functionality for the embedded subsystem.
 package embedded
 
 import "embed"

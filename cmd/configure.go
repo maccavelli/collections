@@ -40,7 +40,8 @@ var configureCmd = &cobra.Command{
 			fmt.Println("1. Setup Jira")
 			fmt.Println("2. Setup Confluence")
 			fmt.Println("3. Setup Gitlab")
-			fmt.Println("4. Setup LLM")
+			fmt.Println("4. Setup Github")
+			fmt.Println("5. Setup LLM")
 			fmt.Println("0. Exit")
 			fmt.Print("\nSelect an option: ")
 
@@ -55,6 +56,8 @@ var configureCmd = &cobra.Command{
 			case "3":
 				setupGitlab(reader, store)
 			case "4":
+				setupGithub(reader, store)
+			case "5":
 				setupLLM(reader, store)
 			case "0":
 				fmt.Println("Exiting configuration menu.")
@@ -125,20 +128,24 @@ func setupConfluence(reader *bufio.Reader, store *db.Store) {
 
 func setupGitlab(reader *bufio.Reader, store *db.Store) {
 	fmt.Println("\n--- Setup Gitlab ---")
-	fmt.Print("Username: ")
-	user, _ := reader.ReadString('\n')
-	user = strings.TrimSpace(user)
-
 	fmt.Print("Token: ")
 	token := readHiddenSecret(reader)
 
-	if user != "" {
-		_ = config.UpdateConfigKey("git.username", user)
-	}
 	if token != "" {
 		_ = store.SetSecret("gitlab", token)
 	}
 	fmt.Println("Gitlab configuration saved.")
+}
+
+func setupGithub(reader *bufio.Reader, store *db.Store) {
+	fmt.Println("\n--- Setup Github ---")
+	fmt.Print("Token: ")
+	token := readHiddenSecret(reader)
+
+	if token != "" {
+		_ = store.SetSecret("github", token)
+	}
+	fmt.Println("Github configuration saved.")
 }
 
 func setupLLM(reader *bufio.Reader, store *db.Store) {

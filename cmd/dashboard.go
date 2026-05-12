@@ -197,6 +197,7 @@ func runInteractiveDashboard() {
 	}
 }
 
+// ReadDashboardSnapshot performs the ReadDashboardSnapshot operation.
 func ReadDashboardSnapshot(dbPath string) metricsMsg {
 	var msg metricsMsg
 

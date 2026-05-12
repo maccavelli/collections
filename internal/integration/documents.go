@@ -16,9 +16,9 @@ import (
 	"github.com/yuin/goldmark"
 	gmhtml "github.com/yuin/goldmark/renderer/html"
 	"github.com/spf13/viper"
-	"gitlab.com/gitlab-org/api/client-go"
 
 	"mcp-server-magicdev/internal/db"
+	"mcp-server-magicdev/internal/integration/git"
 )
 
 // HybridMarkdown is the Git-committed artifact combining Jira metadata,
@@ -52,7 +52,10 @@ func ProcessDocumentGeneration(store *db.Store, title, markdown, targetBranch, s
 	jc := NewJiraClient(jiraBaseURL, jiraToken)
 
 	jiraID := viper.GetString("jira.issue")
-	if jiraID == "" {
+	if viper.GetBool("jira.disable") {
+		slog.Info("generate_documents: jira is disabled, skipping ticket creation")
+		jiraID = "UNKNOWN"
+	} else if jiraID == "" {
 		projectKey := viper.GetString("jira.project")
 		if projectKey == "" {
 			projectKey = "PROJ"
@@ -187,14 +190,22 @@ func ProcessDocumentGeneration(store *db.Store, title, markdown, targetBranch, s
 	}
 
 	var parentID string
-	createdPage, status, err := cc.CreateContent(ctx, contentPayload)
-	if err != nil {
-		slog.Warn("generate_documents: confluence page creation failed",
-			"error", err,
-			"status", status,
-		)
-	} else if createdPage != nil {
-		parentID = createdPage.ID
+	var createdPage *ConfluenceContentResponse
+	
+	if viper.GetBool("confluence.disable") {
+		slog.Info("generate_documents: confluence is disabled, skipping page creation")
+	} else {
+		var status int
+		var err error
+		createdPage, status, err = cc.CreateContent(ctx, contentPayload)
+		if err != nil {
+			slog.Warn("generate_documents: confluence page creation failed",
+				"error", err,
+				"status", status,
+			)
+		} else if createdPage != nil {
+			parentID = createdPage.ID
+		}
 	}
 
 	// 2.5 Generate Confluence Child Pages for Original Markdown
@@ -268,19 +279,27 @@ func ProcessDocumentGeneration(store *db.Store, title, markdown, targetBranch, s
 		return "", "", "", err
 	}
 
-	// 4. Git Push via GitLab API
-	mainGitLabContent := []byte(adrMarkdown)
-	if len(mainGitLabContent) == 0 {
-		mainGitLabContent = hybridBytes
+	// 4. Git Push via Git Providers
+	mainGitContent := []byte(adrMarkdown)
+	if len(mainGitContent) == 0 {
+		mainGitContent = hybridBytes
 		slog.Debug("generate_documents: using hybrid markdown for git commit (no MADR generated)")
 	} else {
 		slog.Debug("generate_documents: using MADR for git commit",
-			"madr_bytes", len(mainGitLabContent),
+			"madr_bytes", len(mainGitContent),
 			"jira_id", jiraID,
 		)
 	}
-	if err := pushToGitLab(store, jiraID, targetBranch, title, mainGitLabContent, nil, bp); err != nil {
-		return "", "", "", fmt.Errorf("gitlab push failed: %w", err)
+	if err := pushToGitProviders(ctx, store, jiraID, targetBranch, title, mainGitContent, nil, bp); err != nil {
+		return "", "", "", fmt.Errorf("git push failed: %w", err)
+	}
+
+	if viper.GetBool("jira.disable") {
+		jiraID = "skipped (disabled)"
+		browseURL = "skipped (disabled)"
+	}
+	if viper.GetBool("confluence.disable") {
+		parentID = "skipped (disabled)"
 	}
 
 	return jiraID, browseURL, parentID, nil
@@ -449,135 +468,43 @@ func generateHybridMarkdown(jiraID, markdown string, bp *db.Blueprint, synthesis
 	return []byte(buf.String()), nil
 }
 
-func pushToGitLab(store *db.Store, jiraID, targetBranch, title string, fileContent []byte, adrContent []byte, bp *db.Blueprint) error {
-	if viper.GetBool("git.mock") {
-		slog.Info("generate_documents: git.mock enabled, bypassing gitlab push")
+func pushToGitProviders(ctx context.Context, store *db.Store, jiraID, targetBranch, title string, fileContent []byte, adrContent []byte, bp *db.Blueprint) error {
+	var errs []string
+
+	githubDisabled := viper.GetBool("github.disable")
+	gitlabDisabled := viper.GetBool("gitlab.disable")
+
+	if githubDisabled && gitlabDisabled {
+		slog.Info("generate_documents: both github and gitlab are disabled, skipping git push")
 		return nil
 	}
-	var gitToken string
-	if store != nil {
-		gitToken, _ = store.GetSecret("gitlab")
-		if gitToken == "" {
-			gitToken, _ = store.GetSecret("git")
-		}
-	}
-	if gitToken == "" {
-		return fmt.Errorf("gitlab token must be configured (run: mcp-server-magicdev token reconfigure)")
+
+	// Exclusive Validation: Prevent split-brain commits
+	if !githubDisabled && !gitlabDisabled {
+		return fmt.Errorf("git push aborted: both github and gitlab are enabled. Please disable one to prevent split-brain commits")
 	}
 
-	serverURL := viper.GetString("git.server_url")
-	projectPath := viper.GetString("git.project_path")
-	if serverURL == "" || projectPath == "" {
-		return fmt.Errorf("git.server_url and git.project_path must be configured")
-	}
-
-	git, err := gitlab.NewClient(gitToken, gitlab.WithBaseURL(serverURL))
-	if err != nil {
-		return fmt.Errorf("failed to create gitlab client: %w", err)
-	}
-
-	// Auto-create branch if it does not exist
-	defaultBranch := viper.GetString("git.default_branch")
-	if defaultBranch == "" {
-		defaultBranch = "main"
-	}
-	_, resp, err := git.Branches.GetBranch(projectPath, targetBranch)
-	if err != nil && resp != nil && resp.StatusCode == 404 {
-		slog.Info("branch not found, creating", "branch", targetBranch, "ref", defaultBranch)
-		_, _, createErr := git.Branches.CreateBranch(projectPath, &gitlab.CreateBranchOptions{
-			Branch: gitlab.Ptr(targetBranch),
-			Ref:    gitlab.Ptr(defaultBranch),
-		})
-		if createErr != nil {
-			return fmt.Errorf("failed to create branch %q from %q: %w", targetBranch, defaultBranch, createErr)
+	if !gitlabDisabled {
+		slog.Info("generate_documents: pushing to gitlab")
+		provider := git.NewGitLabProvider()
+		if err := provider.PushDocuments(ctx, store, jiraID, targetBranch, title, fileContent, adrContent, bp); err != nil {
+			errs = append(errs, fmt.Sprintf("gitlab: %v", err))
 		}
 	}
 
-	filePath := fmt.Sprintf("%s.md", title)
-	commitMsg := fmt.Sprintf("Add Hybrid Markdown for %s", title)
-	if jiraID != "" && jiraID != "UNKNOWN" {
-		commitMsg = fmt.Sprintf("[%s] Add Hybrid Markdown for %s", jiraID, title)
-	}
-
-	actions := []*gitlab.CommitActionOptions{}
-
-	fileAction := gitlab.FileCreate
-	if _, _, err := git.RepositoryFiles.GetFile(projectPath, filePath, &gitlab.GetFileOptions{Ref: gitlab.Ptr(targetBranch)}); err == nil {
-		fileAction = gitlab.FileUpdate
-	}
-
-	actions = append(actions, &gitlab.CommitActionOptions{
-		Action:   gitlab.Ptr(fileAction),
-		FilePath: gitlab.Ptr(filePath),
-		Content:  gitlab.Ptr(string(fileContent)),
-	})
-
-	if len(adrContent) > 0 {
-		adrPath := fmt.Sprintf("%s_ADR.md", title)
-		adrAction := gitlab.FileCreate
-		if _, _, err := git.RepositoryFiles.GetFile(projectPath, adrPath, &gitlab.GetFileOptions{Ref: gitlab.Ptr(targetBranch)}); err == nil {
-			adrAction = gitlab.FileUpdate
-		}
-		actions = append(actions, &gitlab.CommitActionOptions{
-			Action:   gitlab.Ptr(adrAction),
-			FilePath: gitlab.Ptr(adrPath),
-			Content:  gitlab.Ptr(string(adrContent)),
-		})
-	}
-
-	// Commit D2 source and rendered SVG alongside the spec
-	if bp != nil && bp.D2Source != "" {
-		d2Path := fmt.Sprintf("%s_architecture.d2", title)
-		d2Action := gitlab.FileCreate
-		if _, _, err := git.RepositoryFiles.GetFile(projectPath, d2Path, &gitlab.GetFileOptions{Ref: gitlab.Ptr(targetBranch)}); err == nil {
-			d2Action = gitlab.FileUpdate
-		}
-		actions = append(actions, &gitlab.CommitActionOptions{
-			Action:   gitlab.Ptr(d2Action),
-			FilePath: gitlab.Ptr(d2Path),
-			Content:  gitlab.Ptr(bp.D2Source),
-		})
-		slog.Info("generate_documents: committing D2 source to GitLab",
-			"path", d2Path,
-			"action", d2Action,
-			"d2_bytes", len(bp.D2Source),
-		)
-
-		if bp.D2SVG != "" {
-			svgPath := fmt.Sprintf("%s_architecture.svg", title)
-			svgAction := gitlab.FileCreate
-			if _, _, err := git.RepositoryFiles.GetFile(projectPath, svgPath, &gitlab.GetFileOptions{Ref: gitlab.Ptr(targetBranch)}); err == nil {
-				svgAction = gitlab.FileUpdate
-			}
-			actions = append(actions, &gitlab.CommitActionOptions{
-				Action:   gitlab.Ptr(svgAction),
-				FilePath: gitlab.Ptr(svgPath),
-				Content:  gitlab.Ptr(bp.D2SVG),
-			})
-			slog.Info("generate_documents: committing D2 SVG to GitLab",
-				"path", svgPath,
-				"action", svgAction,
-				"svg_bytes", len(bp.D2SVG),
-			)
-		} else {
-			slog.Warn("generate_documents: D2 source exists but SVG is empty — skipping SVG commit (rendering likely failed in BlueprintImplementation)")
+	if !githubDisabled {
+		slog.Info("generate_documents: pushing to github")
+		provider := git.NewGitHubProvider()
+		if err := provider.PushDocuments(ctx, store, jiraID, targetBranch, title, fileContent, adrContent, bp); err != nil {
+			errs = append(errs, fmt.Sprintf("github: %v", err))
 		}
 	}
 
-	opt := &gitlab.CreateCommitOptions{
-		Branch:        gitlab.Ptr(targetBranch),
-		CommitMessage: gitlab.Ptr(commitMsg),
-		Actions:       actions,
+	if len(errs) > 0 {
+		return fmt.Errorf("git push errors: %s", strings.Join(errs, ", "))
 	}
-
-	_, _, err = git.Commits.CreateCommit(projectPath, opt)
-	if err != nil {
-		return fmt.Errorf("failed to create commit: %w", err)
-	}
-
 	return nil
 }
-
 
 // verifyCrossLinks ensures that the Jira ID is embedded in both the hybrid markdown and confluence payload.
 // It implements a 3-attempt exponential backoff retry loop.

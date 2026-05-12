@@ -30,7 +30,7 @@ var tokenListCmd = &cobra.Command{
 		}
 		defer store.Close()
 
-		services := []string{"gitlab", "confluence", "jira", "llm_token", "llm_provider", "llm_model"}
+		services := []string{"github", "gitlab", "confluence", "jira", "llm_token", "llm_provider", "llm_model"}
 		fmt.Println("Stored Tokens / Values:")
 		for _, svc := range services {
 			token, err := store.GetSecret(svc)
@@ -64,6 +64,7 @@ var tokenReconfigureCmd = &cobra.Command{
 			name    string
 			envVars []string
 		}{
+			{"github", []string{"GITHUB_TOKEN", "GITHUB_API_TOKEN", "GITHUB_USER_TOKEN"}},
 			{"gitlab", []string{"GITLAB_TOKEN", "GITLAB_PERSONAL_ACCESS_TOKEN", "GITLAB_USER_TOKEN"}},
 			{"confluence", []string{"CONFLUENCE_USER_TOKEN", "CONFLUENCE_TOKEN", "CONFLUENCE_API_TOKEN"}},
 			{"jira", []string{"JIRA_USER_TOKEN", "JIRA_TOKEN", "JIRA_API_TOKEN"}},

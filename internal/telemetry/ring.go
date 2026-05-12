@@ -1,3 +1,4 @@
+// Package telemetry provides functionality for the telemetry subsystem.
 package telemetry
 
 import "sync"
@@ -42,19 +43,19 @@ func (r *RingBuffer) Push(item string) {
 func (r *RingBuffer) Snapshot() []string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	
+
 	if r.count == 0 {
 		return []string{}
 	}
-	
+
 	out := make([]string, r.count)
-	
+
 	// If the buffer isn't completely full, just copy from index 0 to head
 	if r.count < r.size {
 		copy(out, r.buffer[:r.head])
 		return out
 	}
-	
+
 	// If the buffer is full (wrapped), start reading from head to end, then 0 to head
 	firstPart := r.size - r.head
 	copy(out[:firstPart], r.buffer[r.head:])

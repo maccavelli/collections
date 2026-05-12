@@ -19,21 +19,26 @@ var ValidConfigKeys = []ConfigKeyInfo{
 	{Key: "confluence.url", Description: "Confluence instance base URL", ValueType: "string"},
 	{Key: "confluence.space", Description: "Confluence space key for publishing", ValueType: "string"},
 	{Key: "confluence.parent_page_id", Description: "Parent page ID for nesting documents", ValueType: "string"},
-	{Key: "confluence.mock", Description: "Enable Confluence mock layer (true/false)", ValueType: "bool"},
+	{Key: "confluence.disable", Description: "Disable Confluence layer (true/false)", ValueType: "bool"},
 
 	// Jira
 	{Key: "jira.email", Description: "Jira authentication email", ValueType: "string"},
 	{Key: "jira.url", Description: "Jira instance base URL", ValueType: "string"},
 	{Key: "jira.project", Description: "Jira project key for issue creation", ValueType: "string"},
 	{Key: "jira.issue", Description: "Existing Jira issue key to attach documents to", ValueType: "string"},
-	{Key: "jira.mock", Description: "Enable Jira mock layer (true/false)", ValueType: "bool"},
+	{Key: "jira.disable", Description: "Disable Jira layer (true/false)", ValueType: "bool"},
 	{Key: "jira.story_points_field", Description: "Custom field ID for story points estimation", ValueType: "string"},
 
-	// Git
-	{Key: "git.username", Description: "Git service username", ValueType: "string"},
-	{Key: "git.server_url", Description: "GitLab server base URL", ValueType: "string"},
-	{Key: "git.project_path", Description: "GitLab namespace/project path", ValueType: "string"},
-	{Key: "git.default_branch", Description: "Default target branch for artifact pushes", ValueType: "string"},
+	// GitLab
+	{Key: "gitlab.server_url", Description: "GitLab server base URL", ValueType: "string"},
+	{Key: "gitlab.project_path", Description: "GitLab namespace/project path", ValueType: "string"},
+	{Key: "gitlab.default_branch", Description: "Default target branch for artifact pushes", ValueType: "string"},
+	{Key: "gitlab.disable", Description: "Disable GitLab integration (true/false)", ValueType: "bool"},
+
+	// GitHub
+	{Key: "github.repository", Description: "GitHub repository path (e.g. owner/repo)", ValueType: "string"},
+	{Key: "github.default_branch", Description: "Default target branch for artifact pushes", ValueType: "string"},
+	{Key: "github.disable", Description: "Disable GitHub integration (true/false)", ValueType: "bool"},
 
 	// Agent
 	{Key: "agent.default_stack", Description: "Default technology stack (.NET, Node, Go, Python)", ValueType: "string"},

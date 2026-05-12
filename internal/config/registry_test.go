@@ -68,13 +68,13 @@ func TestLookupKey(t *testing.T) {
 		t.Errorf("Expected ValueType 'string' for confluence.url, got %q", info.ValueType)
 	}
 
-	// Boolean key
-	info, ok = LookupKey("jira.mock")
-	if !ok {
-		t.Fatal("Expected LookupKey to find jira.mock")
+	// Test existing key
+	k, found := LookupKey("jira.disable")
+	if !found {
+		t.Error("Expected LookupKey to find jira.disable")
 	}
-	if info.ValueType != "bool" {
-		t.Errorf("Expected ValueType 'bool' for jira.mock, got %q", info.ValueType)
+	if k.ValueType != "bool" {
+		t.Errorf("Expected ValueType 'bool' for jira.disable, got %q", k.ValueType)
 	}
 
 	// Unknown key

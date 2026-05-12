@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 
 	"github.com/spf13/cobra"
@@ -36,7 +37,7 @@ var initCmd = &cobra.Command{
 					continue
 				}
 
-				entries, err := fs.ReadDir(embedded.FS, filepath.Join("standards", stack))
+				entries, err := fs.ReadDir(embedded.FS, path.Join("standards", stack))
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "WARNING: failed to read embedded standards/%s: %v\n", stack, err)
 					continue
@@ -46,7 +47,7 @@ var initCmd = &cobra.Command{
 					if entry.IsDir() {
 						continue
 					}
-					embeddedPath := filepath.Join("standards", stack, entry.Name())
+					embeddedPath := path.Join("standards", stack, entry.Name())
 					b, err := embedded.FS.ReadFile(embeddedPath)
 					if err != nil {
 						fmt.Fprintf(os.Stderr, "WARNING: failed to read embedded file %s: %v\n", embeddedPath, err)
