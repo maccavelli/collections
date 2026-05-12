@@ -10,6 +10,7 @@ require (
 	github.com/go-json-experiment/json v0.0.0-20260430182902-b6187a392ed4
 	github.com/gofrs/flock v0.13.0
 	github.com/google/generative-ai-go v0.20.1
+	github.com/google/go-github/v62 v62.0.0
 	github.com/google/uuid v1.6.0
 	github.com/klauspost/compress v1.18.6
 	github.com/modelcontextprotocol/go-sdk v1.6.0

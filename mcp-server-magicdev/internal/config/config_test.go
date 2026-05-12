@@ -126,7 +126,7 @@ func TestUpdateConfigKey_BooleanValid(t *testing.T) {
 
 	// Valid boolean values
 	for _, val := range []string{"true", "false", "TRUE", "False", " true "} {
-		err := UpdateConfigKey("confluence.mock", val)
+		err := UpdateConfigKey("confluence.disable", val)
 		if err != nil {
 			t.Errorf("UpdateConfigKey should accept boolean value %q, got error: %v", val, err)
 		}
@@ -139,7 +139,7 @@ func TestUpdateConfigKey_BooleanInvalid(t *testing.T) {
 
 	// Invalid boolean values
 	for _, val := range []string{"yes", "no", "1", "0", "", "on", "off"} {
-		err := UpdateConfigKey("confluence.mock", val)
+		err := UpdateConfigKey("confluence.disable", val)
 		if err == nil {
 			t.Errorf("Expected error for invalid boolean value %q", val)
 		}
@@ -154,25 +154,25 @@ func TestUpdateConfigKey_BooleanPersistence(t *testing.T) {
 	EnsureConfig()
 	LoadConfig()
 
-	// Update jira.mock to true
-	if err := UpdateConfigKey("jira.mock", "true"); err != nil {
+	// Update jira.disable to true
+	if err := UpdateConfigKey("jira.disable", "true"); err != nil {
 		t.Fatalf("UpdateConfigKey failed: %v", err)
 	}
 
 	// Reload and verify
 	LoadConfig()
-	if !viper.GetBool("jira.mock") {
-		t.Error("Expected jira.mock to be true after update")
+	if !viper.GetBool("jira.disable") {
+		t.Error("Expected jira.disable to be true after update")
 	}
 
 	// Update back to false
-	if err := UpdateConfigKey("jira.mock", "false"); err != nil {
+	if err := UpdateConfigKey("jira.disable", "false"); err != nil {
 		t.Fatalf("UpdateConfigKey failed: %v", err)
 	}
 
 	LoadConfig()
-	if viper.GetBool("jira.mock") {
-		t.Error("Expected jira.mock to be false after update")
+	if viper.GetBool("jira.disable") {
+		t.Error("Expected jira.disable to be false after update")
 	}
 }
 

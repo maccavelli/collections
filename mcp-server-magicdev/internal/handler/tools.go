@@ -1452,10 +1452,17 @@ func (h *ToolHandler) GenerateDocuments(ctx context.Context, req *mcp.CallToolRe
 	}
 
 	hint := "Next, wrap up with 'complete_design'."
+	
+	confluenceURL := "skipped (disabled)"
+	if confluencePageID != "skipped (disabled)" && confluencePageID != "" {
+		confluenceURL = viper.GetString("confluence.url") + "/pages/viewpage.action?pageId=" + confluencePageID
+	}
+
 	return hybridMarkdownResult(hint, map[string]any{
 		"jira_key":       jiraID,
-		"confluence_url": "https://wiki/" + jiraID,
-		"commit_sha":     "abcdef123456",
+		"jira_url":       browseURL,
+		"confluence_url": confluenceURL,
+		"commit_sha":     "generated-by-provider",
 	})
 }
 

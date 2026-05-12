@@ -42,10 +42,10 @@ confluence:
   # If left unset (""), documents will be published to the root of the space.
   parent_page_id: ""
 
-  # Enables the Confluence mock layer for offline development and testing.
+  # Disable the Confluence integration entirely.
   # When true, the pipeline bypasses live Confluence API calls during Phase 1
   # connectivity checks and downstream documentation generation steps.
-  mock: false
+  disable: false
 
 # ------------------------------------------------------------------------------
 # Jira Integration (Ticketing)
@@ -69,8 +69,8 @@ jira:
   # If left unset (""), MagicDev will automatically create a new task.
   issue: ""
 
-  # Enables the Jira mock layer for offline development and testing.
-  mock: false
+  # Disable the Jira integration entirely.
+  disable: false
   
   # The custom field ID used for estimating Story Points in your Jira instance.
   # This varies per Jira workspace. You can find it in your Jira field settings.
@@ -78,14 +78,9 @@ jira:
   story_points_field: ""
 
 # ------------------------------------------------------------------------------
-# Version Control Integration (Git)
+# GitLab Integration
 # ------------------------------------------------------------------------------
-# These settings allow MagicDev to commit artifacts and generated code to Git
-# using the native HTTPS transport protocol.
-git:
-  # Your git service username (e.g., your GitHub or GitLab handle).
-  username: "PLACEHOLDER_GIT_USERNAME"
-
+gitlab:
   # API tokens are managed exclusively via BuntDB vault.
   # Run: mcp-server-magicdev token reconfigure
 
@@ -99,6 +94,26 @@ git:
   
   # The default target branch for pushing generated artifacts if not specified.
   default_branch: "main"
+
+  # Disable the GitLab integration entirely.
+  disable: false
+
+# ------------------------------------------------------------------------------
+# GitHub Integration
+# ------------------------------------------------------------------------------
+github:
+  # API tokens are managed exclusively via BuntDB vault.
+  # Run: mcp-server-magicdev token reconfigure
+
+  # The repository path where artifacts will be pushed.
+  # Example: "owner/repo"
+  repository: "PLACEHOLDER_GITHUB_REPO"
+  
+  # The default target branch for pushing generated artifacts if not specified.
+  default_branch: "main"
+
+  # Disable the GitHub integration entirely.
+  disable: false
 
 # ------------------------------------------------------------------------------
 # Core Agent Behavior Settings

@@ -103,32 +103,41 @@ func TestGenerateHybridMarkdown(t *testing.T) {
 
 func TestProcessDocumentGeneration(t *testing.T) {
 	// Save current state
-	oldJiraMock := viper.GetBool("jira.mock")
-	oldConfMock := viper.GetBool("confluence.mock")
-	oldGitMock := viper.GetBool("git.mock")
+	oldJiraDisable := viper.GetBool("jira.disable")
+	oldConfDisable := viper.GetBool("confluence.disable")
+	oldGitLabDisable := viper.GetBool("gitlab.disable")
+	oldGitHubDisable := viper.GetBool("github.disable")
 	oldJiraIssue := viper.GetString("jira.issue")
 	oldParentID := viper.GetString("confluence.parent_page_id")
-	oldGitServer := viper.GetString("git.server_url")
-	oldGitProject := viper.GetString("git.project_path")
+	oldGitLabServer := viper.GetString("gitlab.server_url")
+	oldGitLabProject := viper.GetString("gitlab.project_path")
+	oldGitHubServer := viper.GetString("github.server_url")
+	oldGitHubProject := viper.GetString("github.project_path")
 	
 	defer func() {
-		viper.Set("jira.mock", oldJiraMock)
-		viper.Set("confluence.mock", oldConfMock)
-		viper.Set("git.mock", oldGitMock)
+		viper.Set("jira.disable", oldJiraDisable)
+		viper.Set("confluence.disable", oldConfDisable)
+		viper.Set("gitlab.disable", oldGitLabDisable)
+		viper.Set("github.disable", oldGitHubDisable)
 		viper.Set("jira.issue", oldJiraIssue)
 		viper.Set("confluence.parent_page_id", oldParentID)
-		viper.Set("git.server_url", oldGitServer)
-		viper.Set("git.project_path", oldGitProject)
+		viper.Set("gitlab.server_url", oldGitLabServer)
+		viper.Set("gitlab.project_path", oldGitLabProject)
+		viper.Set("github.server_url", oldGitHubServer)
+		viper.Set("github.project_path", oldGitHubProject)
 	}()
 
 	// Set up mocks
-	viper.Set("jira.mock", true)
-	viper.Set("confluence.mock", true)
-	viper.Set("git.mock", true)
+	viper.Set("jira.disable", true)
+	viper.Set("confluence.disable", true)
+	viper.Set("gitlab.disable", true)
+	viper.Set("github.disable", true)
 	viper.Set("jira.issue", "") // let it create one
 	viper.Set("confluence.parent_page_id", "")
-	viper.Set("git.server_url", "http://example.com")
-	viper.Set("git.project_path", "test/project")
+	viper.Set("gitlab.server_url", "http://example.com")
+	viper.Set("gitlab.project_path", "test/project")
+	viper.Set("github.server_url", "http://example.com")
+	viper.Set("github.project_path", "owner/repo")
 	
 	dbPath := filepath.Join(os.TempDir(), "test_documents.db")
 	viper.Set("server.db_path", dbPath)
@@ -157,7 +166,7 @@ func TestProcessDocumentGeneration(t *testing.T) {
 	if err != nil {
 		t.Errorf("ProcessDocumentGeneration returned error: %v", err)
 	}
-	if jiraID != "UNKNOWN" {
-		t.Errorf("Expected jiraID to be UNKNOWN for mocked test, got %s", jiraID)
+	if jiraID != "skipped (disabled)" {
+		t.Errorf("Expected jiraID to be skipped (disabled) for mocked test, got %s", jiraID)
 	}
 }
