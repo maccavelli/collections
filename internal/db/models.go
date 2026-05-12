@@ -307,6 +307,7 @@ type SessionState struct {
 	TechMapping            map[string]string     `json:"tech_mapping,omitzero"`
 	JiraID                 string                `json:"jira_id,omitzero"`
 	JiraBrowseURL          string                `json:"jira_browse_url,omitzero"`
+	ConfluencePageID       string                `json:"confluence_page_id,omitzero"` // Parent page ID from generate_documents
 	CreatedAt              string                `json:"created_at,omitzero"`
 	UpdatedAt              string                `json:"updated_at,omitzero"`
 	Tags                   map[string]string     `json:"tags,omitzero"`                       // Freeform key-value categorization
@@ -318,17 +319,25 @@ type SessionState struct {
 	TargetEnvironment      string                `json:"target_environment,omitzero"`          // cloud/on-prem/hybrid/edge
 	EstimatedEffort        string                `json:"estimated_effort,omitzero"`            // Duration estimate
 	StepTimings            map[string]StepTiming `json:"step_timings,omitzero"`                // Per-phase execution telemetry
+	StepTokens             map[string]int        `json:"step_tokens,omitzero"`                 // Token delta consumed per phase
+	StepDataBytes          map[string]int        `json:"step_data_bytes,omitzero"`             // Bytes inserted per phase
+	StepHydrations         map[string]float64    `json:"step_hydrations,omitzero"`             // Payload completeness ratio per phase (0.0-1.0)
 	DocumentVersions       []DocumentVersion     `json:"document_versions,omitzero"`           // Iteration tracking
+	SocraticRetryCount     int                   `json:"socratic_retry_count,omitzero"`         // Tracks clarify_requirements re-entries for loop detection
+	SocraticEscalatedTopics []string             `json:"socratic_escalated_topics,omitzero"`    // Question topics surfaced to agent for loop detection
 }
 
 // NewSessionState initializes a fresh session with zeroed collections
 // to prevent nil-map panics during downstream tool execution.
 func NewSessionState(sessionID string) *SessionState {
 	return &SessionState{
-		SessionID:     sessionID,
-		SchemaVersion: CurrentSchemaVersion,
-		StepStatus:    make(map[string]string),
-		TechMapping:   make(map[string]string),
-		StepTimings:   make(map[string]StepTiming),
+		SessionID:      sessionID,
+		SchemaVersion:  CurrentSchemaVersion,
+		StepStatus:     make(map[string]string),
+		TechMapping:    make(map[string]string),
+		StepTimings:    make(map[string]StepTiming),
+		StepTokens:     make(map[string]int),
+		StepDataBytes:  make(map[string]int),
+		StepHydrations: make(map[string]float64),
 	}
 }

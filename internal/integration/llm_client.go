@@ -2,6 +2,7 @@
 package integration
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -11,10 +12,24 @@ import (
 	"mcp-server-magicdev/internal/integration/llm"
 )
 
-// NewLLMClient initializes the unified LLM client securely from BuntDB.
+// ErrLLMDisabled is returned when the Intelligence Engine is explicitly disabled via configuration.
+var ErrLLMDisabled = errors.New("llm disabled by configuration")
+
+// NewLLMClient initializes the unified LLM client from config and BuntDB vault.
+// Provider and model are read from viper (magicdev.yaml), with a backward-compatible
+// fallback to the BuntDB vault for provider if the config value is empty.
+// The API token is always read from the vault.
 func NewLLMClient(store *db.Store) (*llm.Client, error) {
-	providerStr, err := store.GetSecret("llm_provider")
-	if err != nil || providerStr == "" {
+	if viper.GetBool("llm.disable") {
+		return nil, ErrLLMDisabled
+	}
+
+	// Provider: config-first, vault fallback for pre-migration users.
+	providerStr := viper.GetString("llm.provider")
+	if providerStr == "" {
+		providerStr, _ = store.GetSecret("llm_provider")
+	}
+	if providerStr == "" {
 		return nil, fmt.Errorf("llm provider not configured")
 	}
 

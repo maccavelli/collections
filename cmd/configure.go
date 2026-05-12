@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
 	"mcp-server-magicdev/internal/config"
 	"mcp-server-magicdev/internal/db"
@@ -65,6 +66,20 @@ var configureCmd = &cobra.Command{
 	},
 }
 
+func readHiddenSecret(reader *bufio.Reader) string {
+	fd := int(os.Stdin.Fd())
+	if term.IsTerminal(fd) {
+		bytes, err := term.ReadPassword(fd)
+		fmt.Println() // Print a newline after since ReadPassword does not echo it
+		if err == nil {
+			return strings.TrimSpace(string(bytes))
+		}
+	}
+	// Fallback to standard standard input if not a TTY terminal
+	input, _ := reader.ReadString('\n')
+	return strings.TrimSpace(input)
+}
+
 func setupJira(reader *bufio.Reader, store *db.Store) {
 	fmt.Println("\n--- Setup Jira ---")
 	fmt.Print("Email Address: ")
@@ -72,8 +87,7 @@ func setupJira(reader *bufio.Reader, store *db.Store) {
 	email = strings.TrimSpace(email)
 
 	fmt.Print("Token: ")
-	token, _ := reader.ReadString('\n')
-	token = strings.TrimSpace(token)
+	token := readHiddenSecret(reader)
 
 	fmt.Print("URL (e.g. https://your-domain.atlassian.net): ")
 	urlStr, _ := reader.ReadString('\n')
@@ -94,8 +108,7 @@ func setupJira(reader *bufio.Reader, store *db.Store) {
 func setupConfluence(reader *bufio.Reader, store *db.Store) {
 	fmt.Println("\n--- Setup Confluence ---")
 	fmt.Print("Token: ")
-	token, _ := reader.ReadString('\n')
-	token = strings.TrimSpace(token)
+	token := readHiddenSecret(reader)
 
 	fmt.Print("URL (e.g. https://your-domain.atlassian.net/wiki): ")
 	urlStr, _ := reader.ReadString('\n')
@@ -117,8 +130,7 @@ func setupGitlab(reader *bufio.Reader, store *db.Store) {
 	user = strings.TrimSpace(user)
 
 	fmt.Print("Token: ")
-	token, _ := reader.ReadString('\n')
-	token = strings.TrimSpace(token)
+	token := readHiddenSecret(reader)
 
 	if user != "" {
 		_ = config.UpdateConfigKey("git.username", user)
@@ -156,8 +168,7 @@ func setupLLM(reader *bufio.Reader, store *db.Store) {
 	}
 
 	fmt.Print("API Key: ")
-	apiKey, _ := reader.ReadString('\n')
-	apiKey = strings.TrimSpace(apiKey)
+	apiKey := readHiddenSecret(reader)
 
 	if apiKey == "" {
 		fmt.Println("API Key is required.")
@@ -193,11 +204,11 @@ func setupLLM(reader *bufio.Reader, store *db.Store) {
 
 	selectedModel := models[idx-1]
 
-	_ = store.SetSecret("llm_provider", string(provider))
+	_ = config.UpdateConfigKey("llm.provider", string(provider))
 	_ = config.UpdateConfigKey("llm.model", selectedModel)
 	_ = store.SetSecret("llm_token", apiKey)
 
-	fmt.Printf("LLM configuration saved. Default model: %s\n", selectedModel)
+	fmt.Printf("LLM configuration saved. Provider: %s, Model: %s\n", provider, selectedModel)
 }
 
 func init() {

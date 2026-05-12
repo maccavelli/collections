@@ -83,7 +83,7 @@ func ListModels(ctx context.Context, provider Provider, apiKey string) ([]string
 				break
 			}
 			if err != nil {
-				break
+				return nil, fmt.Errorf("gemini list models error: %w", err)
 			}
 			res = append(res, strings.TrimPrefix(model.Name, "models/"))
 		}

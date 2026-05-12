@@ -3,10 +3,11 @@
 package config
 
 import (
-	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
+	"time"
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/viper"
@@ -148,40 +149,84 @@ server:
 # You can add local filesystem paths (e.g., /path/to/my/standards.md) or standard URLs.
 standards:
   node:
-    # [runtime, lifecycle] Node.js Release Schedule & LTS
-    - "https://raw.githubusercontent.com/nodejs/Release/main/README.md"
-    # [architecture, security, testing, production, error-handling] Node.js Best Practices
-    - "https://raw.githubusercontent.com/goldbergyoni/nodebestpractices/master/README.md"
-    # [container] Docker Best Practices for Node.js
-    - "https://raw.githubusercontent.com/nodejs/docker-node/main/docs/BestPractices.md"
-    # [container, runtime] Docker Node.js Setup Guide
-    - "https://raw.githubusercontent.com/nodejs/docker-node/main/README.md"
+    # Filesystem path to standard templates (e.g. .gitignore) injected automatically
+    path: "{CACHE_DIR}/mcp-server-magicdev/standards/node"
+    # Max allowed files constraint for the agent (0 = unlimited)
+    total_files: 0
+    # Max allowed directory depth constraint for the agent (0 = unlimited)
+    max_directory_depth: 0
+    urls:
+      # --- Embedded Standards (local, offline-available, user-editable) ---
+      # [embedded, architecture] Node.js Architecture & Design Standards
+      - "{CACHE_DIR}/mcp-server-magicdev/standards/node/architecture_and_design.md"
+      # [embedded, conventions] TypeScript & Node.js Idioms
+      - "{CACHE_DIR}/mcp-server-magicdev/standards/node/typescript_idioms_and_conventions.md"
+      # [embedded, database] Database, Persistence & Caching Standards
+      - "{CACHE_DIR}/mcp-server-magicdev/standards/node/database_and_caching.md"
+      # [embedded, container] Docker, Kubernetes & Containerization Standards
+      - "{CACHE_DIR}/mcp-server-magicdev/standards/node/containerization_and_kubernetes.md"
+      # --- Remote Standards (fetched and cached on first sync) ---
+      # [runtime, lifecycle] Node.js Release Schedule & LTS
+      - "https://raw.githubusercontent.com/nodejs/Release/main/README.md"
+      # [architecture, security, testing, production, error-handling] Node.js Best Practices
+      - "https://raw.githubusercontent.com/goldbergyoni/nodebestpractices/master/README.md"
+      # [container] Docker Best Practices for Node.js
+      - "https://raw.githubusercontent.com/nodejs/docker-node/main/docs/BestPractices.md"
+      # [container, runtime] Docker Node.js Setup Guide
+      - "https://raw.githubusercontent.com/nodejs/docker-node/main/README.md"
   dotnet:
-    # [runtime, lifecycle] .NET 8.0 Release Notes
-    - "https://raw.githubusercontent.com/dotnet/core/main/release-notes/8.0/README.md"
-    # [code-style] C# Coding Conventions
-    - "https://raw.githubusercontent.com/dotnet/docs/main/docs/csharp/fundamentals/coding-style/coding-conventions.md"
-    # [architecture] .NET Design Guidelines
-    - "https://raw.githubusercontent.com/dotnet/docs/main/docs/standard/design-guidelines/index.md"
-    # [security] Secure Coding Guidelines for .NET
-    - "https://raw.githubusercontent.com/dotnet/docs/main/docs/standard/security/secure-coding-guidelines.md"
-    # [testing] Unit Testing Best Practices
-    - "https://raw.githubusercontent.com/dotnet/docs/main/docs/core/testing/unit-testing-best-practices.md"
-    # [container] .NET Docker Samples
-    - "https://raw.githubusercontent.com/dotnet/dotnet-docker/main/samples/README.md"
-    # [container, runtime] Installing .NET in Docker
-    - "https://raw.githubusercontent.com/dotnet/dotnet-docker/main/documentation/scenarios/installing-dotnet.md"
+    # Filesystem path to standard templates (e.g. .gitignore) injected automatically
+    path: "{CACHE_DIR}/mcp-server-magicdev/standards/dotnet"
+    # Max allowed files constraint for the agent (0 = unlimited)
+    total_files: 0
+    # Max allowed directory depth constraint for the agent (0 = unlimited)
+    max_directory_depth: 0
+    urls:
+      # --- Embedded Standards (local, offline-available, user-editable) ---
+      # [embedded, architecture] .NET Architecture & Design Standards
+      - "{CACHE_DIR}/mcp-server-magicdev/standards/dotnet/architecture_and_design.md"
+      # [embedded, conventions] C# 12 & .NET 8 Idioms
+      - "{CACHE_DIR}/mcp-server-magicdev/standards/dotnet/csharp_idioms_and_conventions.md"
+      # [embedded, database] Database, Persistence & Caching Standards
+      - "{CACHE_DIR}/mcp-server-magicdev/standards/dotnet/database_and_caching.md"
+      # [embedded, container] Docker, Kubernetes & Containerization Standards
+      - "{CACHE_DIR}/mcp-server-magicdev/standards/dotnet/containerization_and_kubernetes.md"
+      # --- Remote Standards (fetched and cached on first sync) ---
+      # [runtime, lifecycle] .NET 8.0 Release Notes
+      - "https://raw.githubusercontent.com/dotnet/core/main/release-notes/8.0/README.md"
+      # [code-style] C# Coding Conventions
+      - "https://raw.githubusercontent.com/dotnet/docs/main/docs/csharp/fundamentals/coding-style/coding-conventions.md"
+      # [architecture] .NET Design Guidelines
+      - "https://raw.githubusercontent.com/dotnet/docs/main/docs/standard/design-guidelines/index.md"
+      # [security] Secure Coding Guidelines for .NET
+      - "https://raw.githubusercontent.com/dotnet/docs/main/docs/standard/security/secure-coding-guidelines.md"
+      # [testing] Unit Testing Best Practices
+      - "https://raw.githubusercontent.com/dotnet/docs/main/docs/core/testing/unit-testing-best-practices.md"
+      # [container] .NET Docker Samples
+      - "https://raw.githubusercontent.com/dotnet/dotnet-docker/main/samples/README.md"
+      # [container, runtime] Installing .NET in Docker
+      - "https://raw.githubusercontent.com/dotnet/dotnet-docker/main/documentation/scenarios/installing-dotnet.md"
 
 # ------------------------------------------------------------------------------
 # Intelligence Engine (LLM)
 # ------------------------------------------------------------------------------
 llm:
+  # The LLM provider to use for the Intelligence Engine.
+  # Valid values: "gemini", "openai", "claude"
+  # This value can be hot-reloaded at runtime.
+  provider: ""
+
   # The chosen model used by the Intelligence Engine during requirement analysis.
   # This value can be hot-reloaded at runtime.
   # Examples: "gemini-2.5-flash", "gpt-4o", "claude-3-5-sonnet-latest"
   model: ""
 
-  # NOTE: The LLM API token and provider are stored securely in the BuntDB vault,
+  # Set to true to explicitly bypass the LLM Intelligence Engine.
+  # When true, MagicDev will gracefully fall back to deterministic synthesis.
+  # This value can be hot-reloaded at runtime.
+  disable: false
+
+  # NOTE: The LLM API token is stored securely in the BuntDB vault,
   # NOT in this configuration file.
   # To set up the LLM, run: mcp-server-magicdev configure
 `
@@ -211,7 +256,16 @@ func EnsureConfig() (bool, error) {
 	}
 
 	if _, err := os.Stat(path); os.IsNotExist(err) {
-		if err := os.WriteFile(path, []byte(DefaultConfigTemplate), 0600); err != nil {
+		template := DefaultConfigTemplate
+		
+		// Replace placeholder with dynamic cache directory in an OS idempotent manner
+		cacheDir, _ := os.UserCacheDir()
+		// Let's actually use strings.ReplaceAll properly
+		if cacheDir != "" {
+			template = strings.ReplaceAll(template, "{CACHE_DIR}", filepath.ToSlash(cacheDir))
+		}
+
+		if err := os.WriteFile(path, []byte(template), 0600); err != nil {
 			return false, err
 		}
 		return true, nil
@@ -220,6 +274,8 @@ func EnsureConfig() (bool, error) {
 }
 
 // LoadConfig reads the magicdev.yaml config file and initializes the fsnotify watcher.
+// The watcher is always initialized even if the initial config read fails, allowing
+// the server to recover when the user corrects the YAML file.
 func LoadConfig() error {
 	path, err := ConfigPath()
 	if err != nil {
@@ -229,11 +285,17 @@ func LoadConfig() error {
 	viper.SetConfigFile(path)
 	viper.SetConfigType("yaml")
 
+	// Attempt initial config read. Log but do not return on error —
+	// we still need to set up the watcher so the server can recover
+	// when the user fixes a broken config.
 	if err := viper.ReadInConfig(); err != nil {
-		return fmt.Errorf("failed to read config file: %w", err)
+		slog.Error("initial config read failed (will watch for corrections)",
+			"error", err,
+			"file", path,
+		)
 	}
 
-	// Setup fsnotify hot reloading
+	// Setup fsnotify hot reloading — always, regardless of initial parse result.
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		slog.Warn("failed to create fsnotify watcher, hot-reload disabled", "error", err)
@@ -241,30 +303,46 @@ func LoadConfig() error {
 	}
 
 	go func() {
+		// Debounce timer prevents reading a partially-written file when
+		// editors (or tooling) perform multiple rapid sequential writes.
+		var debounce *time.Timer
+
 		for {
 			select {
 			case event, ok := <-watcher.Events:
 				if !ok {
 					return
 				}
-				// We care about Write or Create events on the magicdev.yaml file
-				isWrite := event.Op&fsnotify.Write == fsnotify.Write
-				isCreate := event.Op&fsnotify.Create == fsnotify.Create
-				
-				if (isWrite || isCreate) && filepath.Base(event.Name) == "magicdev.yaml" {
-					slog.Info("config file changed, reloading...", "file", event.Name)
-					if err := viper.ReadInConfig(); err != nil {
-						slog.Error("failed to hot-reload config", "error", err)
-					} else {
-						// Hot-reload log level from updated config.
-						logging.SetLevel(viper.GetString("server.log_level"))
-						slog.Info("log level hot-reloaded", "level", viper.GetString("server.log_level"))
-						
-						// Execute any registered hot-reload hooks
-						for _, hook := range OnConfigReload {
-							hook()
-						}
+				// Handle Write, Create, and Rename events. Rename covers
+				// atomic-save patterns (write-to-temp + rename) used by
+				// most editors and programmatic tooling.
+				isRelevant := event.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Rename) != 0
+
+				if isRelevant && filepath.Base(event.Name) == "magicdev.yaml" {
+					// Reset debounce timer — coalesce rapid writes into a single reload.
+					if debounce != nil {
+						debounce.Stop()
 					}
+					debounce = time.AfterFunc(250*time.Millisecond, func() {
+						slog.Info("config file changed, reloading...", "file", event.Name, "op", event.Op.String())
+						if err := viper.ReadInConfig(); err != nil {
+							slog.Error("failed to hot-reload config (will retry on next change)",
+								"error", err,
+								"file", event.Name,
+							)
+						} else {
+							// Hot-reload log level from updated config.
+							logging.SetLevel(viper.GetString("server.log_level"))
+							slog.Info("config hot-reloaded successfully",
+								"level", viper.GetString("server.log_level"),
+							)
+
+							// Execute any registered hot-reload hooks
+							for _, hook := range OnConfigReload {
+								hook()
+							}
+						}
+					})
 				}
 			case err, ok := <-watcher.Errors:
 				if !ok {

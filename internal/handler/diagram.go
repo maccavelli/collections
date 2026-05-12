@@ -13,9 +13,11 @@ import (
 	"oss.terrastruct.com/d2/d2graph"
 	"oss.terrastruct.com/d2/d2layouts/d2dagrelayout"
 	"oss.terrastruct.com/d2/d2lib"
+	"oss.terrastruct.com/d2/d2renderers/d2fonts"
 	"oss.terrastruct.com/d2/d2renderers/d2svg"
 	d2log "oss.terrastruct.com/d2/lib/log"
 	"oss.terrastruct.com/d2/lib/textmeasure"
+	"oss.terrastruct.com/util-go/go2"
 )
 
 // idSafe sanitizes a string for use as a D2 node identifier.
@@ -231,6 +233,22 @@ func RenderD2ToSVG(d2Source string) (string, error) {
 		return "", nil
 	}
 
+	// Inject global asthetics (font sizing, rounded corners)
+	// D2 text naturally wraps based on container sizing. The uniform font size helps this.
+	globalStyle := `
+classes: {
+  default: {
+    style: {
+      font-size: 14
+      border-radius: 4
+    }
+  }
+}
+class: default
+
+`
+	d2Source = globalStyle + d2Source
+
 	ruler, err := textmeasure.NewRuler()
 	if err != nil {
 		return "", fmt.Errorf("d2 ruler init: %w", err)
@@ -244,14 +262,22 @@ func RenderD2ToSVG(d2Source string) (string, error) {
 
 	// d2lib.Compile needs a LayoutResolver to resolve the "dagre" engine name
 	compileOpts := &d2lib.CompileOptions{
-		Ruler: ruler,
+		Ruler:      ruler,
+		FontFamily: go2.Pointer(d2fonts.SourceSansPro),
 		LayoutResolver: func(engine string) (d2graph.LayoutGraph, error) {
 			return func(ctx context.Context, g *d2graph.Graph) error {
-				return d2dagrelayout.Layout(ctx, g, nil)
+				dagreOpts := &d2dagrelayout.ConfigurableOpts{
+					NodeSep: 80,
+					EdgeSep: 40,
+				}
+				return d2dagrelayout.Layout(ctx, g, dagreOpts)
 			}, nil
 		},
 	}
-	renderOpts := &d2svg.RenderOpts{}
+	renderOpts := &d2svg.RenderOpts{
+		Center: go2.Pointer(true),
+		Scale:  go2.Pointer(1.0),
+	}
 
 	diagram, _, err := d2lib.Compile(ctx, d2Source, compileOpts, renderOpts)
 	if err != nil {

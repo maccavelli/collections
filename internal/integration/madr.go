@@ -1,3 +1,4 @@
+// Package integration provides functionality for the integration subsystem.
 package integration
 
 import (
@@ -92,6 +93,17 @@ func buildMADRDocument(title string, session *db.SessionState, bp *db.Blueprint,
 
 	// --- Architecture Overview ---
 	writeArchitectureOverview(&b, session, bp)
+
+	// --- System Architecture Diagram ---
+	if bp != nil && bp.D2Source != "" {
+		b.WriteString("## System Architecture\n\n")
+		b.WriteString("```d2\n")
+		b.WriteString(bp.D2Source)
+		if !strings.HasSuffix(bp.D2Source, "\n") {
+			b.WriteString("\n")
+		}
+		b.WriteString("```\n\n")
+	}
 
 	// --- Security Mandates ---
 	writeSecurityMandates(&b, session, bp)

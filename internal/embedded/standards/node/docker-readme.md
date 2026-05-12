@@ -1,3 +1,9 @@
+---
+title: "Node.js Official Docker Image Reference"
+tags: ["node", "docker", "containers", "images"]
+description: "Official documentation for the Node.js Docker image variants (Alpine, Bullseye, Bookworm, Trixie, Slim), usage patterns, Yarn v1 Classic bundling status, and image governance."
+---
+
 # Node.js
 
 [**node - Docker Official Images on Docker Hub**](https://hub.docker.com/_/node)

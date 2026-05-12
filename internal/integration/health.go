@@ -19,34 +19,38 @@ func VerifyConnectivity(store *db.Store) error {
 	defer cancel()
 
 	// 1. GitLab Check
-	var gitToken string
-	if store != nil {
-		gitToken, _ = store.GetSecret("gitlab")
-		if gitToken == "" {
-			gitToken, _ = store.GetSecret("git")
+	if viper.GetBool("git.mock") {
+		slog.Info("integration.health: gitlab connectivity mocked (bypassed)")
+	} else {
+		var gitToken string
+		if store != nil {
+			gitToken, _ = store.GetSecret("gitlab")
+			if gitToken == "" {
+				gitToken, _ = store.GetSecret("git")
+			}
 		}
-	}
-	if gitToken == "" {
-		return fmt.Errorf("gitlab token is required but not configured (run: mcp-server-magicdev token reconfigure)")
-	}
+		if gitToken == "" {
+			return fmt.Errorf("gitlab token is required but not configured (run: mcp-server-magicdev token reconfigure)")
+		}
 
-	gitBaseURL := viper.GetString("git.server_url")
+		gitBaseURL := viper.GetString("git.server_url")
 
-	var glOpts []gitlab.ClientOptionFunc
-	if gitBaseURL != "" {
-		glOpts = append(glOpts, gitlab.WithBaseURL(gitBaseURL))
-	}
+		var glOpts []gitlab.ClientOptionFunc
+		if gitBaseURL != "" {
+			glOpts = append(glOpts, gitlab.WithBaseURL(gitBaseURL))
+		}
 
-	gl, err := gitlab.NewClient(gitToken, glOpts...)
-	if err != nil {
-		return fmt.Errorf("failed to initialize gitlab client: %w", err)
-	}
+		gl, err := gitlab.NewClient(gitToken, glOpts...)
+		if err != nil {
+			return fmt.Errorf("failed to initialize gitlab client: %w", err)
+		}
 
-	_, _, err = gl.Users.CurrentUser(gitlab.WithContext(ctx))
-	if err != nil {
-		return fmt.Errorf("gitlab connectivity check failed: %w", err)
+		_, _, err = gl.Users.CurrentUser(gitlab.WithContext(ctx))
+		if err != nil {
+			return fmt.Errorf("gitlab connectivity check failed: %w", err)
+		}
+		slog.Info("integration.health: gitlab connectivity verified")
 	}
-	slog.Info("integration.health: gitlab connectivity verified")
 
 	// 2. Jira Check
 	if viper.GetBool("jira.mock") {

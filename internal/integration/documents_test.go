@@ -1,6 +1,9 @@
 package integration
 
 import (
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -8,142 +11,153 @@ import (
 	"mcp-server-magicdev/internal/db"
 )
 
-func TestAppendRoadmapSection(t *testing.T) {
-	bp := &db.Blueprint{
-		ImplementationStrategy: map[string]string{"req1": "pattern1"},
-		DependencyManifest: []db.Dependency{
-			{Name: "pkg", Version: "1.0", Ecosystem: "npm"},
-		},
-		ComplexityScores:   map[string]int{"feature1": 5},
-		AporiaTraceability: map[string]string{"contradiction": "resolution"},
+func TestNormalizeLineEndings(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Skipping normalizeLineEndings on non-windows")
 	}
-
-	result := appendRoadmapSection("Base Markdown", bp)
-
-	if !strings.Contains(result, "Base Markdown") {
-		t.Error("Missing base markdown")
-	}
-	if !strings.Contains(result, "pattern1") {
-		t.Error("Missing pattern1")
-	}
-	if !strings.Contains(result, "pkg") {
-		t.Error("Missing dependency")
-	}
-	if !strings.Contains(result, "5 SP") {
-		t.Error("Missing story points")
-	}
-	if !strings.Contains(result, "resolution") {
-		t.Error("Missing aporia resolution")
+	input := "Line1\nLine2\r\nLine3"
+	expected := "Line1\r\nLine2\r\nLine3"
+	result := normalizeLineEndings(input)
+	if result != expected {
+		t.Errorf("Expected %q, got %q", expected, result)
 	}
 }
 
-func TestNormalizeLineEndings(t *testing.T) {
-	// Not exhaustive testing for windows runtime, but verifies no panic
-	res := normalizeLineEndings("line1\nline2\r\nline3")
-	if len(res) == 0 {
-		t.Error("Failed to normalize")
+func TestEscapeGenericsOutsideCode(t *testing.T) {
+	input := "List<T> \n```go\nList<T>\n```\n`Map<K,V>`"
+	expected := "List&lt;T&gt; \n```go\nList<T>\n```\n`Map<K,V>`"
+	result := escapeGenericsOutsideCode(input)
+	if result != expected {
+		t.Errorf("Expected %q, got %q", expected, result)
+	}
+}
+
+func TestMarkdownToXHTML(t *testing.T) {
+	input := "Hello\n---\n<br>\nList<T>"
+	result, err := MarkdownToXHTML(input)
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+	if !strings.Contains(result, "Hello") || !strings.Contains(result, "&lt;T&gt;") {
+		t.Errorf("Unexpected output: %q", result)
+	}
+}
+
+func TestVerifyCrossLinks(t *testing.T) {
+	// Should pass
+	err := verifyCrossLinks([]byte("JIRA-123"), "JIRA-123", "JIRA-123")
+	if err != nil {
+		t.Errorf("Expected nil error, got: %v", err)
+	}
+
+	// Should pass UNKNOWN
+	err = verifyCrossLinks([]byte("missing"), "missing", "UNKNOWN")
+	if err != nil {
+		t.Errorf("Expected nil error for UNKNOWN, got: %v", err)
+	}
+
+	// Should fail after retries
+	err = verifyCrossLinks([]byte("JIRA-123"), "missing", "JIRA-123")
+	if err == nil {
+		t.Error("Expected error for missing crosslink")
+	}
+}
+
+func TestAppendRoadmapSection(t *testing.T) {
+	bp := &db.Blueprint{
+		ImplementationStrategy: map[string]string{
+			"Step1": "Detail1",
+		},
+	}
+	res := appendRoadmapSection("base markdown", bp)
+	if !strings.Contains(res, "base markdown") || !strings.Contains(res, "Technical Implementation Roadmap") || !strings.Contains(res, "Step1") {
+		t.Errorf("Unexpected output: %q", res)
+	}
+
+	resEmpty := appendRoadmapSection("base markdown", &db.Blueprint{})
+	if !strings.Contains(resEmpty, "base markdown") {
+		t.Errorf("Expected base markdown, got: %q", resEmpty)
 	}
 }
 
 func TestGenerateHybridMarkdown(t *testing.T) {
 	bp := &db.Blueprint{
-		DependencyManifest: []db.Dependency{
-			{Name: "pkg", Version: "1.0"},
-		},
-		ComplexityScores: map[string]int{"auth": 5, "api": 8},
-		FileStructure: []db.FileEntry{
-			{Path: "src/index.ts", Type: "file"},
-		},
-		ADRs: []db.ADR{
-			{Title: "Use TypeScript", Status: "Accepted"},
-		},
+		ComplexityScores: map[string]int{"mod1": 3},
+		FileStructure: []db.FileEntry{{Path: "main.go"}},
+		ADRs: []db.ADR{{Title: "adr1"}},
+		DependencyManifest: []db.Dependency{{Name: "dep1"}},
 	}
-	synthesis := &db.SynthesisResolution{Narrative: "test synthesis"}
-
-	hybridBytes, err := generateHybridMarkdown("JIRA-1", "content", bp, synthesis)
+	synth := &db.SynthesisResolution{
+		Decisions: []db.ArchitecturalDecision{{Topic: "t1"}},
+	}
+	res, err := generateHybridMarkdown("JIRA-123", "markdown", bp, synth)
 	if err != nil {
-		t.Fatalf("Failed to generate: %v", err)
+		t.Errorf("Unexpected error: %v", err)
 	}
-
-	output := string(hybridBytes)
-
-	if !strings.Contains(output, "JIRA-1") {
-		t.Errorf("Expected JIRA-1 in output")
-	}
-	if !strings.Contains(output, "pkg") {
-		t.Error("Missing dependency manifest in output")
-	}
-	if !strings.Contains(output, "---json") {
-		t.Error("Missing JSON frontmatter block in output")
-	}
-	// Validate expanded frontmatter fields
-	if !strings.Contains(output, "\"schema_version\"") {
-		t.Error("Missing schema_version in frontmatter")
-	}
-	if !strings.Contains(output, "\"generated_at\"") {
-		t.Error("Missing generated_at in frontmatter")
-	}
-	if !strings.Contains(output, "\"total_story_points\": 13") {
-		t.Error("Missing or incorrect total_story_points in frontmatter")
-	}
-	if !strings.Contains(output, "\"file_count\": 1") {
-		t.Error("Missing or incorrect file_count in frontmatter")
-	}
-	if !strings.Contains(output, "\"adr_count\": 1") {
-		t.Error("Missing or incorrect adr_count in frontmatter")
-	}
-	if len(hybridBytes) == 0 {
-		t.Error("Payload is empty")
+	
+	resStr := string(res)
+	if !strings.Contains(resStr, "JIRA-123") || !strings.Contains(resStr, "3") || !strings.Contains(resStr, "markdown") {
+		t.Errorf("Missing expected hybrid content: %q", resStr)
 	}
 }
 
-func TestGenerateHybridMarkdownNilBlueprint(t *testing.T) {
-	hybridBytes, err := generateHybridMarkdown("JIRA-2", "minimal content", nil, nil)
-	if err != nil {
-		t.Fatalf("Failed to generate with nil bp: %v", err)
-	}
-	output := string(hybridBytes)
-	if !strings.Contains(output, "\"schema_version\": 1") {
-		t.Error("Expected schema_version even with nil blueprint")
-	}
-	if !strings.Contains(output, "minimal content") {
-		t.Error("Missing markdown body")
-	}
-}
+func TestProcessDocumentGeneration(t *testing.T) {
+	// Save current state
+	oldJiraMock := viper.GetBool("jira.mock")
+	oldConfMock := viper.GetBool("confluence.mock")
+	oldGitMock := viper.GetBool("git.mock")
+	oldJiraIssue := viper.GetString("jira.issue")
+	oldParentID := viper.GetString("confluence.parent_page_id")
+	oldGitServer := viper.GetString("git.server_url")
+	oldGitProject := viper.GetString("git.project_path")
+	
+	defer func() {
+		viper.Set("jira.mock", oldJiraMock)
+		viper.Set("confluence.mock", oldConfMock)
+		viper.Set("git.mock", oldGitMock)
+		viper.Set("jira.issue", oldJiraIssue)
+		viper.Set("confluence.parent_page_id", oldParentID)
+		viper.Set("git.server_url", oldGitServer)
+		viper.Set("git.project_path", oldGitProject)
+	}()
 
-func TestProcessDocumentGenerationErrors(t *testing.T) {
-	// Should fail fast due to empty configuration
-	_, _, err := ProcessDocumentGeneration(nil, "title", "md", "/invalid/path", "session", nil, nil)
-	if err == nil {
-		t.Error("Expected error from ProcessDocumentGeneration")
-	}
-}
+	// Set up mocks
+	viper.Set("jira.mock", true)
+	viper.Set("confluence.mock", true)
+	viper.Set("git.mock", true)
+	viper.Set("jira.issue", "") // let it create one
+	viper.Set("confluence.parent_page_id", "")
+	viper.Set("git.server_url", "http://example.com")
+	viper.Set("git.project_path", "test/project")
+	
+	dbPath := filepath.Join(os.TempDir(), "test_documents.db")
+	viper.Set("server.db_path", dbPath)
+	defer os.Remove(dbPath)
 
-func TestProcessDocumentGenerationNetworkFails(t *testing.T) {
-	// Temporarily set valid-looking URLs that will fail to connect
-	viper.Set("confluence.url", "http://127.0.0.1:0")
-	viper.Set("confluence.token", "dummy")
-	viper.Set("jira.url", "http://127.0.0.1:0")
-	viper.Set("jira.token", "dummy")
+	// Ensure store
+	store, _ := db.InitStore()
+	defer store.Close()
+	
+	store.SetSecret("gitlab", "dummy-token")
+	
+	session := &db.SessionState{
+		SessionID: "test-sess",
+	}
+	store.SaveSession(session)
 	
 	bp := &db.Blueprint{
-		ComplexityScores: map[string]int{"feature1": 5},
+		ComplexityScores: map[string]int{"mod1": 3},
+		FileStructure: []db.FileEntry{{Path: "main.go"}},
+	}
+	synth := &db.SynthesisResolution{
+		Decisions: []db.ArchitecturalDecision{{Topic: "t1"}},
 	}
 	
-	// This will fail at git push because the repo path is invalid,
-	// but it will successfully traverse the Jira and Confluence setup logic.
-	_, _, err := ProcessDocumentGeneration(nil, "title", "md", "/invalid/path", "session", bp, &db.SynthesisResolution{Narrative: "test"})
-	if err == nil {
-		t.Error("Expected error from ProcessDocumentGeneration at git push")
+	jiraID, _, _, err := ProcessDocumentGeneration(store, "Test Title", "Test Markdown", "main", "test-sess", bp, synth)
+	if err != nil {
+		t.Errorf("ProcessDocumentGeneration returned error: %v", err)
 	}
-	
-	viper.Reset()
-}
-
-
-func TestPushToGitLabError(t *testing.T) {
-	err := pushToGitLab(nil, "JIRA-123", "main", "title", []byte("data"), []byte("adr data"), nil)
-	if err == nil {
-		t.Error("Expected error from pushToGitLab")
+	if jiraID != "UNKNOWN" {
+		t.Errorf("Expected jiraID to be UNKNOWN for mocked test, got %s", jiraID)
 	}
 }

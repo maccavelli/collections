@@ -4,6 +4,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -11,8 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/denisbrodbeck/machineid"
+	"github.com/google/uuid"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/spf13/viper"
 
 	"mcp-server-magicdev/internal/config"
 	"mcp-server-magicdev/internal/db"
@@ -132,7 +134,7 @@ type CompleteDesignArgs struct {
 
 // UpdateConfigArgs defines the UpdateConfigArgs structure.
 type UpdateConfigArgs struct {
-	Key   string `json:"key" jsonschema:"Configuration key to update. Valid keys: confluence.url, confluence.space, confluence.parent_page_id, confluence.mock, jira.email, jira.url, jira.project, jira.issue, jira.mock, jira.story_points_field, git.username, git.server_url, git.project_path, git.default_branch, agent.default_stack, runtime.gomemlimit, runtime.gomaxprocs, server.log_level, server.db_path, llm.model"`
+	Key   string `json:"key" jsonschema:"Configuration key to update. Valid keys: confluence.url, confluence.space, confluence.parent_page_id, confluence.mock, jira.email, jira.url, jira.project, jira.issue, jira.mock, jira.story_points_field, git.username, git.server_url, git.project_path, git.default_branch, agent.default_stack, runtime.gomemlimit, runtime.gomaxprocs, server.log_level, server.db_path, llm.provider, llm.model, llm.disable, standards.node.path, standards.node.total_files, standards.node.max_directory_depth, standards.dotnet.path, standards.dotnet.total_files, standards.dotnet.max_directory_depth"`
 	Value string `json:"value" jsonschema:"New value to set"`
 }
 
@@ -191,7 +193,7 @@ func (h *ToolHandler) EvaluateIdea(ctx context.Context, req *mcp.CallToolRequest
 
 	if session == nil {
 		// Generate a unique session ID
-		id, _ := machineid.ID()
+		id := uuid.New().String()
 		sessionID = fmt.Sprintf("session-%s", id[:8])
 		session = db.NewSessionState(sessionID)
 		session.OriginalIdea = args.RawIdea
@@ -226,13 +228,10 @@ func (h *ToolHandler) EvaluateIdea(ctx context.Context, req *mcp.CallToolRequest
 	populated := 0
 	if args.RawIdea != "" { populated++ }
 	if args.TargetStack != "" { populated++ }
-	if args.SessionID != "" { populated++ }
-	if len(args.Tags) > 0 { populated++ }
 	if len(args.Labels) > 0 { populated++ }
 	if args.TargetEnvironment != "" { populated++ }
-	if len(args.ComplianceRequirements) > 0 { populated++ }
 	if args.BusinessCase != "" { populated++ }
-	CheckPayloadCompleteness("evaluate_idea", populated, 8)
+	CheckPayloadCompleteness(session, "evaluate_idea", populated, 5)
 
 	if err := h.store.SaveSession(session); err != nil {
 		return errorResult(err.Error())
@@ -319,6 +318,8 @@ func (h *ToolHandler) EvaluateIdea(ctx context.Context, req *mcp.CallToolRequest
 		if !gatekeeperOK {
 			slog.Warn("Intelligence Engine failed after all retries, using defaults")
 		}
+	} else if errors.Is(llmErr, integration.ErrLLMDisabled) {
+		slog.Info("Intelligence Engine bypassed via config")
 	} else {
 		slog.Info("LLM not configured, skipping Intelligence Engine", "reason", llmErr)
 	}
@@ -347,6 +348,20 @@ func (h *ToolHandler) ClarifyRequirements(ctx context.Context, req *mcp.CallTool
 		return errorResult("session not found")
 	}
 
+	// --- Design Quality Gate ---
+	// Validate that the Socratic Trifecta data meets minimum depth thresholds
+	// BEFORE processing. This enforces the "garbage in, solid spec out" contract:
+	// the server rejects thin data and demands the agent produce comprehensive analysis.
+	if args.IsVetted {
+		if err := validateDesignQuality(args.DesignProposal, args.SkepticAnalysis, args.SynthesisResolution); err != nil {
+			slog.Warn("clarify_requirements: design quality gate rejected input",
+				"module_count", len(args.DesignProposal.ProposedModules),
+				"session_id", args.SessionID,
+			)
+			return errorResult(err.Error())
+		}
+	}
+
 	session.IsVetted = args.IsVetted
 
 	meta, err := h.store.GetSessionMetadata(args.SessionID)
@@ -366,19 +381,22 @@ func (h *ToolHandler) ClarifyRequirements(ctx context.Context, req *mcp.CallTool
 
 		// Build structured question list from skeptic + synthesis
 		var questions []string
+		var topics []string
 		if args.SkepticAnalysis != nil {
 			for _, q := range args.SkepticAnalysis.GranularQuestions {
 				questions = append(questions, fmt.Sprintf("[%s] %s\n  Context: %s\n  Impact: %s", q.Topic, q.Question, q.Context, q.Impact))
+				topics = append(topics, q.Topic)
 			}
 		}
 		if args.SynthesisResolution != nil {
 			for _, q := range args.SynthesisResolution.OutstandingQuestions {
 				questions = append(questions, fmt.Sprintf("[%s] %s\n  Context: %s\n  Impact: %s", q.Topic, q.Question, q.Context, q.Impact))
+				topics = append(topics, q.Topic)
 			}
 		}
 
 		// Record Socratic History
-		historyEntry := fmt.Sprintf("[%s] Conflict Detected: %d questions escalated to user.", time.Now().UTC().Format(time.RFC3339), len(questions))
+		historyEntry := fmt.Sprintf("[%s] Conflict Detected (%d questions): %s", time.Now().UTC().Format(time.RFC3339), len(questions), strings.Join(topics, ", "))
 		if meta.SocraticHistory == "" {
 			meta.SocraticHistory = historyEntry
 		} else {
@@ -390,9 +408,15 @@ func (h *ToolHandler) ClarifyRequirements(ctx context.Context, req *mcp.CallTool
 		return errorResult(msg)
 	}
 
-	// Persist all structured Trifecta data
-	session.DesignProposal = args.DesignProposal
-	session.SkepticAnalysis = args.SkepticAnalysis
+	// Persist Trifecta data: only store on FIRST submission.
+	// On re-entries after a Socratic conflict, the agent may send stripped-down
+	// or empty data — overwriting the original would destroy the MADR guardrails.
+	if session.DesignProposal == nil && args.DesignProposal != nil {
+		session.DesignProposal = args.DesignProposal
+	}
+	if session.SkepticAnalysis == nil && args.SkepticAnalysis != nil {
+		session.SkepticAnalysis = args.SkepticAnalysis
+	}
 
 	// --- Input Sanitization: strip server-authority fields ---
 	if args.ChaosAnalysis != nil {
@@ -412,7 +436,9 @@ func (h *ToolHandler) ClarifyRequirements(ctx context.Context, req *mcp.CallTool
 		if args.ChaosAnalysis.ChaosScore > 10 {
 			args.ChaosAnalysis.ChaosScore = 10
 		}
-		session.ChaosAnalysis = args.ChaosAnalysis
+		if session.ChaosAnalysis == nil {
+			session.ChaosAnalysis = args.ChaosAnalysis
+		}
 	}
 	if args.SynthesisResolution != nil {
 		args.SynthesisResolution.ChaosVetted = false
@@ -432,6 +458,90 @@ func (h *ToolHandler) ClarifyRequirements(ctx context.Context, req *mcp.CallTool
 		args.SynthesisResolution,
 	)
 
+	// --- Secondary Socratic Integrity Gate with Retry Enforcement ---
+	// The Aporia Engine may have generated new deviation challenges or fatal flaws.
+	// After exhausting standards-based and LLM-based auto-resolution, any remaining
+	// questions MUST go to the human. A retry counter prevents infinite agent loops.
+	// Two kill conditions: (1) repeated topics after max retries, (2) absolute cap at 2x max.
+	const maxSocraticRetries = 5
+	if session.SynthesisResolution != nil && len(session.SynthesisResolution.OutstandingQuestions) > 0 {
+		session.IsVetted = false
+		session.SocraticRetryCount++
+
+		var questions []string
+		var topics []string
+		for _, q := range session.SynthesisResolution.OutstandingQuestions {
+			questions = append(questions, fmt.Sprintf("[%s] %s\n  Context: %s\n  Impact: %s", q.Topic, q.Question, q.Context, q.Impact))
+			topics = append(topics, q.Topic)
+		}
+
+		// Detect infinite loop: check if the same topics keep appearing
+		var repeatedTopics []string
+		if session.SocraticRetryCount > maxSocraticRetries {
+			escalatedSet := make(map[string]bool, len(session.SocraticEscalatedTopics))
+			for _, t := range session.SocraticEscalatedTopics {
+				escalatedSet[t] = true
+			}
+			for _, t := range topics {
+				if escalatedSet[t] {
+					repeatedTopics = append(repeatedTopics, t)
+				}
+			}
+		}
+
+		// Track which topics have been escalated
+		seen := make(map[string]bool, len(session.SocraticEscalatedTopics))
+		for _, t := range session.SocraticEscalatedTopics {
+			seen[t] = true
+		}
+		for _, t := range topics {
+			if !seen[t] {
+				session.SocraticEscalatedTopics = append(session.SocraticEscalatedTopics, t)
+			}
+		}
+
+		historyEntry := fmt.Sprintf("[%s] Conflict Detected by Aporia (attempt %d/%d, %d questions): %s",
+			time.Now().UTC().Format(time.RFC3339), session.SocraticRetryCount, maxSocraticRetries,
+			len(questions), strings.Join(topics, ", "))
+		if meta.SocraticHistory == "" {
+			meta.SocraticHistory = historyEntry
+		} else {
+			meta.SocraticHistory += "\n" + historyEntry
+		}
+		_ = h.store.SaveSessionMetadata(meta)
+		_ = h.store.SaveSession(session)
+
+		// Session lock: after MAX_RETRIES with repeated topics OR 2x absolute cap (new topics each time)
+		absoluteCap := maxSocraticRetries * 2
+		if len(repeatedTopics) > 0 || session.SocraticRetryCount > absoluteCap {
+			lockReason := "repeated questions without resolution"
+			if session.SocraticRetryCount > absoluteCap {
+				lockReason = fmt.Sprintf("absolute retry cap exceeded (%d attempts)", session.SocraticRetryCount)
+			}
+			msg := fmt.Sprintf("SOCRATIC SESSION LOCKED (%s): %d questions remain after %d attempts. "+
+				"The system has exhausted standards-based and LLM-based auto-resolution. "+
+				"Human input is MANDATORY. You MUST present these questions to the user and include their answers as decisions.\n\n"+
+				"Unresolved Questions:\n%s", lockReason, len(questions), session.SocraticRetryCount, strings.Join(questions, "\n\n"))
+			return errorResult(msg)
+		}
+
+		// Build enhanced error with resolution summary
+		var msg strings.Builder
+		msg.WriteString("SOCRATIC CONFLICT DETECTED (via Aporia Gate):\n\n")
+		msg.WriteString(fmt.Sprintf("Resolution Summary (attempt %d of %d):\n", session.SocraticRetryCount, maxSocraticRetries))
+		msg.WriteString("  The system has already attempted auto-resolution via ingested standards and LLM analysis.\n")
+		msg.WriteString(fmt.Sprintf("  HUMAN INPUT REQUIRED: %d questions (listed below)\n\n", len(questions)))
+		msg.WriteString("The following questions could NOT be resolved by standards or LLM analysis.\n")
+		msg.WriteString("You MUST present these to the user and include their answers as decisions.\n")
+		msg.WriteString("Once answered, re-run 'clarify_requirements' with the updated synthesis.\n\n")
+		msg.WriteString("Outstanding Questions:\n")
+		msg.WriteString(strings.Join(questions, "\n\n"))
+		return errorResult(msg.String())
+	}
+
+	// All questions resolved — reset retry counter
+	session.SocraticRetryCount = 0
+	session.SocraticEscalatedTopics = nil
 	session.StepStatus["clarify_requirements"] = "COMPLETED"
 	session.CurrentStep = "clarify_requirements"
 
@@ -443,14 +553,24 @@ func (h *ToolHandler) ClarifyRequirements(ctx context.Context, req *mcp.CallTool
 	if args.SkepticAnalysis != nil { populated++ }
 	if args.ChaosAnalysis != nil { populated++ }
 	if args.SynthesisResolution != nil { populated++ }
-	CheckPayloadCompleteness("clarify_requirements", populated, 5)
+	CheckPayloadCompleteness(session, "clarify_requirements", populated, 5)
 
 	if err := h.store.SaveSession(session); err != nil {
 		return errorResult(err.Error())
 	}
 
 	// Record resolution in Socratic History
-	historyEntry := fmt.Sprintf("[%s] Synthesis Resolved: Architecture vetted successfully.", time.Now().UTC().Format(time.RFC3339))
+	summary := ""
+	decisions := 0
+	if session.SynthesisResolution != nil {
+		summary = session.SynthesisResolution.Narrative
+		if len(summary) > 97 {
+			summary = summary[:97] + "..."
+		}
+		decisions = len(session.SynthesisResolution.Decisions)
+	}
+	historyEntry := fmt.Sprintf("[%s] Synthesis Resolved (%d decisions locked): %s", time.Now().UTC().Format(time.RFC3339), decisions, summary)
+	
 	if meta.SocraticHistory == "" {
 		meta.SocraticHistory = historyEntry
 	} else {
@@ -462,26 +582,33 @@ func (h *ToolHandler) ClarifyRequirements(ctx context.Context, req *mcp.CallTool
 	resultData := map[string]any{
 		"is_vetted": true,
 	}
-	if args.DesignProposal != nil {
-		resultData["module_count"] = len(args.DesignProposal.ProposedModules)
-		resultData["template_ast_files"] = len(args.DesignProposal.TemplateAST)
-		resultData["security_mandates"] = len(args.DesignProposal.SecurityMandates)
-		resultData["stack_tuning_items"] = len(args.DesignProposal.StackTuning)
+
+	// Return the FULL stored session data so the agent sees accumulated context.
+	// This enables compounding: each phase builds upon the data from previous phases.
+	if session.DesignProposal != nil {
+		resultData["module_count"] = len(session.DesignProposal.ProposedModules)
+		resultData["template_ast_files"] = len(session.DesignProposal.TemplateAST)
+		resultData["security_mandates"] = len(session.DesignProposal.SecurityMandates)
+		resultData["stack_tuning_items"] = len(session.DesignProposal.StackTuning)
+		resultData["design_proposal"] = session.DesignProposal
 	}
-	if args.SynthesisResolution != nil {
-		resultData["decisions_resolved"] = len(args.SynthesisResolution.Decisions)
-	}
-	if args.ChaosAnalysis != nil {
-		resultData["chaos_score"] = args.ChaosAnalysis.ChaosScore
-		resultData["fatal_flaws"] = len(args.ChaosAnalysis.FatalFlaws)
-		resultData["constraints"] = len(args.ChaosAnalysis.Constraints)
-		resultData["rejected_patterns"] = len(args.ChaosAnalysis.RejectedPatterns)
+	if session.SkepticAnalysis != nil {
+		resultData["skeptic_analysis"] = session.SkepticAnalysis
 	}
 	if session.SynthesisResolution != nil {
+		resultData["decisions_resolved"] = len(session.SynthesisResolution.Decisions)
 		resultData["llm_enhanced"] = session.SynthesisResolution.LLMEnhanced
 		resultData["chaos_vetted"] = session.SynthesisResolution.ChaosVetted
+		resultData["synthesis_resolution"] = session.SynthesisResolution
 	}
-	
+	if session.ChaosAnalysis != nil {
+		resultData["chaos_score"] = session.ChaosAnalysis.ChaosScore
+		resultData["fatal_flaws"] = len(session.ChaosAnalysis.FatalFlaws)
+		resultData["constraints"] = len(session.ChaosAnalysis.Constraints)
+		resultData["rejected_patterns"] = len(session.ChaosAnalysis.RejectedPatterns)
+		resultData["chaos_analysis"] = session.ChaosAnalysis
+	}
+
 	LogSessionHash(session, "clarify_requirements")
 	return hybridMarkdownResult(hint, resultData)
 }
@@ -506,11 +633,12 @@ func (h *ToolHandler) IngestStandards(ctx context.Context, req *mcp.CallToolRequ
 
 	populated := 0
 	if args.SessionID != "" { populated++ }
-	if args.SourceURL != "" { populated++ }
-	if args.FilePath != "" { populated++ }
-	CheckPayloadCompleteness("ingest_standards", populated, 3)
+	if args.SourceURL != "" || args.FilePath != "" { populated++ }
+	CheckPayloadCompleteness(nil, "ingest_standards", populated, 2)
 
 	if session, loadErr := h.store.LoadSession(args.SessionID); loadErr == nil && session != nil {
+		session.StepStatus["ingest_standards"] = "COMPLETED"
+		session.CurrentStep = "ingest_standards"
 		RecordStepTiming(session, "ingest_standards")
 		_ = h.store.SaveSession(session)
 		LogSessionHash(session, "ingest_standards")
@@ -567,12 +695,27 @@ func (h *ToolHandler) CritiqueDesign(ctx context.Context, req *mcp.CallToolReque
 		return errorResult(err.Error())
 	}
 
-	hint := "Next, call 'finalize_requirements' to generate the golden copy."
-	LogSessionHash(session, "critique_design")
-	return hybridMarkdownResult(hint, map[string]any{
+	// Return accumulated session state so the agent has full context entering finalize_requirements.
+	resultData := map[string]any{
 		"is_vetted":    true,
 		"critique_log": "Vetting passed successfully.",
-	})
+	}
+	if session.DesignProposal != nil {
+		resultData["design_proposal"] = session.DesignProposal
+	}
+	if session.SkepticAnalysis != nil {
+		resultData["skeptic_analysis"] = session.SkepticAnalysis
+	}
+	if session.SynthesisResolution != nil {
+		resultData["synthesis_resolution"] = session.SynthesisResolution
+	}
+	if session.ChaosAnalysis != nil {
+		resultData["chaos_analysis"] = session.ChaosAnalysis
+	}
+
+	hint := "Next, call 'finalize_requirements' to generate the golden copy."
+	LogSessionHash(session, "critique_design")
+	return hybridMarkdownResult(hint, resultData)
 }
 
 // FinalizeRequirements performs the FinalizeRequirements operation.
@@ -590,18 +733,37 @@ func (h *ToolHandler) FinalizeRequirements(ctx context.Context, req *mcp.CallToo
 	populated := 0
 	if args.SessionID != "" { populated++ }
 	if args.ApprovalSignature != "" { populated++ }
-	CheckPayloadCompleteness("finalize_requirements", populated, 2)
+	CheckPayloadCompleteness(session, "finalize_requirements", populated, 2)
 
 	if err := h.store.SaveSession(session); err != nil {
 		return errorResult(err.Error())
 	}
 
+	// Build the golden copy summary: return ALL accumulated session data
+	// so the agent has the full compounded context entering blueprint_implementation.
+	meta, _ := h.store.GetSessionMetadata(args.SessionID)
+	resultData := map[string]any{
+		"status": "APPROVED",
+	}
+	if session.DesignProposal != nil {
+		resultData["design_proposal"] = session.DesignProposal
+	}
+	if session.SkepticAnalysis != nil {
+		resultData["skeptic_analysis"] = session.SkepticAnalysis
+	}
+	if session.SynthesisResolution != nil {
+		resultData["synthesis_resolution"] = session.SynthesisResolution
+	}
+	if session.ChaosAnalysis != nil {
+		resultData["chaos_analysis"] = session.ChaosAnalysis
+	}
+	if meta != nil {
+		resultData["intelligence_engine"] = meta
+	}
+
 	hint := "Next, call 'blueprint_implementation' to generate the technical mapping."
 	LogSessionHash(session, "finalize_requirements")
-	return hybridMarkdownResult(hint, map[string]any{
-		"golden_copy_json": args.ApprovalSignature,
-		"status":           "APPROVED",
-	})
+	return hybridMarkdownResult(hint, resultData)
 }
 
 // BlueprintImplementation performs the BlueprintImplementation operation.
@@ -670,6 +832,13 @@ func (h *ToolHandler) BlueprintImplementation(ctx context.Context, req *mcp.Call
 			}
 		}
 	}
+
+	// --- Server-side Auto-Enrichment ---
+	// Expand thin blueprint data from accumulated session state. This is the core
+	// mechanism that ensures rich output from minimal agent input: the server generates
+	// file structures, NFRs, testing strategies, complexity scores, and dependencies
+	// from the Socratic Trifecta data accumulated in earlier phases.
+	enrichBlueprintFromSession(bp, session)
 
 	// Auto-synthesize ADRs from Socratic Trifecta decisions when the agent
 	// does not provide them explicitly. This ensures every MADR has at
@@ -743,43 +912,84 @@ func (h *ToolHandler) BlueprintImplementation(ctx context.Context, req *mcp.Call
 	populated := 0
 	if args.SessionID != "" { populated++ }
 	if args.PatternPreference != "" { populated++ }
-	if len(args.ImplementationStrategy) > 0 { populated++ }
-	if len(args.Dependencies) > 0 { populated++ }
-	if len(args.ComplexityScores) > 0 { populated++ }
-	if len(args.FileStructure) > 0 { populated++ }
-	if len(args.SecurityConsiderations) > 0 { populated++ }
-	if len(args.NFRs) > 0 { populated++ }
-	if len(args.TestingStrategy) > 0 { populated++ }
-	if len(args.ADRs) > 0 { populated++ }
-	if len(args.APIContracts) > 0 { populated++ }
-	if len(args.DataModel) > 0 { populated++ }
-	if len(args.MCPTools) > 0 { populated++ }
-	if len(args.MCPResources) > 0 { populated++ }
-	if len(args.MCPPrompts) > 0 { populated++ }
-	CheckPayloadCompleteness("blueprint_implementation", populated, 15)
+	if len(bp.ImplementationStrategy) > 0 { populated++ }
+	if len(bp.DependencyManifest) > 0 { populated++ }
+	if len(bp.ComplexityScores) > 0 { populated++ }
+	if len(bp.FileStructure) > 0 { populated++ }
+	if len(bp.SecurityConsiderations) > 0 { populated++ }
+	if len(bp.NonFunctionalRequirements) > 0 { populated++ }
+	if len(bp.TestingStrategy) > 0 { populated++ }
+	if len(bp.ADRs) > 0 { populated++ }
+	if len(bp.APIContracts) > 0 { populated++ }
+	if len(bp.DataModel) > 0 { populated++ }
+	if len(bp.MCPTools) > 0 { populated++ }
+	if len(bp.MCPResources) > 0 { populated++ }
+	if len(bp.MCPPrompts) > 0 { populated++ }
+	CheckPayloadCompleteness(session, "blueprint_implementation", populated, 15)
 
-	if err := h.store.SaveBlueprint(args.SessionID, bp); err != nil {
-		return errorResult(fmt.Sprintf("failed to save blueprint: %v", err))
-	}
+	// Attach the blueprint to the session object so it persists in a single
+	// coherent write. Previous code used separate SaveBlueprint/UpdateCurrentStep/
+	// AppendStepStatus calls, each performing independent read-modify-write cycles
+	// that overwrote each other — critically losing the blueprint data.
+	session.Blueprint = bp
+	session.StepStatus["blueprint_implementation"] = "COMPLETED"
+
 	if err := h.store.SaveSession(session); err != nil {
-		slog.Error("blueprint_implementation: failed to save session telemetry", "error", err)
+		return errorResult(fmt.Sprintf("failed to save session with blueprint: %v", err))
 	}
-	if err := h.store.UpdateCurrentStep(args.SessionID, "blueprint_implementation"); err != nil {
-		slog.Error("blueprint_implementation: failed to update step", "error", err)
-	}
-
-	_ = h.store.AppendStepStatus(args.SessionID, "blueprint_implementation", "COMPLETED")
 
 	hint := "Next, call 'generate_documents' to sync the artifacts with Jira, Confluence, and GitLab."
 	LogSessionHash(session, "blueprint_implementation")
-	return hybridMarkdownResult(hint, map[string]any{
-		"dependency_manifest": bp.DependencyManifest,
-		"complexity_score":    bp.ComplexityScores,
-		"file_count":          len(bp.FileStructure),
-		"adr_count":           len(bp.ADRs),
-		"d2_generated":        bp.D2Source != "",
-		"svg_rendered":        svgRendered,
-	})
+
+	// Return the FULL blueprint so the agent sees all accumulated and generated data.
+	resultData := map[string]any{
+		"d2_generated": bp.D2Source != "",
+		"svg_rendered": svgRendered,
+	}
+	if len(bp.ADRs) > 0 {
+		resultData["adrs"] = bp.ADRs
+	}
+	if len(bp.FileStructure) > 0 {
+		resultData["file_structure"] = bp.FileStructure
+	}
+	if len(bp.DependencyManifest) > 0 {
+		resultData["dependency_manifest"] = bp.DependencyManifest
+	}
+	if len(bp.SecurityConsiderations) > 0 {
+		resultData["security_considerations"] = bp.SecurityConsiderations
+	}
+	if len(bp.NonFunctionalRequirements) > 0 {
+		resultData["non_functional_requirements"] = bp.NonFunctionalRequirements
+	}
+	if len(bp.APIContracts) > 0 {
+		resultData["api_contracts"] = bp.APIContracts
+	}
+	if len(bp.DataModel) > 0 {
+		resultData["data_model"] = bp.DataModel
+	}
+	if len(bp.MCPTools) > 0 {
+		resultData["mcp_tools"] = bp.MCPTools
+	}
+	if len(bp.MCPResources) > 0 {
+		resultData["mcp_resources"] = bp.MCPResources
+	}
+	if len(bp.MCPPrompts) > 0 {
+		resultData["mcp_prompts"] = bp.MCPPrompts
+	}
+	if len(bp.ComplexityScores) > 0 {
+		resultData["complexity_scores"] = bp.ComplexityScores
+	}
+	if len(bp.ImplementationStrategy) > 0 {
+		resultData["implementation_strategy"] = bp.ImplementationStrategy
+	}
+	if len(bp.AporiaTraceability) > 0 {
+		resultData["aporia_traceability"] = bp.AporiaTraceability
+	}
+	if len(bp.TestingStrategy) > 0 {
+		resultData["testing_strategy"] = bp.TestingStrategy
+	}
+
+	return hybridMarkdownResult(hint, resultData)
 }
 
 // buildComprehensiveSpec synthesizes all accumulated session state into a
@@ -1142,10 +1352,47 @@ func buildComprehensiveSpec(session *db.SessionState, bp *db.Blueprint, meta *db
 		b.WriteString("\n")
 	}
 
-	// --- System Architecture Diagram (reference only — source in separate .d2 file) ---
+	// --- Implementation Guardrails ---
+	totalFiles := 0
+	maxDepth := 0
+	stdPath := ""
+	if strings.EqualFold(session.TechStack, ".NET") {
+		totalFiles = viper.GetInt("standards.dotnet.total_files")
+		maxDepth = viper.GetInt("standards.dotnet.max_directory_depth")
+		stdPath = viper.GetString("standards.dotnet.path")
+	} else if strings.EqualFold(session.TechStack, "Node") {
+		totalFiles = viper.GetInt("standards.node.total_files")
+		maxDepth = viper.GetInt("standards.node.max_directory_depth")
+		stdPath = viper.GetString("standards.node.path")
+	}
+
+	b.WriteString("## Implementation Guardrails\n\n")
+	if stdPath != "" {
+		b.WriteString(fmt.Sprintf("> [!IMPORTANT]\n> **MANDATORY**: The agent MUST, before creating any files or beginning to code, read the `.gitignore` template from `%s` and write it to the root of the project directory.\n\n", filepath.Join(stdPath, ".gitignore")))
+	} else {
+		b.WriteString("> [!IMPORTANT]\n> **MANDATORY**: The agent MUST, before creating any files or beginning to code, write the `.gitignore` file appropriate for the task from the local standards repository to the project directory.\n\n")
+	}
+	
+	if totalFiles > 0 || maxDepth > 0 {
+		b.WriteString("### Execution Constraints\n\n")
+		if totalFiles > 0 {
+			b.WriteString(fmt.Sprintf("- **Max Allowed Files**: `%d` (The agent must not exceed this number of generated files)\n", totalFiles))
+		}
+		if maxDepth > 0 {
+			b.WriteString(fmt.Sprintf("- **Max Directory Depth**: `%d` (The agent must not create folder structures deeper than this limit)\n", maxDepth))
+		}
+		b.WriteString("\n")
+	}
+
+	// --- System Architecture Diagram (D2 ONLY — mermaid is NOT supported) ---
 	if bp.D2Source != "" {
 		b.WriteString("## System Architecture\n\n")
-		b.WriteString(fmt.Sprintf("Architecture diagram available as separate files: `%s_architecture.d2` (source) and `%s_architecture.svg` (rendered).\n\n", title, title))
+		b.WriteString("```d2\n")
+		b.WriteString(bp.D2Source)
+		if !strings.HasSuffix(bp.D2Source, "\n") {
+			b.WriteString("\n")
+		}
+		b.WriteString("```\n\n")
 	}
 
 	// --- Agent Supplementary Notes ---
@@ -1191,12 +1438,15 @@ func (h *ToolHandler) GenerateDocuments(ctx context.Context, req *mcp.CallToolRe
 	meta, _ := h.store.GetSessionMetadata(args.SessionID)
 	markdownPayload := buildComprehensiveSpec(session, bp, meta, args.Markdown, args.Title)
 
-	jiraID, browseURL, err := integration.ProcessDocumentGeneration(h.store, args.Title, markdownPayload, args.TargetBranch, args.SessionID, bp, aporias)
+	jiraID, browseURL, confluencePageID, err := integration.ProcessDocumentGeneration(h.store, args.Title, markdownPayload, args.TargetBranch, args.SessionID, bp, aporias)
 	if err != nil {
 		return errorResult(err.Error())
 	}
 	session.JiraID = jiraID
 	session.JiraBrowseURL = browseURL
+	session.ConfluencePageID = confluencePageID
+	session.StepStatus["generate_documents"] = "COMPLETED"
+	RecordStepTiming(session, "generate_documents")
 	if err := h.store.SaveSession(session); err != nil {
 		return errorResult(err.Error())
 	}
@@ -1217,6 +1467,12 @@ func (h *ToolHandler) CompleteDesign(ctx context.Context, req *mcp.CallToolReque
 	var handoffSummary string
 
 	if err == nil && session != nil {
+		// Mark pipeline as completed so the dashboard can display IDLE state
+		session.CurrentStep = "complete_design"
+		session.StepStatus["complete_design"] = "COMPLETED"
+		RecordStepTiming(session, "complete_design")
+		session.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+
 		jiraTask = session.JiraID
 		if session.Blueprint != nil {
 			if session.Blueprint.D2Source != "" {
@@ -1227,7 +1483,7 @@ func (h *ToolHandler) CompleteDesign(ctx context.Context, req *mcp.CallToolReque
 			}
 		}
 
-		// Build comprehensive handoff summary BEFORE deleting the session
+		// Build comprehensive handoff summary
 		meta, _ := h.store.GetSessionMetadata(args.SessionID)
 		title := "Design Handoff Summary"
 		if jiraTask != "UNKNOWN" && jiraTask != "" {
@@ -1250,10 +1506,18 @@ func (h *ToolHandler) CompleteDesign(ctx context.Context, req *mcp.CallToolReque
 			}
 		}
 
-	}
+		// Layer 2: Upload handoff to Confluence as an additional child page
+		if session.ConfluencePageID != "" {
+			if uploadErr := integration.UploadHandoffToConfluence(h.store, session.ConfluencePageID, title, handoffSummary); uploadErr != nil {
+				slog.Warn("complete_design: confluence handoff upload failed", "error", uploadErr)
+			}
+		}
 
-	if err := h.store.DeleteSession(args.SessionID); err != nil {
-		slog.Warn("complete_design: session cleanup failed", "error", err, "session_id", args.SessionID)
+		// Archive completed session with a 7-day TTL so it auto-expires.
+		// Sessions can also be cleaned up immediately via the 'purge' command.
+		if saveErr := h.store.SaveCompletedSession(session); saveErr != nil {
+			slog.Warn("complete_design: failed to save completed session", "error", saveErr)
+		}
 	}
 
 	return hybridMarkdownResult(
@@ -1277,42 +1541,42 @@ func RegisterTools(s *mcp.Server, store *db.Store) {
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "evaluate_idea",
-		Description: "[PHASE: 1] Initializes a new MagicDev session for the provided software idea. Returns a session_id that MUST be used in all subsequent steps. [Routing Tags: initialize, bootstrap]",
+		Description: "[PHASE: 1] Initializes a new MagicDev session. This is the entry point for the '/magicdev-start idea:' command. Pass the idea to this tool. Returns a session_id that MUST be used in all subsequent steps. Upon success, you MUST immediately call ingest_standards.",
 	}, h.EvaluateIdea)
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "ingest_standards",
-		Description: "[PHASE: 2] Pulls in applicable architectural standards for the project and fetches their content. [REQUIRES: evaluate_idea]",
+		Description: "[PHASE: 2] Pulls in applicable architectural standards for the project and fetches their content. [REQUIRES: evaluate_idea] Upon success, you MUST immediately call clarify_requirements.",
 	}, h.IngestStandards)
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "clarify_requirements",
-		Description: "[PHASE: 3] Performs Socratic analysis to fill gaps in the idea AGAINST the ingested standards. If conflicts exist, this will return an error instructing you to ask the user questions. [REQUIRES: ingest_standards] [Routing Tags: analyze, clarify]",
+		Description: "[PHASE: 3] Performs Socratic analysis to fill gaps in the idea AGAINST the ingested standards. If conflicts exist, this will return an error instructing you to ask the user questions. [REQUIRES: ingest_standards] Upon success, you MUST immediately call critique_design.",
 	}, h.ClarifyRequirements)
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "critique_design",
-		Description: "[PHASE: 4] Vets the proposed architecture against the ingested standards. [REQUIRES: clarify_requirements]",
+		Description: "[PHASE: 4] Vets the proposed architecture against the ingested standards. [REQUIRES: clarify_requirements] Upon success, you MUST immediately call finalize_requirements.",
 	}, h.CritiqueDesign)
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "finalize_requirements",
-		Description: "[PHASE: 5] Consolidates the vetted design into a Golden Copy JSON spec. [REQUIRES: critique_design]",
+		Description: "[PHASE: 5] Consolidates the vetted design into a Golden Copy JSON spec. [REQUIRES: critique_design] Upon success, you MUST immediately call blueprint_implementation.",
 	}, h.FinalizeRequirements)
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "blueprint_implementation",
-		Description: "[PHASE: 6] Generates a technical implementation blueprint mapping the design to structural patterns. [REQUIRES: finalize_requirements]",
+		Description: "[PHASE: 6] Generates a technical implementation blueprint mapping the design to structural patterns. [REQUIRES: finalize_requirements] Upon success, you MUST immediately call generate_documents.",
 	}, h.BlueprintImplementation)
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "generate_documents",
-		Description: "[PHASE: 7] Syncs the finalized blueprint and specifications to Jira, Confluence, and Git. [REQUIRES: blueprint_implementation]",
+		Description: "[PHASE: 7] Syncs the finalized blueprint and specifications to Jira, Confluence, and Git. [REQUIRES: blueprint_implementation] Upon success, you MUST immediately call complete_design.",
 	}, h.GenerateDocuments)
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "complete_design",
-		Description: "[PHASE: 8] Wraps up the session and provides a final handoff summary. [REQUIRES: generate_documents]",
+		Description: "[PHASE: 8] Wraps up the session and provides a final handoff summary. [REQUIRES: generate_documents] This is the final step. Present the handoff summary to the user.",
 	}, h.CompleteDesign)
 
 	mcp.AddTool(s, &mcp.Tool{

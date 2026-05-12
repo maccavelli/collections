@@ -1,3 +1,9 @@
+---
+title: ".NET Container Samples"
+tags: ["dotnet", "docker", "samples", "containers"]
+description: "Reference collection of sample Dockerfiles and guidance for building, testing, and deploying .NET applications in containers, including AOT and multi-project solutions."
+---
+
 # .NET container samples
 
 The following samples and guidance demonstrate how to use .NET and Docker for development, testing and production. You can use the samples for learning about containers or as the basis of your own container images.

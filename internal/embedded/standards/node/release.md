@@ -1,3 +1,9 @@
+---
+title: "Node.js Release Schedule & LTS Policy"
+tags: ["node", "release", "lts", "versioning"]
+description: "Official Node.js release schedule, LTS/Maintenance/Current phase definitions, end-of-life timeline, and release working group governance for production version planning."
+---
+
 # Node.js Release Working Group
 
 ## Release schedule

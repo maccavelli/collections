@@ -5,7 +5,6 @@ import (
 	"bufio"
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/spf13/cobra"
 	"mcp-server-magicdev/internal/db"
@@ -88,11 +87,7 @@ var tokenReconfigureCmd = &cobra.Command{
 				fmt.Printf("Imported %s token from %s\n", svc.name, usedEnv)
 			} else {
 				fmt.Printf("Enter %s Token (or press enter to skip): ", svc.name)
-				tokenStr, err := reader.ReadString('\n')
-				if err != nil {
-					return fmt.Errorf("failed to read input: %w", err)
-				}
-				tokenStr = strings.TrimSpace(tokenStr)
+				tokenStr := readHiddenSecret(reader)
 				if tokenStr != "" {
 					if err := store.SetSecret(svc.name, tokenStr); err != nil {
 						return fmt.Errorf("failed to save %s token: %w", svc.name, err)

@@ -188,3 +188,72 @@ func findSubstring(s, substr string) bool {
 	}
 	return false
 }
+
+func TestConfigPath_Error(t *testing.T) {
+	t.Setenv("HOME", "")
+	t.Setenv("XDG_CONFIG_HOME", "")
+	_, err := ConfigPath()
+	if err == nil {
+		t.Error("Expected error when no home directory is set")
+	}
+}
+
+func TestEnsureConfig_WriteError(t *testing.T) {
+	tempDir := setupTestConfig(t)
+	magicDir := filepath.Join(tempDir, ".config", "mcp-server-magicdev")
+	os.MkdirAll(magicDir, 0555) // Read-only directory
+	defer os.Chmod(magicDir, 0755)
+
+	_, err := EnsureConfig()
+	if err == nil {
+		t.Error("Expected error when writing to read-only directory")
+	}
+}
+
+func TestLoadConfig_ReadError(t *testing.T) {
+	setupTestConfig(t)
+	// Create an invalid yaml config — LoadConfig should NOT return an error
+	// because it now gracefully logs the parse failure and still sets up
+	// the fsnotify watcher so the server can recover when the user fixes it.
+	path, _ := ConfigPath()
+	os.MkdirAll(filepath.Dir(path), 0755)
+	os.WriteFile(path, []byte("invalid\n  yaml:\tfile: []\n"), 0644)
+
+	err := LoadConfig()
+	if err != nil {
+		t.Errorf("LoadConfig should not return error on invalid YAML (it should log and continue), got: %v", err)
+	}
+}
+
+func TestUpdateConfigKey_ReadError(t *testing.T) {
+	setupTestConfig(t)
+	err := UpdateConfigKey("server.log_level", "DEBUG")
+	if err == nil {
+		t.Error("Expected error when config file does not exist")
+	}
+}
+
+func TestUpdateConfigKey_EmptyYaml(t *testing.T) {
+	setupTestConfig(t)
+	path, _ := ConfigPath()
+	os.MkdirAll(filepath.Dir(path), 0755)
+	os.WriteFile(path, []byte(""), 0644)
+
+	err := UpdateConfigKey("server.log_level", "DEBUG")
+	if err == nil {
+		t.Error("Expected error when yaml document is empty")
+	}
+}
+
+func TestUpdateConfigKey_KeyNotFound(t *testing.T) {
+	setupTestConfig(t)
+	path, _ := ConfigPath()
+	os.MkdirAll(filepath.Dir(path), 0755)
+	// Write a config that misses the expected key structure
+	os.WriteFile(path, []byte("server:\n  port: 8080\n"), 0644)
+
+	err := UpdateConfigKey("server.log_level", "DEBUG")
+	if err == nil {
+		t.Error("Expected error when key is not found in the file")
+	}
+}
