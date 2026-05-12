@@ -8,8 +8,10 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	json "github.com/go-json-experiment/json"
@@ -41,6 +43,12 @@ var zstdDecoderPool = sync.Pool{
 type Store struct {
 	DB       *buntdb.DB
 	FilePath string
+
+	// Latency telemetry
+	readOps     atomic.Uint64
+	writeOps    atomic.Uint64
+	readTimeUs  atomic.Uint64
+	writeTimeUs atomic.Uint64
 }
 
 // BaselineStandard represents a Zstd-compressed hybrid Markdown standard.
@@ -71,9 +79,10 @@ func InitStore() (*Store, error) {
 	return InitStoreWithPath(dbPath)
 }
 
+// InitStoreWithPath performs the InitStoreWithPath operation.
 func InitStoreWithPath(dbPath string) (*Store, error) {
 	if dbPath != ":memory:" {
-		if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(dbPath), 0700); err != nil {
 			return nil, err
 		}
 	}
@@ -83,11 +92,18 @@ func InitStoreWithPath(dbPath string) (*Store, error) {
 		return nil, err
 	}
 
+	if dbPath != ":memory:" {
+		if err := os.Chmod(dbPath, 0600); err != nil {
+			database.Close()
+			return nil, fmt.Errorf("failed to secure database file: %w", err)
+		}
+	}
+
 	var bCfg buntdb.Config
 	if err := database.ReadConfig(&bCfg); err == nil {
 		bCfg.AutoShrinkPercentage = 50
 		bCfg.AutoShrinkMinSize = 32 * 1024 * 1024
-		bCfg.SyncPolicy = buntdb.Never
+		bCfg.SyncPolicy = buntdb.EverySecond
 		database.SetConfig(bCfg)
 	}
 
@@ -120,7 +136,8 @@ func (s *Store) DBSize() int64 {
 func (s *Store) View(fn func(tx *buntdb.Tx) error) error {
 	start := time.Now()
 	err := s.DB.View(fn)
-	slog.Debug("buntdb_transaction", "latency_us", time.Since(start).Microseconds(), "op", "view")
+	s.readTimeUs.Add(uint64(time.Since(start).Microseconds()))
+	s.readOps.Add(1)
 	return err
 }
 
@@ -128,8 +145,26 @@ func (s *Store) View(fn func(tx *buntdb.Tx) error) error {
 func (s *Store) Update(fn func(tx *buntdb.Tx) error) error {
 	start := time.Now()
 	err := s.DB.Update(fn)
-	slog.Debug("buntdb_transaction", "latency_us", time.Since(start).Microseconds(), "op", "update")
+	s.writeTimeUs.Add(uint64(time.Since(start).Microseconds()))
+	s.writeOps.Add(1)
 	return err
+}
+
+// GetAndResetLatency returns average read and write latencies in microseconds,
+// and resets the underlying counters.
+func (s *Store) GetAndResetLatency() (avgReadUs, avgWriteUs, totalOps uint64) {
+	ro := s.readOps.Swap(0)
+	rt := s.readTimeUs.Swap(0)
+	wo := s.writeOps.Swap(0)
+	wt := s.writeTimeUs.Swap(0)
+
+	if ro > 0 {
+		avgReadUs = rt / ro
+	}
+	if wo > 0 {
+		avgWriteUs = wt / wo
+	}
+	return avgReadUs, avgWriteUs, ro + wo
 }
 
 // DBEntries returns the total count of keys in the BuntDB store.
@@ -152,6 +187,14 @@ func sessionKey(id string) string {
 
 // SaveSession serializes and persists a complete session state.
 func (s *Store) SaveSession(session *SessionState) error {
+	if session.CurrentStep != "" {
+		if session.StepDataBytes == nil {
+			session.StepDataBytes = make(map[string]int)
+		}
+		tempData, _ := json.Marshal(session)
+		session.StepDataBytes[session.CurrentStep] = len(tempData)
+	}
+
 	data, err := json.Marshal(session)
 	if err != nil {
 		return err
@@ -159,6 +202,29 @@ func (s *Store) SaveSession(session *SessionState) error {
 	return s.Update(func(tx *buntdb.Tx) error {
 		_, _, err := tx.Set(sessionKey(session.SessionID), string(data), nil)
 		return err
+	})
+}
+
+// SaveCompletedSession serializes and persists a completed session with a 7-day TTL.
+// After the TTL expires, BuntDB automatically evicts the key.
+func (s *Store) SaveCompletedSession(session *SessionState) error {
+	data, err := json.Marshal(session)
+	if err != nil {
+		return err
+	}
+	return s.Update(func(tx *buntdb.Tx) error {
+		opts := &buntdb.SetOptions{Expires: true, TTL: 7 * 24 * time.Hour}
+		_, _, err := tx.Set(sessionKey(session.SessionID), string(data), opts)
+		if err != nil {
+			return err
+		}
+		// Also set TTL on the corresponding metadata key if it exists.
+		if _, metaErr := tx.Get(sessionMetadataKey(session.SessionID)); metaErr == nil {
+			// Re-set with the same TTL so both expire together.
+			val, _ := tx.Get(sessionMetadataKey(session.SessionID))
+			_, _, _ = tx.Set(sessionMetadataKey(session.SessionID), val, opts)
+		}
+		return nil
 	})
 }
 
@@ -179,7 +245,7 @@ func (s *Store) LoadSession(sessionID string) (*SessionState, error) {
 	return &session, nil
 }
 
-// ListSessions returns all active session states.
+// ListSessions returns all active session states sorted chronologically by CreatedAt.
 func (s *Store) ListSessions() ([]SessionState, error) {
 	var sessions []SessionState
 	err := s.View(func(tx *buntdb.Tx) error {
@@ -194,6 +260,12 @@ func (s *Store) ListSessions() ([]SessionState, error) {
 		})
 		return nil
 	})
+	
+	// Sort chronologically (UUID keys are not chronological)
+	sort.Slice(sessions, func(i, j int) bool {
+		return sessions[i].CreatedAt < sessions[j].CreatedAt
+	})
+	
 	return sessions, err
 }
 
@@ -256,21 +328,34 @@ func (s *Store) UpdateCurrentStep(sessionID, step string) error {
 	})
 }
 
-// DeleteSession removes a session from the DB.
+// DeleteSession removes a session and its associated metadata from the DB.
 func (s *Store) DeleteSession(sessionID string) error {
 	return s.Update(func(tx *buntdb.Tx) error {
 		_, err := tx.Delete(sessionKey(sessionID))
-		return err
+		if err != nil {
+			return err
+		}
+		// Best-effort metadata cleanup — ignore ErrNotFound.
+		if _, metaErr := tx.Delete(sessionMetadataKey(sessionID)); metaErr != nil {
+			if !errors.Is(metaErr, buntdb.ErrNotFound) {
+				return metaErr
+			}
+		}
+		return nil
 	})
 }
 
-// PurgeSessions deletes all session:* keys atomically, leaving
-// baseline:* and secret:* keys intact. Returns the count of deleted keys.
+// PurgeSessions deletes all session:* and session_metadata:* keys atomically,
+// leaving baseline:* and secret:* keys intact. Returns the count of deleted keys.
 func (s *Store) PurgeSessions() (int, error) {
 	var count int
 	err := s.Update(func(tx *buntdb.Tx) error {
 		var keys []string
 		tx.AscendKeys("session:*", func(key, _ string) bool {
+			keys = append(keys, key)
+			return true
+		})
+		tx.AscendKeys("session_metadata:*", func(key, _ string) bool {
 			keys = append(keys, key)
 			return true
 		})
@@ -292,6 +377,26 @@ func (s *Store) PurgeBaselines() (int, error) {
 	err := s.Update(func(tx *buntdb.Tx) error {
 		var keys []string
 		tx.AscendKeys("baseline:*", func(key, _ string) bool {
+			keys = append(keys, key)
+			return true
+		})
+		for _, key := range keys {
+			if _, err := tx.Delete(key); err != nil {
+				return err
+			}
+			count++
+		}
+		return nil
+	})
+	return count, err
+}
+
+// PurgeChaosGraveyards deletes all chaos:graveyard:* keys atomically. Returns the count of deleted keys.
+func (s *Store) PurgeChaosGraveyards() (int, error) {
+	var count int
+	err := s.Update(func(tx *buntdb.Tx) error {
+		var keys []string
+		tx.AscendKeys("chaos:graveyard:*", func(key, _ string) bool {
 			keys = append(keys, key)
 			return true
 		})
@@ -428,6 +533,118 @@ func (s *Store) BaselineCount() int {
 		return nil
 	})
 	return count
+}
+
+// SessionCount returns the number of cached session states.
+func (s *Store) SessionCount() int {
+	var count int
+	_ = s.View(func(tx *buntdb.Tx) error {
+		tx.AscendKeys("session:*", func(key, _ string) bool {
+			if !strings.HasPrefix(key, "session_metadata:") {
+				count++
+			}
+			return true
+		})
+		return nil
+	})
+	return count
+}
+
+// ChaosGraveyardCount returns the number of cached chaos rejection patterns.
+func (s *Store) ChaosGraveyardCount() int {
+	var count int
+	_ = s.View(func(tx *buntdb.Tx) error {
+		tx.AscendKeys("chaos:graveyard:*", func(_, val string) bool {
+			var patterns []ChaosRejection
+			if err := json.Unmarshal([]byte(val), &patterns); err == nil {
+				count += len(patterns)
+			}
+			return true
+		})
+		return nil
+	})
+	return count
+}
+
+// ListAllChaosGraveyards returns all chaos rejection patterns across all stacks
+// for dashboard anti-pattern frequency visualization.
+func (s *Store) ListAllChaosGraveyards() []ChaosRejection {
+	var all []ChaosRejection
+	_ = s.View(func(tx *buntdb.Tx) error {
+		tx.AscendKeys("chaos:graveyard:*", func(_, val string) bool {
+			var patterns []ChaosRejection
+			if json.Unmarshal([]byte(val), &patterns) == nil {
+				all = append(all, patterns...)
+			}
+			return true
+		})
+		return nil
+	})
+	return all
+}
+
+func chaosGraveyardKey(stack string) string {
+	return fmt.Sprintf("chaos:graveyard:%s", stack)
+}
+
+// SaveChaosGraveyard stores or appends rejected patterns to the graveyard for a given stack.
+func (s *Store) SaveChaosGraveyard(stack string, patterns []ChaosRejection) error {
+	if len(patterns) == 0 {
+		return nil
+	}
+
+	return s.Update(func(tx *buntdb.Tx) error {
+		key := chaosGraveyardKey(stack)
+		var existing []ChaosRejection
+
+		val, err := tx.Get(key)
+		if err == nil {
+			json.Unmarshal([]byte(val), &existing)
+		}
+
+		// Deduplicate using text matching
+		seen := make(map[string]bool)
+		for _, p := range existing {
+			seen[p.Pattern] = true
+		}
+
+		for _, p := range patterns {
+			if !seen[p.Pattern] {
+				existing = append(existing, p)
+				seen[p.Pattern] = true
+			}
+		}
+
+		data, err := json.Marshal(existing)
+		if err != nil {
+			return err
+		}
+
+		// 90 day TTL
+		opts := &buntdb.SetOptions{Expires: true, TTL: 90 * 24 * time.Hour}
+		_, _, err = tx.Set(key, string(data), opts)
+		return err
+	})
+}
+
+// GetChaosGraveyard retrieves the chaos graveyard for a given stack.
+func (s *Store) GetChaosGraveyard(stack string) ([]ChaosRejection, error) {
+	var existing []ChaosRejection
+	err := s.View(func(tx *buntdb.Tx) error {
+		val, err := tx.Get(chaosGraveyardKey(stack))
+		if err != nil {
+			return err
+		}
+		return json.Unmarshal([]byte(val), &existing)
+	})
+
+	if err != nil {
+		if errors.Is(err, buntdb.ErrNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return existing, nil
 }
 
 // SetBaseline compresses and stores a baseline standard in BuntDB.

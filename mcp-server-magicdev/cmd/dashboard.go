@@ -1,23 +1,30 @@
+// Package cmd provides functionality for the cmd subsystem.
 package cmd
 
 import (
-	"bufio"
+	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
-	"github.com/charmbracelet/bubbletea"
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
 	"mcp-server-magicdev/internal/config"
 	"mcp-server-magicdev/internal/db"
+	"mcp-server-magicdev/internal/telemetry"
 	"mcp-server-magicdev/internal/ui"
 )
+
+var startTime = time.Now()
 
 var dashboardCmd = &cobra.Command{
 	Use:   "dash",
@@ -29,39 +36,73 @@ var dashboardCmd = &cobra.Command{
 }
 
 type metricsMsg struct {
-	Keys       int
-	DBSize     int64
-	Sessions   []db.SessionState
-	Latencies  []string
-	Hashes     []string
+	// DB Metrics
+	Keys          int
+	DBSize        int64
+	SessionCount  int
+	BaselineCount int
+	ChaosCount    int
+	Sessions      []db.SessionState
+
+	// Telemetry Logs
 	Hydrations []string
+
+	// Bucket Data
+	Baselines     []db.BaselineMeta
+	ChaosPatterns []db.ChaosRejection
+
+	// Env
+	EnvVars []string
 }
+
+type udpMetricsMsg telemetry.MetricPayload
 
 type model struct {
 	activeTab int
-	keys      int
-	dbSize    int64
-	sessions  []db.SessionState
-	latencies []string
-	hashes    []string
-	hydrations []string
+	coldState metricsMsg
+	hotState  udpMetricsMsg
+	boundPort int
+}
+
+const (
+	tabOverview = iota
+	tabSessions
+	tabBucketData
+	tabConfig
+	tabQuit
+)
+
+var navItems = []string{
+	"Overview",
+	"Sessions Data",
+	"Bucket Data",
+	"Config & Environment",
+	"Quit",
 }
 
 var (
-	tabStyle = lipgloss.NewStyle().
-		Border(lipgloss.NormalBorder(), false, false, true, false).
-		BorderForeground(lipgloss.Color("238")).
-		Padding(0, 2)
+	sidebarStyle = lipgloss.NewStyle().
+			Border(lipgloss.NormalBorder(), false, true, false, false).
+			BorderForeground(lipgloss.Color("238")).
+			Padding(0, 2).
+			Width(30)
 
-	activeTabStyle = tabStyle.
-			Border(lipgloss.NormalBorder(), true, true, false, true).
-			BorderForeground(lipgloss.Color("62")).
-			Foreground(lipgloss.Color("62"))
+	navItemStyle = lipgloss.NewStyle().
+			Padding(0, 1)
+
+	activeNavItemStyle = lipgloss.NewStyle().
+				Background(lipgloss.Color("62")).
+				Foreground(lipgloss.Color("230")).
+				Padding(0, 1).
+				Bold(true)
 
 	windowStyle = lipgloss.NewStyle().
-			BorderForeground(lipgloss.Color("62")).
-			Padding(1, 2).
-			Border(lipgloss.NormalBorder())
+			Padding(1, 4)
+
+	titleStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("62")).
+			Bold(true).
+			MarginBottom(1)
 )
 
 func runInteractiveDashboard() {
@@ -76,18 +117,77 @@ func runInteractiveDashboard() {
 	} else if dbPath != ":memory:" {
 		dbPath = filepath.Clean(filepath.FromSlash(dbPath))
 	}
-	cacheDir, _ := os.UserCacheDir()
-	logPath := filepath.Join(cacheDir, "mcp-server-magicdev", "magicdev-output.log")
-
 	m := model{}
+
+	// 1. Connect to serve process's UDP telemetry listener
+	var conn *net.UDPConn
+	var boundPort int
+	for _, port := range telemetry.TelemetryPorts {
+		addr := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: port}
+		c, err := net.DialUDP("udp", nil, addr)
+		if err == nil {
+			conn = c
+			boundPort = port
+			break
+		}
+	}
+
+	if conn != nil {
+		m.boundPort = boundPort
+	} else {
+		slog.Warn("could not connect to any telemetry port; real-time session data will be unavailable")
+	}
+
 	p := tea.NewProgram(m, tea.WithAltScreen())
-	
-	// Start polling
+
+	// 2. Start persistent UDP client goroutine (ping + receive - HOT STATE)
+	if conn != nil {
+		go func() {
+			defer conn.Close()
+			buf := make([]byte, 4096)
+			pingTicker := time.NewTicker(telemetry.EmissionInterval)
+			defer pingTicker.Stop()
+
+			for range pingTicker.C {
+				// Send a 1-byte ping to register our address with the serve process
+				_, err := conn.Write([]byte{0x01})
+				if err != nil {
+					continue
+				}
+
+				// Read the response (MetricPayload JSON)
+				conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+				n, err := conn.Read(buf)
+				if err != nil {
+					continue
+				}
+				var payload telemetry.MetricPayload
+				if json.Unmarshal(buf[:n], &payload) == nil {
+					p.Send(udpMetricsMsg(payload))
+				}
+			}
+		}()
+	}
+
+	// 3. Start polling DB (COLD STATE)
 	go func() {
-		for {
-			metrics := fetchMetrics(dbPath, logPath)
-			p.Send(metrics)
-			time.Sleep(5 * time.Second)
+		ticker := time.NewTicker(10 * time.Second)
+		defer ticker.Stop()
+		var dbMu sync.Mutex
+
+		// Initial load
+		metrics := ReadDashboardSnapshot(dbPath)
+		p.Send(metrics)
+
+		for range ticker.C {
+			if dbMu.TryLock() {
+				// We don't block if a file-copy is still running; we just skip the tick.
+				go func() {
+					defer dbMu.Unlock()
+					m := ReadDashboardSnapshot(dbPath)
+					p.Send(m)
+				}()
+			}
 		}
 	}()
 
@@ -97,9 +197,9 @@ func runInteractiveDashboard() {
 	}
 }
 
-func fetchMetrics(dbPath, logPath string) metricsMsg {
+func ReadDashboardSnapshot(dbPath string) metricsMsg {
 	var msg metricsMsg
-	
+
 	// Safely copy DB to temp file to bypass locks
 	tempPath := filepath.Join(os.TempDir(), "magicdev-dash-snapshot.db")
 	in, err := os.Open(dbPath)
@@ -113,42 +213,38 @@ func fetchMetrics(dbPath, logPath string) metricsMsg {
 			if store, err := db.InitStoreWithPath(tempPath); err == nil {
 				msg.Keys = store.DBEntries()
 				msg.DBSize = store.DBSize()
+				msg.SessionCount = store.SessionCount()
+				msg.BaselineCount = store.BaselineCount()
+				msg.ChaosCount = store.ChaosGraveyardCount()
 				msg.Sessions, _ = store.ListSessions()
+				msg.Baselines, _ = store.ListBaselines()
+				msg.ChaosPatterns = store.ListAllChaosGraveyards()
 				store.Close()
 			}
 			os.Remove(tempPath)
 		} else {
 			in.Close()
 		}
+	} else if os.IsNotExist(err) {
+		// Graceful degradation: db doesn't exist yet
 	}
 
-	// Parse logs for telemetry
-	if file, err := os.Open(logPath); err == nil {
-		defer file.Close()
-		scanner := bufio.NewScanner(file)
-		// keep last 50 lines
-		var lines []string
-		for scanner.Scan() {
-			lines = append(lines, scanner.Text())
-			if len(lines) > 500 {
-				lines = lines[100:]
-			}
+	envMappings := []struct {
+		envKey   string
+		viperKey string
+	}{
+		{"JIRA_URL", "jira.url"},
+		{"CONFLUENCE_URL", "confluence.url"},
+		{"GITLAB_URL", "git.server_url"},
+		{"MAGICDEV_DB_PATH", "server.db_path"},
+	}
+
+	for _, mapping := range envMappings {
+		if v := viper.GetString(mapping.viperKey); v != "" {
+			msg.EnvVars = append(msg.EnvVars, fmt.Sprintf("%s=%s", mapping.envKey, v))
+		} else {
+			msg.EnvVars = append(msg.EnvVars, fmt.Sprintf("%s=(unset)", mapping.envKey))
 		}
-		
-		for _, line := range lines {
-			if strings.Contains(line, "bunt_latency_us") {
-				msg.Latencies = append(msg.Latencies, extractJSONValue(line, "operation")+" "+extractJSONValue(line, "bunt_latency_us")+"µs")
-			}
-			if strings.Contains(line, "Session state integrity hash") {
-				msg.Hashes = append(msg.Hashes, extractJSONValue(line, "step")+" "+extractJSONValue(line, "sha256")[:16]+"...")
-			}
-			if strings.Contains(line, "Payload completeness evaluated") || strings.Contains(line, "TELEMETRY WARNING") {
-				msg.Hydrations = append(msg.Hydrations, extractJSONValue(line, "step")+" "+extractJSONValue(line, "ratio"))
-			}
-		}
-		if len(msg.Latencies) > 10 { msg.Latencies = msg.Latencies[len(msg.Latencies)-10:] }
-		if len(msg.Hashes) > 10 { msg.Hashes = msg.Hashes[len(msg.Hashes)-10:] }
-		if len(msg.Hydrations) > 10 { msg.Hydrations = msg.Hydrations[len(msg.Hydrations)-10:] }
 	}
 
 	return msg
@@ -166,75 +262,72 @@ func extractJSONValue(line, key string) string {
 	return ""
 }
 
+// Init performs the Init operation.
 func (m model) Init() tea.Cmd {
 	return nil
 }
 
+// Update performs the Update operation.
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "ctrl+c", "q":
 			return m, tea.Quit
-		case "tab", "right":
-			m.activeTab = (m.activeTab + 1) % 2
-		case "shift+tab", "left":
-			m.activeTab = (m.activeTab - 1) % 2
+		case "up", "k":
+			m.activeTab--
 			if m.activeTab < 0 {
-				m.activeTab = 1
+				m.activeTab = len(navItems) - 1
+			}
+		case "down", "j":
+			m.activeTab++
+			if m.activeTab >= len(navItems) {
+				m.activeTab = 0
+			}
+		case "enter":
+			if m.activeTab == tabQuit {
+				return m, tea.Quit
 			}
 		}
 	case metricsMsg:
-		m.keys = msg.Keys
-		m.dbSize = msg.DBSize
-		m.sessions = msg.Sessions
-		m.latencies = msg.Latencies
-		m.hashes = msg.Hashes
-		m.hydrations = msg.Hydrations
+		m.coldState = msg
+	case udpMetricsMsg:
+		m.hotState = msg
 	}
 	return m, nil
 }
 
+// View performs the View operation.
 func (m model) View() string {
-	tabs := []string{"Database Health", "Pipeline Flow"}
-	var renderedTabs []string
+	var navLines []string
+	navLines = append(navLines, titleStyle.Render("MagicDev Dash"))
+	navLines = append(navLines, "") // separator
 
-	for i, t := range tabs {
+	for i, item := range navItems {
 		if i == m.activeTab {
-			renderedTabs = append(renderedTabs, activeTabStyle.Render(t))
+			navLines = append(navLines, activeNavItemStyle.Render("> "+item))
 		} else {
-			renderedTabs = append(renderedTabs, tabStyle.Render(t))
+			navLines = append(navLines, navItemStyle.Render("  "+item))
 		}
 	}
-	row := lipgloss.JoinHorizontal(lipgloss.Top, renderedTabs...)
+
+	sidebar := sidebarStyle.Render(strings.Join(navLines, "\n"))
 
 	var content string
-	if m.activeTab == 0 {
-		content = fmt.Sprintf("BuntDB Storage Size: %d bytes\nTotal Keys: %d\n\nRecent Transaction Latencies:\n", m.dbSize, m.keys)
-		for _, l := range m.latencies {
-			content += " - " + l + "\n"
-		}
-	} else {
-		content = "Pipeline Flow Telemetry:\n\n"
-		content += "Active Session Phase Dwell Times:\n"
-		for _, s := range m.sessions {
-			if s.CurrentStep != "" {
-				if t, ok := s.StepTimings[s.CurrentStep]; ok {
-					if startedAt, err := time.Parse(time.RFC3339, t.StartedAt); err == nil {
-						content += fmt.Sprintf(" - [%s] %s: %s\n", s.SessionID[:8], s.CurrentStep, time.Since(startedAt).Round(time.Second))
-					}
-				}
-			}
-		}
-		content += "\nInter-Tool Integrity Hashes:\n"
-		for _, h := range m.hashes {
-			content += " - " + h + "\n"
-		}
-		content += "\nPayload Completeness Ratios:\n"
-		for _, h := range m.hydrations {
-			content += " - " + h + "\n"
-		}
+	switch m.activeTab {
+	case tabOverview:
+		content = renderOverview(m)
+	case tabSessions:
+		content = renderSessions(m)
+	case tabBucketData:
+		content = renderBucketData(m)
+	case tabConfig:
+		content = renderConfig(m)
+	case tabQuit:
+		content = titleStyle.Render("Quit") + "\n\nPress Enter to exit the dashboard."
 	}
 
-	return lipgloss.JoinVertical(lipgloss.Left, row, windowStyle.Render(content))
+	mainView := windowStyle.Render(content)
+
+	return lipgloss.JoinHorizontal(lipgloss.Top, sidebar, mainView)
 }

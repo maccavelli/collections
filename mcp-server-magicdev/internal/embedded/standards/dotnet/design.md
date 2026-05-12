@@ -1,6 +1,7 @@
 ---
 title: "Framework Design Guidelines"
 description: See framework design guidelines for designing libraries that extend and interact with .NET, to ensure API consistency and ease of use.
+tags: ["dotnet", "design", "api", "framework"]
 titleSuffix: ""
 ms.date: "10/22/2008"
 helpviewer_keywords:

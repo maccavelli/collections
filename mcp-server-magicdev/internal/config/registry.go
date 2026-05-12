@@ -47,7 +47,17 @@ var ValidConfigKeys = []ConfigKeyInfo{
 	{Key: "server.db_path", Description: "Absolute path to BuntDB session file", ValueType: "string"},
 
 	// LLM
+	{Key: "llm.provider", Description: "LLM provider (gemini, openai, claude)", ValueType: "string"},
 	{Key: "llm.model", Description: "The chosen model used by the Intelligence Engine", ValueType: "string"},
+	{Key: "llm.disable", Description: "Disable the LLM Intelligence Engine (true/false)", ValueType: "bool"},
+
+	// Standards Constraints
+	{Key: "standards.node.path", Description: "Filesystem path to standard Node.js templates", ValueType: "string"},
+	{Key: "standards.node.total_files", Description: "Max allowed files constraint for Node.js", ValueType: "string"},
+	{Key: "standards.node.max_directory_depth", Description: "Max allowed directory depth constraint for Node.js", ValueType: "string"},
+	{Key: "standards.dotnet.path", Description: "Filesystem path to standard .NET templates", ValueType: "string"},
+	{Key: "standards.dotnet.total_files", Description: "Max allowed files constraint for .NET", ValueType: "string"},
+	{Key: "standards.dotnet.max_directory_depth", Description: "Max allowed directory depth constraint for .NET", ValueType: "string"},
 }
 
 // LookupKey searches ValidConfigKeys for the given dotted key path.

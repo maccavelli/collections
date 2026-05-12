@@ -1,3 +1,9 @@
+---
+title: ".NET 8 Release Schedule & Support Policy"
+tags: ["dotnet", "release", "lts", "versioning"]
+description: "Official .NET 8 LTS release schedule, patch history, SDK version matrix, and end-of-support timeline for production planning."
+---
+
 # .NET 8
 
 [.NET 8](https://devblogs.microsoft.com/dotnet/announcing-dotnet-8/) is a [Long Term Support (LTS)](../../release-policies.md) release and will be supported for 3 years, from November 2023 to November 2026. It is [supported](../../support.md) on [multiple operating systems](supported-os.md).

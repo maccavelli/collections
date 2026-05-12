@@ -1,5 +1,6 @@
 ---
 title: Best practices for writing unit tests
+tags: ["dotnet", "testing", "unit-tests", "csharp"]
 description: Learn best practices for writing unit tests that drive code quality and resilience for .NET Core and .NET Standard projects.
 author: jpreese
 ms.author: wiwagn

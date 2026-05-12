@@ -6,11 +6,11 @@ require (
 	github.com/anthropics/anthropic-sdk-go v1.25.1
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
-	github.com/denisbrodbeck/machineid v1.0.1
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/go-json-experiment/json v0.0.0-20260430182902-b6187a392ed4
 	github.com/gofrs/flock v0.13.0
 	github.com/google/generative-ai-go v0.20.1
+	github.com/google/uuid v1.6.0
 	github.com/klauspost/compress v1.18.6
 	github.com/modelcontextprotocol/go-sdk v1.6.0
 	github.com/sashabaranov/go-openai v1.41.2
@@ -19,10 +19,12 @@ require (
 	github.com/tidwall/buntdb v1.3.2
 	github.com/yuin/goldmark v1.8.2
 	gitlab.com/gitlab-org/api/client-go v1.46.0
-	golang.org/x/sys v0.43.0
+	golang.org/x/sys v0.44.0
+	golang.org/x/term v0.43.0
 	google.golang.org/api v0.278.0
 	gopkg.in/yaml.v3 v3.0.1
 	oss.terrastruct.com/d2 v0.7.1
+	oss.terrastruct.com/util-go v0.0.0-20250213174338-243d8661088a
 )
 
 require (
@@ -55,7 +57,6 @@ require (
 	github.com/google/jsonschema-go v0.4.3 // indirect
 	github.com/google/pprof v0.0.0-20240927180334-d43a67379298 // indirect
 	github.com/google/s2a-go v0.1.9 // indirect
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.15 // indirect
 	github.com/googleapis/gax-go/v2 v2.22.0 // indirect
 	github.com/hashicorp/go-cleanhttp v0.5.2 // indirect
@@ -109,7 +110,6 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260427160629-7cedc36a6bc4 // indirect
 	google.golang.org/grpc v1.80.0 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
-	oss.terrastruct.com/util-go v0.0.0-20250213174338-243d8661088a // indirect
 )
 
 replace github.com/invopop/jsonschema => github.com/invopop/jsonschema v0.12.0

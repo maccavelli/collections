@@ -1,3 +1,9 @@
+---
+title: "Installing .NET in a Dockerfile"
+tags: ["dotnet", "docker", "installation", "containers"]
+description: "Step-by-step guidance for installing the .NET runtime and SDK inside custom Dockerfiles using binary archives, package managers, and dotnet-install scripts."
+---
+
 # Installing .NET in a Dockerfile
 
 There can be times where you need .NET installed on a base image that is unavailable amongst the set of official [.NET Docker images](../../README.md), such as a different Linux distro version or a Windows Server Core image. In that case, you'll need to author your own Dockerfile which installs .NET. The snippets below describe how to do this.

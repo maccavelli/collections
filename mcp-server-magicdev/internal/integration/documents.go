@@ -36,8 +36,8 @@ type HybridMarkdown struct {
 
 // ProcessDocumentGeneration creates Jira task, Confluence page, and Hybrid Markdown Git commits.
 // When bp is non-nil, the Blueprint data enriches all three outputs.
-// Returns the Jira issue key and the authoritative browse URL for downstream consumers.
-func ProcessDocumentGeneration(store *db.Store, title, markdown, targetBranch, sessionID string, bp *db.Blueprint, synthesis *db.SynthesisResolution) (string, string, error) {
+// Returns the Jira issue key, authoritative browse URL, and Confluence parent page ID for downstream consumers.
+func ProcessDocumentGeneration(store *db.Store, title, markdown, targetBranch, sessionID string, bp *db.Blueprint, synthesis *db.SynthesisResolution) (string, string, string, error) {
 	ctx := context.Background()
 
 	// Capture the Jira base URL ONCE from viper to prevent fsnotify
@@ -131,7 +131,7 @@ func ProcessDocumentGeneration(store *db.Store, title, markdown, targetBranch, s
 	// 3. Generate Hybrid Markdown & MADR Early
 	hybridBytes, hybridErr := generateHybridMarkdown(jiraID, enrichedMarkdown, bp, synthesis)
 	if hybridErr != nil {
-		return "", "", hybridErr
+		return "", "", "", hybridErr
 	}
 
 	var session *db.SessionState
@@ -154,9 +154,9 @@ func ProcessDocumentGeneration(store *db.Store, title, markdown, targetBranch, s
 	hybridStr = strings.Replace(hybridStr, "\n---\n\n", "\n```\n\n", 1)
 
 	// Convert Hybrid Markdown to XHTML storage format for Confluence Data Center
-	xhtml, err := markdownToXHTML(hybridStr)
+	xhtml, err := MarkdownToXHTML(hybridStr)
 	if err != nil {
-		return "", "", fmt.Errorf("failed to convert markdown to XHTML: %w", err)
+		return "", "", "", fmt.Errorf("failed to convert markdown to XHTML: %w", err)
 	}
 
 	space := viper.GetString("confluence.space")
@@ -199,7 +199,7 @@ func ProcessDocumentGeneration(store *db.Store, title, markdown, targetBranch, s
 
 	// 2.5 Generate Confluence Child Pages for Original Markdown
 	if parentID != "" && enrichedMarkdown != "" {
-		childXHTML, err := markdownToXHTML(enrichedMarkdown)
+		childXHTML, err := MarkdownToXHTML(enrichedMarkdown)
 		if err != nil {
 			slog.Warn("failed to convert Original Markdown to XHTML", "error", err)
 		} else {
@@ -265,7 +265,7 @@ func ProcessDocumentGeneration(store *db.Store, title, markdown, targetBranch, s
 	confluencePayload := xhtml
 	if err := verifyCrossLinks(hybridBytes, confluencePayload, jiraID); err != nil {
 		slog.Error("cross-link verification failed", "error", err)
-		return "", "", err
+		return "", "", "", err
 	}
 
 	// 4. Git Push via GitLab API
@@ -280,10 +280,62 @@ func ProcessDocumentGeneration(store *db.Store, title, markdown, targetBranch, s
 		)
 	}
 	if err := pushToGitLab(store, jiraID, targetBranch, title, mainGitLabContent, nil, bp); err != nil {
-		return "", "", fmt.Errorf("gitlab push failed: %w", err)
+		return "", "", "", fmt.Errorf("gitlab push failed: %w", err)
 	}
 
-	return jiraID, browseURL, nil
+	return jiraID, browseURL, parentID, nil
+}
+
+// UploadHandoffToConfluence creates a Confluence child page under the given parent
+// containing the final design handoff summary. This is called from complete_design
+// (Phase 8) to add the handoff as an additional child page alongside the existing
+// Hybrid Markdown and Original Specifications pages.
+func UploadHandoffToConfluence(store *db.Store, parentPageID, title, handoffMarkdown string) error {
+	if parentPageID == "" {
+		return nil // No parent page to attach to — silently skip
+	}
+
+	var confluenceToken string
+	if store != nil {
+		confluenceToken, _ = store.GetSecret("confluence")
+	}
+	cc := NewConfluenceClient(viper.GetString("confluence.url"), confluenceToken)
+
+	handoffXHTML, err := MarkdownToXHTML(handoffMarkdown)
+	if err != nil {
+		return fmt.Errorf("failed to convert handoff to XHTML: %w", err)
+	}
+
+	space := viper.GetString("confluence.space")
+	if space == "" {
+		space = "SPACE"
+	}
+
+	childPayload := &ConfluenceContentPayload{
+		Type:  "page",
+		Title: title + " - Final Handoff",
+		Space: ConfluenceSpaceRef{Key: space},
+		Ancestors: []ConfluenceAncestorRef{
+			{ID: parentPageID},
+		},
+		Body: ConfluenceBodyPayload{
+			Storage: ConfluenceStoragePayload{
+				Value:          handoffXHTML,
+				Representation: "storage",
+			},
+		},
+	}
+
+	ctx := context.Background()
+	if _, _, err := cc.CreateContent(ctx, childPayload); err != nil {
+		return fmt.Errorf("confluence handoff page creation failed: %w", err)
+	}
+
+	slog.Info("complete_design: handoff uploaded to Confluence",
+		"parent_id", parentPageID,
+		"title", title,
+	)
+	return nil
 }
 
 // appendRoadmapSection adds a "Technical Implementation Roadmap" section to the markdown.
@@ -398,6 +450,10 @@ func generateHybridMarkdown(jiraID, markdown string, bp *db.Blueprint, synthesis
 }
 
 func pushToGitLab(store *db.Store, jiraID, targetBranch, title string, fileContent []byte, adrContent []byte, bp *db.Blueprint) error {
+	if viper.GetBool("git.mock") {
+		slog.Info("generate_documents: git.mock enabled, bypassing gitlab push")
+		return nil
+	}
 	var gitToken string
 	if store != nil {
 		gitToken, _ = store.GetSecret("gitlab")
@@ -541,11 +597,12 @@ func verifyCrossLinks(hybridBytes []byte, confluencePayload string, jiraID strin
 	return err
 }
 
-// markdownToXHTML converts markdown content to XHTML storage format
+// MarkdownToXHTML converts markdown content to XHTML storage format
 // compatible with Confluence Data Center's /rest/api/content endpoint.
 // Uses goldmark with XHTML rendering to ensure void elements (hr, br, img)
 // use self-closing syntax (<hr />) required by Confluence's strict XHTML parser.
-func markdownToXHTML(md string) (string, error) {
+// Exported so complete_design can convert the handoff summary for upload.
+func MarkdownToXHTML(md string) (string, error) {
 	// Pre-process: escape angle brackets in C#/Java generics outside code blocks
 	// e.g. List<string> → List&lt;string&gt; but leave ```code blocks``` alone.
 	sanitized := escapeGenericsOutsideCode(md)

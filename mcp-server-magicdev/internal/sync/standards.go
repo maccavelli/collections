@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -108,17 +109,22 @@ func GetAvailableStandards(stack string) []string {
 	return list
 }
 
-// SyncBaselines iterates over the config URLs to populate the available standards list.
-// It follows a BuntDB-first caching strategy: standards are only downloaded when they
-// are not already cached in BuntDB (or have expired past the 30-day TTL).
+// SyncBaselines iterates over both remote URLs and local directory paths to populate
+// the available standards list. Local .md files found in the configured path directories
+// are pre-loaded into BuntDB with hash-aware caching alongside URL-based standards.
 func SyncBaselines(store *db.Store) {
 	slog.Info("starting baseline standards sync cascade...")
 	startTime := time.Now()
 
-	nodeSources := viper.GetStringSlice("standards.node")
-	dotnetSources := viper.GetStringSlice("standards.dotnet")
+	nodeSources := viper.GetStringSlice("standards.node.urls")
+	dotnetSources := viper.GetStringSlice("standards.dotnet.urls")
 	domainSources := viper.GetStringMapStringSlice("standards.domains")
 	envSources := viper.GetStringMapStringSlice("standards.environments")
+
+	// Append local filesystem standards from the configured path directories.
+	// These are the embedded standards extracted to the OS cache at init time.
+	nodeSources = appendLocalStandards(nodeSources, viper.GetString("standards.node.path"))
+	dotnetSources = appendLocalStandards(dotnetSources, viper.GetString("standards.dotnet.path"))
 
 	nodeAvailable := syncStack("Node", nodeSources, store)
 	dotnetAvailable := syncStack(".NET", dotnetSources, store)
@@ -136,6 +142,58 @@ func SyncBaselines(store *db.Store) {
 	availableStandardsMu.Unlock()
 
 	slog.Info("baseline standards sync complete", "duration", time.Since(startTime))
+}
+
+// appendLocalStandards scans the given directory for .md files and appends their
+// absolute paths to the sources list. Skips hidden files, duplicates, and non-.md files.
+func appendLocalStandards(sources []string, dirPath string) []string {
+	if dirPath == "" {
+		return sources
+	}
+
+	entries, err := os.ReadDir(dirPath)
+	if err != nil {
+		slog.Debug("standards directory not found, skipping local scan",
+			"dir", dirPath,
+			"error", err,
+		)
+		return sources
+	}
+
+	// Build a set of existing sources to avoid duplicates.
+	seen := make(map[string]bool, len(sources))
+	for _, s := range sources {
+		seen[s] = true
+	}
+
+	var added int
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if !strings.HasSuffix(name, ".md") || strings.HasPrefix(name, ".") {
+			continue
+		}
+
+		absPath := filepath.Join(dirPath, name)
+		if seen[absPath] {
+			continue
+		}
+
+		sources = append(sources, absPath)
+		seen[absPath] = true
+		added++
+	}
+
+	if added > 0 {
+		slog.Info("discovered local standards files",
+			"dir", dirPath,
+			"count", added,
+		)
+	}
+
+	return sources
 }
 
 // syncStack processes a list of standard source URLs for a given stack.
@@ -167,15 +225,79 @@ func syncStack(stack string, sources []string, store *db.Store) []string {
 
 	return available
 }
-
-// FetchAndCache implements the 3-tier standards retrieval cascade:
-//  1. BuntDB cache (single source of truth, 30-day TTL)
+// FetchAndCache implements the standards retrieval cascade. For local filesystem
+// sources, it uses SHA-256 hash comparison to avoid unnecessary BuntDB writes.
+// For remote URLs, it uses the existing TTL-based existence check.
+//
+// Local file cascade:
+//  1. Compute SHA-256 of on-disk file
+//  2. Compare to BuntDB stored hash — skip if match
+//  3. Re-read and re-cache if hash differs or entry missing
+//
+// URL cascade:
+//  1. BuntDB cache (TTL-based existence check)
 //  2. HTTP download (only if not cached)
 //  3. Embedded fallback (only if HTTP fails)
-//
-// Content is always stored back into BuntDB with a 30-day TTL on successful retrieval.
-// Uses HasBaseline for zero-decompression existence check.
 func FetchAndCache(store *db.Store, source string) error {
+	isURL := strings.HasPrefix(source, "http://") || strings.HasPrefix(source, "https://")
+
+	if !isURL {
+		return fetchAndCacheLocal(store, source)
+	}
+
+	return fetchAndCacheURL(store, source)
+}
+
+// fetchAndCacheLocal handles local filesystem standards with hash-aware caching.
+// It computes the SHA-256 of the on-disk file and compares to the BuntDB stored
+// hash, only re-caching if the content has actually changed.
+func fetchAndCacheLocal(store *db.Store, path string) error {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		slog.Warn("local standard read failed, attempting embedded fallback",
+			"source", path,
+			"error", err,
+		)
+		// Try embedded fallback for airgap environments.
+		content, embedErr := GetEmbeddedStandard(path)
+		if embedErr != nil {
+			return fmt.Errorf("local read failed and no embedded fallback for %s: read=%v, embedded=%v", path, err, embedErr)
+		}
+		return storeBaseline(store, path, content)
+	}
+
+	if len(content) == 0 {
+		return fmt.Errorf("local standard is empty: %s", path)
+	}
+
+	diskHash := sha256Hex(content)
+	cachedHash, _ := store.GetBaselineHash(path)
+
+	if diskHash == cachedHash {
+		slog.Debug("local standard cache hit (hash match)", "source", path)
+		return nil
+	}
+
+	if cachedHash == "" {
+		slog.Info("local standard not cached, loading into BuntDB",
+			"source", path,
+			"hash", diskHash[:8],
+			"bytes", len(content),
+		)
+	} else {
+		slog.Info("local standard changed on disk, updating BuntDB cache",
+			"source", path,
+			"old_hash", cachedHash[:8],
+			"new_hash", diskHash[:8],
+			"bytes", len(content),
+		)
+	}
+
+	return storeBaseline(store, path, content)
+}
+
+// fetchAndCacheURL handles remote URL standards with TTL-based existence check.
+func fetchAndCacheURL(store *db.Store, source string) error {
 	// Tier 1: BuntDB cache probe — zero decompression, zero unmarshal.
 	if store.HasBaseline(source) {
 		slog.Debug("standards cache hit, skipping download", "source", source)
@@ -184,19 +306,8 @@ func FetchAndCache(store *db.Store, source string) error {
 
 	slog.Info("standards cache miss, attempting retrieval", "source", source)
 
-	// Determine if this is a URL or local file path.
-	isURL := strings.HasPrefix(source, "http://") || strings.HasPrefix(source, "https://")
-
-	// Tier 2: Fetch content (HTTP or local file).
-	var content []byte
-	var fetchErr error
-
-	if isURL {
-		content, fetchErr = httpFetch(source)
-	} else {
-		content, fetchErr = os.ReadFile(source)
-	}
-
+	// Tier 2: HTTP download.
+	content, fetchErr := httpFetch(source)
 	if fetchErr == nil && len(content) > 0 {
 		return storeBaseline(store, source, content)
 	}
@@ -213,6 +324,12 @@ func FetchAndCache(store *db.Store, source string) error {
 	}
 
 	return storeBaseline(store, source, content)
+}
+
+// sha256Hex computes the SHA-256 hash of data and returns it as a hex string.
+func sha256Hex(data []byte) string {
+	h := sha256.Sum256(data)
+	return hex.EncodeToString(h[:])
 }
 
 // FetchAndCacheWithContent is identical to FetchAndCache but returns the

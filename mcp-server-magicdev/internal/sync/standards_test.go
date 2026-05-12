@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/viper"
 	"mcp-server-magicdev/internal/db"
 )
@@ -44,8 +45,8 @@ func TestSyncBaselines(t *testing.T) {
 	tempFile := filepath.Join(tempDir, "test_std.md")
 	os.WriteFile(tempFile, []byte("test content"), 0644)
 
-	viper.Set("standards.node", []string{tempFile})
-	viper.Set("standards.dotnet", []string{}) // empty
+	viper.Set("standards.node.urls", []string{tempFile})
+	viper.Set("standards.dotnet.urls", []string{}) // empty
 
 	SyncBaselines(store)
 
@@ -80,8 +81,8 @@ func TestSyncBaselines_CacheHit(t *testing.T) {
 	}
 
 	// SyncBaselines should use the cache and NOT attempt HTTP download
-	viper.Set("standards.node", []string{url})
-	viper.Set("standards.dotnet", []string{})
+	viper.Set("standards.node.urls", []string{url})
+	viper.Set("standards.dotnet.urls", []string{})
 
 	SyncBaselines(store)
 
@@ -237,5 +238,219 @@ func TestFetchAndCacheWithContent_CacheHit(t *testing.T) {
 	}
 	if content != "pre-cached" {
 		t.Errorf("Expected 'pre-cached', got '%s'", content)
+	}
+}
+
+func TestFetchAndCacheLocal_HashMatch(t *testing.T) {
+	viper.Set("server.db_path", ":memory:")
+	store, err := db.InitStore()
+	if err != nil {
+		t.Fatalf("Failed to init store: %v", err)
+	}
+	defer store.Close()
+
+	tempDir := t.TempDir()
+	tempFile := filepath.Join(tempDir, "hash_test.md")
+	content := []byte("hash test content")
+	os.WriteFile(tempFile, content, 0644)
+
+	// First call: should cache the file.
+	err = FetchAndCache(store, tempFile)
+	if err != nil {
+		t.Fatalf("FetchAndCache failed: %v", err)
+	}
+
+	// Get the stored hash.
+	hash1, err := store.GetBaselineHash(tempFile)
+	if err != nil {
+		t.Fatalf("GetBaselineHash failed: %v", err)
+	}
+	if hash1 == "" {
+		t.Fatal("Expected non-empty hash after caching")
+	}
+
+	// Second call with same content: should be a hash match (skip).
+	err = FetchAndCache(store, tempFile)
+	if err != nil {
+		t.Fatalf("FetchAndCache hash match should succeed: %v", err)
+	}
+
+	// Hash should remain the same.
+	hash2, _ := store.GetBaselineHash(tempFile)
+	if hash1 != hash2 {
+		t.Errorf("Expected hash to remain unchanged, got %s -> %s", hash1, hash2)
+	}
+}
+
+func TestFetchAndCacheLocal_HashMismatch(t *testing.T) {
+	viper.Set("server.db_path", ":memory:")
+	store, err := db.InitStore()
+	if err != nil {
+		t.Fatalf("Failed to init store: %v", err)
+	}
+	defer store.Close()
+
+	tempDir := t.TempDir()
+	tempFile := filepath.Join(tempDir, "mismatch_test.md")
+	os.WriteFile(tempFile, []byte("original content"), 0644)
+
+	// First call: cache original.
+	err = FetchAndCache(store, tempFile)
+	if err != nil {
+		t.Fatalf("FetchAndCache failed: %v", err)
+	}
+	hash1, _ := store.GetBaselineHash(tempFile)
+
+	// Modify the file on disk.
+	os.WriteFile(tempFile, []byte("modified content"), 0644)
+
+	// Second call: should detect hash mismatch and update cache.
+	err = FetchAndCache(store, tempFile)
+	if err != nil {
+		t.Fatalf("FetchAndCache hash mismatch should succeed: %v", err)
+	}
+
+	hash2, _ := store.GetBaselineHash(tempFile)
+	if hash1 == hash2 {
+		t.Error("Expected hash to change after file modification")
+	}
+
+	// Verify the new content is cached.
+	cached, err := store.GetBaselineContent(tempFile)
+	if err != nil {
+		t.Fatalf("GetBaselineContent failed: %v", err)
+	}
+	if cached != "modified content" {
+		t.Errorf("Expected 'modified content', got '%s'", cached)
+	}
+}
+
+func TestRefreshLocalStandard(t *testing.T) {
+	viper.Set("server.db_path", ":memory:")
+	store, err := db.InitStore()
+	if err != nil {
+		t.Fatalf("Failed to init store: %v", err)
+	}
+	defer store.Close()
+
+	tempDir := t.TempDir()
+	tempFile := filepath.Join(tempDir, "refresh_test.md")
+	os.WriteFile(tempFile, []byte("initial content"), 0644)
+
+	// Pre-cache the file.
+	FetchAndCache(store, tempFile)
+	hash1, _ := store.GetBaselineHash(tempFile)
+
+	// Modify the file.
+	os.WriteFile(tempFile, []byte("refreshed content"), 0644)
+
+	// Call refreshLocalStandard (the watcher callback).
+	refreshLocalStandard(store, tempFile)
+
+	// Verify the cache was updated.
+	hash2, _ := store.GetBaselineHash(tempFile)
+	if hash1 == hash2 {
+		t.Error("Expected hash to change after refresh")
+	}
+
+	cached, _ := store.GetBaselineContent(tempFile)
+	if cached != "refreshed content" {
+		t.Errorf("Expected 'refreshed content', got '%s'", cached)
+	}
+}
+
+func TestRefreshLocalStandard_NoChange(t *testing.T) {
+	viper.Set("server.db_path", ":memory:")
+	store, err := db.InitStore()
+	if err != nil {
+		t.Fatalf("Failed to init store: %v", err)
+	}
+	defer store.Close()
+
+	tempDir := t.TempDir()
+	tempFile := filepath.Join(tempDir, "nochange_test.md")
+	os.WriteFile(tempFile, []byte("unchanged content"), 0644)
+
+	// Pre-cache the file.
+	FetchAndCache(store, tempFile)
+	hash1, _ := store.GetBaselineHash(tempFile)
+
+	// Call refreshLocalStandard without modifying the file.
+	refreshLocalStandard(store, tempFile)
+
+	// Hash should remain the same (no unnecessary write).
+	hash2, _ := store.GetBaselineHash(tempFile)
+	if hash1 != hash2 {
+		t.Errorf("Expected hash to remain unchanged, got %s -> %s", hash1, hash2)
+	}
+}
+
+func TestIsRelevantStandardsEvent(t *testing.T) {
+	tests := []struct {
+		name     string
+		event    fsnotify.Event
+		expected bool
+	}{
+		{
+			name:     "md file write",
+			event:    fsnotify.Event{Name: "/tmp/test.md", Op: fsnotify.Write},
+			expected: true,
+		},
+		{
+			name:     "md file create",
+			event:    fsnotify.Event{Name: "/tmp/test.md", Op: fsnotify.Create},
+			expected: true,
+		},
+		{
+			name:     "md file rename",
+			event:    fsnotify.Event{Name: "/tmp/test.md", Op: fsnotify.Rename},
+			expected: true,
+		},
+		{
+			name:     "non-md file write",
+			event:    fsnotify.Event{Name: "/tmp/test.txt", Op: fsnotify.Write},
+			expected: false,
+		},
+		{
+			name:     "hidden file",
+			event:    fsnotify.Event{Name: "/tmp/.hidden.md", Op: fsnotify.Write},
+			expected: false,
+		},
+		{
+			name:     "swap file",
+			event:    fsnotify.Event{Name: "/tmp/test.md.swp", Op: fsnotify.Write},
+			expected: false,
+		},
+		{
+			name:     "backup file",
+			event:    fsnotify.Event{Name: "/tmp/test.md~", Op: fsnotify.Write},
+			expected: false,
+		},
+		{
+			name:     "md file remove (ignored)",
+			event:    fsnotify.Event{Name: "/tmp/test.md", Op: fsnotify.Remove},
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := isRelevantStandardsEvent(tt.event)
+			if result != tt.expected {
+				t.Errorf("isRelevantStandardsEvent(%v) = %v, want %v", tt.event, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestTruncateHash(t *testing.T) {
+	if truncateHash("abcdef1234567890") != "abcdef12" {
+		t.Error("Expected 8-char truncation")
+	}
+	if truncateHash("") != "(new)" {
+		t.Error("Expected '(new)' for empty hash")
+	}
+	if truncateHash("abc") != "abc" {
+		t.Error("Expected short hash returned as-is")
 	}
 }

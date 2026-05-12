@@ -1,5 +1,6 @@
 ---
 title: "Secure coding guidelines for .NET"
+tags: ["dotnet", "security", "csharp", "guidelines"]
 description: Design code to work with .NET-enforced permissions and other enforcement to help prevent malicious code from accessing data or performing other actions.
 ms.date: 07/15/2020
 helpviewer_keywords: 

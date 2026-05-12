@@ -1,3 +1,9 @@
+---
+title: "Docker and Node.js Best Practices"
+tags: ["node", "docker", "containers", "bestpractices"]
+description: "Practical Docker configuration guide for Node.js covering environment variables, non-root users, kernel signal handling, memory limits, node-gyp native compilation, and image size optimization."
+---
+
 # Docker and Node.js Best Practices
 
 <!-- START doctoc generated TOC please keep comment here to allow auto update -->

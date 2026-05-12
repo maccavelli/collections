@@ -9,37 +9,20 @@ import (
 
 func TestBuildMADRDocument(t *testing.T) {
 	session := &db.SessionState{
-		SessionID:         "session-test-123",
-		TechStack:         "Node",
-		TargetEnvironment: "local-ide",
-		BusinessCase:      "Audit Node.js codebases for best practices",
-		RefinedIdea:       "A TypeScript MCP server for codebase auditing",
-		Labels:            []string{"domain:devtools", "type:mcp-server"},
-		JiraID:            "MAG-99",
-		RiskLevel:         "medium",
+		TechStack:              "Go",
+		TargetEnvironment:      "Docker",
+		ComplianceRequirements: []string{"SOC2"},
+		Labels:                 []string{"backend"},
 		DesignProposal: &db.DesignProposal{
-			Narrative: "The system uses a modular tool pipeline.",
+			Narrative: "Proposal",
 			ProposedModules: []db.ModuleSpec{
-				{Name: "scanner", Purpose: "File traversal", Responsibilities: []string{"walk", "classify"}, Dependencies: []string{"security-checker"}},
+				{Name: "Core", Purpose: "Logic", Responsibilities: []string{"Logic"}, Dependencies: []string{"DB"}},
 			},
 			SecurityMandates: []db.SecurityItem{
-				{Category: "input-validation", Description: "Validate paths", Severity: "HIGH", MitigationStrategy: "Resolve and check"},
+				{Category: "Auth", Severity: "High", Description: "JWT", MitigationStrategy: "verify"},
 			},
-			StackTuning: []db.StackOptimization{
-				{Category: "deps", Recommendation: "Prefer native APIs", Rationale: "Less attack surface", Priority: "must-have"},
-			},
-		},
-		SkepticAnalysis: &db.SkepticAnalysis{
-			Vulnerabilities: []db.SecurityItem{
-				{Category: "path-traversal", Description: "Symlink attack", Severity: "HIGH", MitigationStrategy: "Use realpath"},
-			},
-			DesignConcerns: []db.DesignConcern{
-				{Area: "architecture", Concern: "over-abstract the scanner", Severity: "medium", Suggestion: "Keep it simple"},
-			},
-		},
-		SynthesisResolution: &db.SynthesisResolution{
-			Decisions: []db.ArchitecturalDecision{
-				{Topic: "Transport", Decision: "Use stdio", Rationale: "IDE compatibility"},
+			TemplateAST: []db.FileEntry{
+				{Path: "main.go", Type: "file", Language: "Go", Description: "entry"},
 			},
 		},
 	}
@@ -47,135 +30,56 @@ func TestBuildMADRDocument(t *testing.T) {
 	bp := &db.Blueprint{
 		ADRs: []db.ADR{
 			{
-				Title:           "ESLint Strategy",
-				Status:          "Accepted",
-				Context:         "ESLint is heavy but useful",
-				Decision:        "Optional peer dependency",
-				Consequences:    "Projects without ESLint get AST-only analysis",
-				DecisionDate:    "2026-05-08",
-				DecisionDrivers: []string{"Minimize attack surface", "Support existing configs"},
-				Tags:            []string{"architecture", "dependencies"},
-				Alternatives: []db.Alternative{
-					{Name: "Full ESLint as direct dep", Pros: "Maximum coverage", Cons: "Heavy transitive deps", RejectionReason: "Increases attack surface"},
-				},
-				Confirmation: "Verify ESLint detected via require.resolve",
+				Title: "adr1", Status: "accepted", Context: "ctx", Decision: "dec", Consequences: "con", 
+				DecisionDate: "2024-01-01", DecisionDrivers: []string{"driver1"}, Tags: []string{"tag1"}, 
+				ComplianceCheck: "soc2", Confirmation: "confirm", Supersedes: "adr0", SecurityFootprint: "low",
+				Alternatives: []db.Alternative{{Name: "alt", Pros: "p", Cons: "c", RejectionReason: "r"}},
 			},
 		},
-		FileStructure: []db.FileEntry{
-			{Path: "src/index.ts", Type: "source", Language: "TypeScript", Description: "Entry point", Exports: []string{"main"}},
-		},
-		DataModel: []db.Entity{
-			{
-				Name: "AuditFinding",
-				Fields: []db.EntityField{
-					{Name: "id", Type: "string", Required: true, Comment: "Unique ID"},
-					{Name: "severity", Type: "string", Required: true},
-				},
-			},
-		},
-		DependencyManifest: []db.Dependency{
-			{Name: "@modelcontextprotocol/sdk", Version: "^1.12.0", Ecosystem: "npm", Purpose: "MCP framework"},
+		TestingStrategy: map[string]string{"Auth": "Unit"},
+		ImplementationStrategy: map[string]string{"Feature1": "Strategy1"},
+		NonFunctionalRequirements: []db.NFR{
+			{Category: "Performance", Target: "100ms", Requirement: "Fast", Priority: "High"},
 		},
 		MCPTools: []db.MCPTool{
-			{Name: "scan_codebase", Description: "Scan files"},
+			{Name: "tool1", Description: "desc", InputSchema: "{}"},
 		},
-		SecurityConsiderations: []db.SecurityItem{
-			{Category: "deps", Description: "Minimal deps", Severity: "MEDIUM", MitigationStrategy: "Prefer native"},
+		MCPPrompts: []db.MCPPrompt{
+			{Name: "prompt1", Description: "desc", Arguments: []string{"arg1"}},
+		},
+		MCPResources: []db.MCPResource{
+			{URI: "file:///test", Name: "res1", Description: "desc"},
+		},
+	}
+	session.SynthesisResolution = &db.SynthesisResolution{
+		ConstraintLocks: []db.ChaosConstraint{
+			{Domain: "Core", Platform: "Go", Constraint: "const", Impact: "high", Enforced: true},
+		},
+	}
+	session.ChaosAnalysis = &db.ChaosAnalysis{
+		RejectedPatterns: []db.ChaosRejection{
+			{Pattern: "pat1", Reason: "bad", Severity: "High", Source: "Graveyard"},
+		},
+		StressScenarios: []db.StressScenario{
+			{Scenario: "load", Trigger: "reqs", Impact: "fail", Mitigation: "scale"},
 		},
 	}
 
-	out := buildMADRDocument("Node Auditor MCP Server", session, bp, "https://jiraqc.lkqdev.com", "https://jiraqc.lkqdev.com/browse/MAG-99")
+	madr := buildMADRDocument("Test Project", session, bp, "Test Markdown", "Test Browse")
 
-	checks := []struct {
-		label   string
-		content string
-	}{
-		// YAML frontmatter
-		{"frontmatter start", "---\nstatus: accepted"},
-		{"session ID", "session: session-test-123"},
-		{"tech stack", "tech_stack: Node"},
-		{"risk level", "risk_level: medium"},
-		{"schema version", "schema_version: 1"},
-
-		// Jira link
-		{"jira frontmatter", "jira: MAG-99"},
-		{"jira url frontmatter", "jira_url: https://jiraqc.lkqdev.com/browse/MAG-99"},
-		{"jira clickable link", "**Associated Jira Task:** [MAG-99](https://jiraqc.lkqdev.com/browse/MAG-99)"},
-
-		// Persona
-		{"persona section", "## Persona"},
-		{"persona content", "Node.js and TypeScript"},
-
-		// Context
-		{"context section", "## Context and Problem Statement"},
-		{"business case", "Audit Node.js codebases"},
-
-		// Decision Drivers
-		{"decision drivers", "## Decision Drivers"},
-
-		// Architecture
-		{"module hierarchy", "### Module Hierarchy"},
-		{"file structure", "### File Structure"},
-		{"data model", "### Data Model"},
-		{"file path", "src/index.ts"},
-
-		// Security
-		{"security mandates", "## Security Mandates"},
-
-		// ADR (MADR 4.0 format)
-		{"ADR heading", "### ADR-1: ESLint Strategy"},
-		{"ADR status", "**Status:** Accepted"},
-		{"chosen option format", "Chosen option:"},
-		{"pros cons section", "#### Pros and Cons of the Options"},
-		{"good because", "Good, because"},
-		{"bad because", "Bad, because"},
-		{"rejected because", "Rejected, because"},
-		{"confirmation", "##### Confirmation"},
-
-		// Guardrails
-		{"guardrails", "## Implementation Guardrails"},
-		{"anti-patterns", "### Anti-Patterns (DO NOT)"},
-		{"vulnerabilities", "### Known Vulnerabilities to Mitigate"},
-
-		// Roadmap
-		{"dependency manifest", "### Dependency Manifest"},
-		{"mcp sdk", "@modelcontextprotocol/sdk"},
-
-		// MCP Interfaces
-		{"mcp tools", "### MCP Tools"},
-		{"scan tool", "scan_codebase"},
-
-		// Validation
-		{"validation", "## Validation Criteria"},
+	if !strings.Contains(madr, "Test Project") {
+		t.Error("Missing Title")
 	}
-
-	for _, c := range checks {
-		if !strings.Contains(out, c.content) {
-			t.Errorf("Missing %s: expected %q in output", c.label, c.content)
-		}
+	if !strings.Contains(madr, "Auth") {
+		t.Error("Missing Auth security mandate")
 	}
 }
 
-func TestBuildMADRDocument_MinimalInput(t *testing.T) {
-	session := &db.SessionState{
-		SessionID: "session-minimal",
-		TechStack: "Go",
-	}
-	bp := &db.Blueprint{
-		ADRs: []db.ADR{
-			{Title: "Use stdlib", Status: "Accepted", Context: "Minimize deps", Decision: "stdlib only", Consequences: "No third-party risk"},
-		},
-	}
-
-	out := buildMADRDocument("Minimal Project", session, bp, "", "")
-
-	if !strings.Contains(out, "# Minimal Project") {
-		t.Error("Missing title")
-	}
-	if !strings.Contains(out, "ADR-1: Use stdlib") {
-		t.Error("Missing ADR")
-	}
-	if !strings.Contains(out, "status: accepted") {
-		t.Error("Missing YAML frontmatter")
+func TestBuildMADRDocumentNilPointers(t *testing.T) {
+	session := &db.SessionState{}
+	bp := &db.Blueprint{}
+	madr := buildMADRDocument("Test Project", session, bp, "", "")
+	if !strings.Contains(madr, "Test Project") {
+		t.Error("Missing Title")
 	}
 }

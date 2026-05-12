@@ -1,3 +1,9 @@
+---
+title: "Node.js Best Practices"
+tags: ["node", "bestpractices", "javascript", "typescript"]
+description: "Comprehensive compilation of 102+ Node.js best practices covering project architecture, error handling, code style, testing, production readiness, security, and Docker containerization."
+---
+
 [✔]: assets/images/checkbox-small-blue.png
 
 # Node.js Best Practices

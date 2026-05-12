@@ -25,6 +25,8 @@ import (
 	"mcp-server-magicdev/internal/lifecycle"
 	"mcp-server-magicdev/internal/logging"
 	"mcp-server-magicdev/internal/sync"
+	"mcp-server-magicdev/internal/telemetry"
+	gosync "sync"
 )
 
 var serveCmd = &cobra.Command{
@@ -123,8 +125,35 @@ var serveCmd = &cobra.Command{
 		}
 		defer store.Close()
 
-		// Add metrics reporter: log BuntDB cache entries every 30 seconds
+		var wg gosync.WaitGroup
+
+		telemetryServer := telemetry.NewServer()
+		if telemetryServer != nil {
+			telemetryServer.Start()
+			defer telemetryServer.Close()
+		}
+
+		startTime := time.Now()
+
+		defer func() {
+			cancel() // ensure context is canceled so background routines exit
+			waitCh := make(chan struct{})
+			go func() {
+				wg.Wait()
+				close(waitCh)
+			}()
+			select {
+			case <-waitCh:
+				slog.Debug("all background routines exited gracefully")
+			case <-time.After(4 * time.Second):
+				slog.Warn("timeout waiting for background routines to exit")
+			}
+		}()
+
+		// Add metrics reporter: log BuntDB cache entries and latencies every 30 seconds
+		wg.Add(1)
 		go func() {
+			defer wg.Done()
 			ticker := time.NewTicker(30 * time.Second)
 			defer ticker.Stop()
 			for {
@@ -132,12 +161,124 @@ var serveCmd = &cobra.Command{
 				case <-ctx.Done():
 					return
 				case <-ticker.C:
-					slog.Debug("cache metrics",
-						"db_entries", store.DBEntries(),
+					avgReadUs, avgWriteUs, ops := store.GetAndResetLatency()
+					slog.Info("BuntDB Telemetry",
+						"sessions_count", store.SessionCount(),
+						"baselines_count", store.BaselineCount(),
+						"chaos_graveyards_count", store.ChaosGraveyardCount(),
+						"total_keys", store.DBEntries(),
+						"db_size_bytes", store.DBSize(),
+						"interval_ops", ops,
+						"avg_read_us", avgReadUs,
+						"avg_write_us", avgWriteUs,
 					)
 				}
 			}
 		}()
+
+		// UDP Telemetry Broadcaster (Hot State)
+		if telemetryServer != nil {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				ticker := time.NewTicker(telemetry.EmissionInterval)
+				defer ticker.Stop()
+				var memStats runtime.MemStats
+				
+				stages := []string{
+					"evaluate_idea", "ingest_standards", "clarify_requirements",
+					"critique_design", "finalize_requirements", "blueprint_implementation",
+					"generate_documents", "complete_design",
+				}
+
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case <-ticker.C:
+						runtime.ReadMemStats(&memStats)
+						
+						payload := telemetry.MetricPayload{
+							NumCPU:       runtime.NumCPU(),
+							NumGoroutine: runtime.NumGoroutine(),
+							MemAlloc:     memStats.Alloc,
+							NextGC:       memStats.NextGC,
+							GOMemLimit:   viper.GetString("runtime.gomemlimit"),
+							Uptime:       time.Since(startTime).Round(time.Second).String(),
+						}
+
+						if payload.GOMemLimit == "" {
+							payload.GOMemLimit = "Unknown"
+						}
+
+						// Hot State: Active Pipeline Session
+						sessions, _ := store.ListSessions()
+						if len(sessions) > 0 {
+							latest := sessions[len(sessions)-1]
+							isComplete := false
+							if s, ok := latest.StepStatus["complete_design"]; ok && (s == "DONE" || s == "COMPLETED" || s == "FAILED") {
+								isComplete = true
+							}
+
+							for _, stage := range stages {
+								status := "PENDING"
+								latency := "-"
+								tokenDelta := "-"
+								sessionDataStr := "-"
+
+								if isComplete {
+									status = "IDLE"
+								}
+
+								if s, ok := latest.StepStatus[stage]; ok && s != "" {
+									status = s
+								} else if latest.CurrentStep == stage && !isComplete {
+									status = "ACTIVE"
+								}
+
+								if t, ok := latest.StepTimings[stage]; ok {
+									if t.DurationMs > 0 {
+										latency = fmt.Sprintf("%ds", t.DurationMs/1000)
+									} else if t.StartedAt != "" {
+										if startedAt, err := time.Parse(time.RFC3339, t.StartedAt); err == nil {
+											latency = fmt.Sprintf("%ds", int(time.Since(startedAt).Seconds()))
+										}
+									}
+								}
+								
+								if toks, ok := latest.StepTokens[stage]; ok {
+									tokenDelta = fmt.Sprintf("+%d", toks)
+								}
+								if bytes, ok := latest.StepDataBytes[stage]; ok {
+									const unit = 1024
+									b := uint64(bytes)
+									if b < unit {
+										sessionDataStr = fmt.Sprintf("%d B", b)
+									} else {
+										div, exp := uint64(unit), 0
+										for n := b / unit; n >= unit; n /= unit {
+											div *= unit
+											exp++
+										}
+										sessionDataStr = fmt.Sprintf("%.1f %cB", float64(b)/float64(div), "KMGTPE"[exp])
+									}
+								}
+
+								payload.PipelineStages = append(payload.PipelineStages, telemetry.StageTelemetry{
+									Name:           stage,
+									Status:         status,
+									Latency:        latency,
+									TokenDelta:     tokenDelta,
+									SessionDataStr: sessionDataStr,
+								})
+							}
+						}
+
+						telemetryServer.Broadcast(payload)
+					}
+				}
+			}()
+		}
 
 		// Auto-provisioning logic via environment variables
 		provisionVault(store, "gitlab", "GITLAB_TOKEN", "GITLAB_PERSONAL_ACCESS_TOKEN", "GITLAB_USER_TOKEN")
@@ -150,7 +291,15 @@ var serveCmd = &cobra.Command{
 		checkVaultSecret(store, "gitlab")
 
 		// Launch the background baseline standards sync priority cascade
-		go sync.SyncBaselines(store)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sync.SyncBaselines(store)
+		}()
+
+		// Start live filesystem watcher for local standards — automatically
+		// updates BuntDB cache when .md files change on disk.
+		sync.StartStandardsWatcher(ctx, &wg, store)
 
 		// Intelligence Engine (LLM) initialization and health check closure
 		checkLLMHealth := func() {
@@ -225,6 +374,7 @@ func provisionVault(store *db.Store, service string, envKeys ...string) {
 				slog.Error("failed to auto-provision vault", "service", service, "err", err)
 			} else {
 				slog.Info("auto-provisioned vault secret from environment", "service", service, "env", envKey)
+				os.Unsetenv(envKey)
 			}
 			return
 		}
