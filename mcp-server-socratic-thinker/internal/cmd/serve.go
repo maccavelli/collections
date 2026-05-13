@@ -55,7 +55,7 @@ var serveCmd = &cobra.Command{
 
 		machine := socratic.NewMachine()
 
-		mcpServer := mcp.NewServer(&mcp.Implementation{Name: "socratic-thinker", Version: "1.0.0"}, &mcp.ServerOptions{
+		mcpServer := mcp.NewServer(&mcp.Implementation{Name: "socratic-thinker", Version: Version}, &mcp.ServerOptions{
 			Logger: slog.Default(),
 		})
 
@@ -121,7 +121,7 @@ var serveCmd = &cobra.Command{
 					}
 
 					runtime.ReadMemStats(&memStats)
-					stage, deadlockCount := machine.GetMetrics()
+					stage, deadlockCount, contextBytes, tokensEst := machine.GetMetrics()
 
 					payload := telemetry.MetricPayload{
 						UptimeSeconds:       int64(time.Since(startTime).Seconds()),
@@ -132,6 +132,8 @@ var serveCmd = &cobra.Command{
 						NetworkBytesWritten: bytesWritten.Load(),
 						PipelineStage:       stage,
 						AporiaDeadlockCount: deadlockCount,
+						SessionContextBytes: contextBytes,
+						SessionTokensEst:    tokensEst,
 					}
 
 					data, _ := json.Marshal(payload)

@@ -7,6 +7,9 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// Version is set from main.go ldflags
+var Version string = "dev"
+
 var rootCmd = &cobra.Command{
 	Use:   "socratic-thinker",
 	Short: "Socratic Thinker MCP Server",
