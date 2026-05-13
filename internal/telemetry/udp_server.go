@@ -45,7 +45,6 @@ type Server struct {
 	conn            *net.UDPConn
 	dashboardAddr   *net.UDPAddr
 	dashboardAddrMu sync.Mutex
-	stopCh          chan struct{}
 }
 
 // NewServer initializes the UDP listener on the first available port.
@@ -68,8 +67,7 @@ func NewServer() *Server {
 	}
 
 	return &Server{
-		conn:   conn,
-		stopCh: make(chan struct{}),
+		conn: conn,
 	}
 }
 
@@ -126,6 +124,5 @@ func (s *Server) Close() {
 	if s == nil || s.conn == nil {
 		return
 	}
-	close(s.stopCh)
 	_ = s.conn.Close()
 }

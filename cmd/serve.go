@@ -184,6 +184,8 @@ var serveCmd = &cobra.Command{
 				ticker := time.NewTicker(telemetry.EmissionInterval)
 				defer ticker.Stop()
 				var memStats runtime.MemStats
+				runtime.ReadMemStats(&memStats) // Initial hydration
+				tickCount := 0
 				
 				stages := []string{
 					"evaluate_idea", "ingest_standards", "clarify_requirements",
@@ -196,7 +198,11 @@ var serveCmd = &cobra.Command{
 					case <-ctx.Done():
 						return
 					case <-ticker.C:
-						runtime.ReadMemStats(&memStats)
+						tickCount++
+						// ReadMemStats every 4th tick (2s cadence) to reduce STW overhead
+						if tickCount%4 == 0 {
+							runtime.ReadMemStats(&memStats)
+						}
 						
 						payload := telemetry.MetricPayload{
 							NumCPU:       runtime.NumCPU(),
