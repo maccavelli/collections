@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/lipgloss/table"
@@ -54,6 +55,16 @@ func renderStyledTable(headers []string, rows [][]string) string {
 
 func renderOverview(m model) string {
 	b := strings.Builder{}
+
+	// Connection status indicator
+	connStatus := warningStyle.Render("○ Server Disconnected")
+	if m.hotConnected && time.Since(m.hotLastUpdate) < 10*time.Second {
+		connStatus = successStyle.Render("● Server Connected")
+	}
+	if m.boundPort > 0 {
+		connStatus += metricLabelStyle.Render(fmt.Sprintf("  (udp:%d)", m.boundPort))
+	}
+	b.WriteString(connStatus + "\n\n")
 
 	// System Health String
 	gcStr := fmt.Sprintf("%dms", m.hotState.NextGC/1000000)

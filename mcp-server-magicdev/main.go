@@ -10,8 +10,7 @@ import (
 	"mcp-server-magicdev/internal/logging"
 )
 
-// Version is injected at build time via ldflags.
-var Version = "dev"
+
 
 func main() {
 	// Initialize structured JSON logger on stderr for MCP protocol compliance

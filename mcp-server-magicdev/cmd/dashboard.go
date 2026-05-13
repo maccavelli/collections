@@ -58,10 +58,12 @@ type metricsMsg struct {
 type udpMetricsMsg telemetry.MetricPayload
 
 type model struct {
-	activeTab int
-	coldState metricsMsg
-	hotState  udpMetricsMsg
-	boundPort int
+	activeTab     int
+	coldState     metricsMsg
+	hotState      udpMetricsMsg
+	boundPort     int
+	hotConnected  bool
+	hotLastUpdate time.Time
 }
 
 const (
@@ -119,55 +121,79 @@ func runInteractiveDashboard() {
 	}
 	m := model{}
 
-	// 1. Connect to serve process's UDP telemetry listener
-	var conn *net.UDPConn
-	var boundPort int
-	for _, port := range telemetry.TelemetryPorts {
-		addr := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: port}
-		c, err := net.DialUDP("udp", nil, addr)
-		if err == nil {
-			conn = c
-			boundPort = port
-			break
-		}
-	}
-
-	if conn != nil {
-		m.boundPort = boundPort
-	} else {
-		slog.Warn("could not connect to any telemetry port; real-time session data will be unavailable")
-	}
-
 	p := tea.NewProgram(m, tea.WithAltScreen())
 
-	// 2. Start persistent UDP client goroutine (ping + receive - HOT STATE)
-	if conn != nil {
-		go func() {
-			defer conn.Close()
-			buf := make([]byte, 4096)
-			pingTicker := time.NewTicker(telemetry.EmissionInterval)
-			defer pingTicker.Stop()
+	// Start persistent UDP client goroutine with auto-reconnect (HOT STATE)
+	go func() {
+		conn, boundPort := udpSweepPorts()
+		if conn == nil {
+			slog.Warn("could not connect to any telemetry port; will retry")
+		} else {
+			p.Send(reconnectMsg{port: boundPort})
+		}
 
-			for range pingTicker.C {
-				// Send a 1-byte ping to register our address with the serve process
-				_, err := conn.Write([]byte{0x01})
-				if err != nil {
-					continue
-				}
+		buf := make([]byte, 4096)
+		pingTicker := time.NewTicker(telemetry.EmissionInterval)
+		defer pingTicker.Stop()
 
-				// Read the response (MetricPayload JSON)
-				conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-				n, err := conn.Read(buf)
-				if err != nil {
-					continue
+		const maxConsecutiveFailures = 6
+		consecutiveFailures := 0
+		backoff := 2 * time.Second
+		const maxBackoff = 10 * time.Second
+
+		for range pingTicker.C {
+			if conn == nil {
+				time.Sleep(backoff)
+				conn, boundPort = udpSweepPorts()
+				if conn != nil {
+					consecutiveFailures = 0
+					backoff = 2 * time.Second
+					p.Send(reconnectMsg{port: boundPort})
+					slog.Info("telemetry reconnected", "port", boundPort)
+				} else {
+					backoff = min(backoff*2, maxBackoff)
 				}
-				var payload telemetry.MetricPayload
-				if json.Unmarshal(buf[:n], &payload) == nil {
-					p.Send(udpMetricsMsg(payload))
-				}
+				continue
 			}
-		}()
-	}
+
+			_, err := conn.Write([]byte{0x01})
+			if err != nil {
+				if isClosedErr(err) {
+					return
+				}
+				consecutiveFailures++
+				if consecutiveFailures >= maxConsecutiveFailures {
+					slog.Warn("telemetry connection lost, initiating re-sweep",
+						"failures", consecutiveFailures)
+					conn.Close()
+					conn = nil
+				}
+				continue
+			}
+
+			conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+			n, err := conn.Read(buf)
+			if err != nil {
+				if isClosedErr(err) {
+					return
+				}
+				consecutiveFailures++
+				if consecutiveFailures >= maxConsecutiveFailures {
+					slog.Warn("telemetry connection lost, initiating re-sweep",
+						"failures", consecutiveFailures)
+					conn.Close()
+					conn = nil
+				}
+				continue
+			}
+
+			consecutiveFailures = 0
+			var payload telemetry.MetricPayload
+			if json.Unmarshal(buf[:n], &payload) == nil {
+				p.Send(udpMetricsMsg(payload))
+			}
+		}
+	}()
 
 	// 3. Start polling DB (COLD STATE)
 	go func() {
@@ -263,6 +289,47 @@ func extractJSONValue(line, key string) string {
 	return ""
 }
 
+// isClosedErr checks if the error indicates a closed socket.
+func isClosedErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "use of closed")
+}
+
+// reconnectMsg notifies the BubbleTea program of a port change.
+type reconnectMsg struct {
+	port int
+}
+
+// udpDialAndValidate connects to a port and verifies the server responds.
+func udpDialAndValidate(port int) *net.UDPConn {
+	addr := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: port}
+	c, err := net.DialUDP("udp", nil, addr)
+	if err != nil {
+		return nil
+	}
+	_, _ = c.Write([]byte{0x01})
+	c.SetReadDeadline(time.Now().Add(1 * time.Second))
+	buf := make([]byte, 4096)
+	_, err = c.Read(buf)
+	if err != nil {
+		c.Close()
+		return nil
+	}
+	return c
+}
+
+// udpSweepPorts attempts to connect to the first responding telemetry port.
+func udpSweepPorts() (*net.UDPConn, int) {
+	for _, port := range telemetry.TelemetryPorts {
+		if c := udpDialAndValidate(port); c != nil {
+			return c, port
+		}
+	}
+	return nil, 0
+}
+
 // Init performs the Init operation.
 func (m model) Init() tea.Cmd {
 	return nil
@@ -294,6 +361,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.coldState = msg
 	case udpMetricsMsg:
 		m.hotState = msg
+		m.hotConnected = true
+		m.hotLastUpdate = time.Now()
+	case reconnectMsg:
+		m.boundPort = msg.port
 	}
 	return m, nil
 }

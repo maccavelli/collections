@@ -5,14 +5,14 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// Version is set at build time via ldflags -X main.Version=...
-// and propagated here for the MCP Implementation metadata.
-var Version = "dev"
+// Version is propagated from the main package for MCP Implementation metadata.
+var Version string
 
 var rootCmd = &cobra.Command{
-	Use:   "magicdev",
-	Short: "MagicDev is a stateful MCP server for .NET/Node requirements engineering",
-	Long:  `MagicDev provides an "Idea-to-Asset" pipeline for technical planning, integrated with BuntDB, Atlassian, and GitLab.`,
+	Use:     "magicdev",
+	Version: Version,
+	Short:   "MagicDev is a stateful MCP server for .NET/Node requirements engineering",
+	Long:    `MagicDev provides an "Idea-to-Asset" pipeline for technical planning, integrated with BuntDB, Atlassian, and GitLab.`,
 }
 
 func init() {
@@ -21,5 +21,6 @@ func init() {
 
 // Execute runs the root command tree. Called from main().
 func Execute() error {
+	rootCmd.Version = Version
 	return rootCmd.Execute()
 }

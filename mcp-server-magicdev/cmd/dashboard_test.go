@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -113,5 +114,38 @@ func TestModelUpdate(t *testing.T) {
 	m3, _ := m.Update(udpMetricsMsg{NumCPU: 8})
 	if m3.(model).hotState.NumCPU != 8 {
 		t.Errorf("Expected NumCPU to be updated to 8")
+	}
+}
+
+func TestIsClosedErr(t *testing.T) {
+	if isClosedErr(nil) {
+		t.Error("expected false for nil")
+	}
+	if isClosedErr(errors.New("random error")) {
+		t.Error("expected false for random error")
+	}
+	if !isClosedErr(errors.New("use of closed network connection")) {
+		t.Error("expected true for 'use of closed'")
+	}
+}
+
+func TestModelUpdate_UDPMetrics_SetsConnected(t *testing.T) {
+	m := model{}
+	m3, _ := m.Update(udpMetricsMsg{NumCPU: 8})
+	updated := m3.(model)
+	if !updated.hotConnected {
+		t.Error("expected hotConnected=true after udpMetricsMsg")
+	}
+	if updated.hotLastUpdate.IsZero() {
+		t.Error("expected hotLastUpdate to be set")
+	}
+}
+
+func TestModelUpdate_ReconnectMsg(t *testing.T) {
+	m := model{}
+	m3, _ := m.Update(reconnectMsg{port: 49802})
+	updated := m3.(model)
+	if updated.boundPort != 49802 {
+		t.Errorf("expected boundPort=49802, got %d", updated.boundPort)
 	}
 }
