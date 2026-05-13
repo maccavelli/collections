@@ -22,13 +22,14 @@ const (
 	StageAporia             Stage = "APORIA"
 )
 
-// PipelineState defines the PipelineState structure.
 type PipelineState struct {
 	OriginalPrompt string
 	LemmaTrail     []string
 	CurrentStage   Stage
 	DeadlockCount  int
 	DialecticRound int
+	ContextBytes   int
+	TokensEst      int
 }
 
 // Machine manages the single global pipeline.
@@ -73,62 +74,92 @@ func (m *Machine) Process(ctx context.Context, req Request) (string, error) {
 		defer m.mu.Unlock()
 	}
 
-	// Always allow hard reset
-	if req.Stage == "RESET" {
-		m.pipeline = &PipelineState{CurrentStage: StageIdle}
-		return "Pipeline reset. Please submit INITIALIZE with your raw problem to start a new Socratic session.", nil
+	// 1. Measure incoming text drag BEFORE validation rules drop the payload
+	incomingTextDrag := len(req.Problem) + len(req.Lemma) + len(req.AporiaSynthesis) + len(req.SynthesisCritique) + len(req.ResolutionStrategy)
+	m.pipeline.ContextBytes += incomingTextDrag
+	m.pipeline.TokensEst = m.pipeline.ContextBytes / 4
+
+	// Helper to track outgoing drag
+	trackOutgoing := func(out string) string {
+		m.pipeline.ContextBytes += len(out)
+		m.pipeline.TokensEst = m.pipeline.ContextBytes / 4
+		return out
 	}
+
+	// Always allow hard reset (preserves current context drag to observe aborted sessions)
+	if req.Stage == "RESET" {
+		m.pipeline = &PipelineState{
+			CurrentStage: StageIdle,
+			ContextBytes: m.pipeline.ContextBytes,
+			TokensEst:    m.pipeline.TokensEst,
+		}
+		return trackOutgoing("Pipeline reset. Please submit INITIALIZE with your raw problem to start a new Socratic session."), nil
+	}
+
+	var out string
+	var err error
 
 	switch m.pipeline.CurrentStage {
 	case StageIdle:
 		if req.Stage != "INITIALIZE" {
-			return m.formatError("INITIALIZE"), errors.New("invalid stage")
+			out, err = m.formatError("INITIALIZE"), errors.New("invalid stage")
+		} else {
+			out, err = m.initialize(req.Problem)
 		}
-		return m.initialize(req.Problem)
 	case StageAporia:
 		if req.Stage == "INITIALIZE" {
-			return m.initialize(req.Problem)
+			out, err = m.initialize(req.Problem)
+		} else if req.Stage != "APORIA" {
+			out, err = m.formatError("APORIA"), errors.New("invalid stage")
+		} else {
+			out, err = m.handleAporia(req)
 		}
-		if req.Stage != "APORIA" {
-			return m.formatError("APORIA"), errors.New("invalid stage")
-		}
-		return m.handleAporia(req)
 	case StageThesis:
 		if req.Stage != "THESIS" {
-			return m.formatError("THESIS"), errors.New("invalid stage")
+			out, err = m.formatError("THESIS"), errors.New("invalid stage")
+		} else {
+			out, err = m.handleThesis(req.Lemma)
 		}
-		return m.handleThesis(req.Lemma)
 	case StageAntithesisInitial:
 		if req.Stage != "ANTITHESIS_INITIAL" {
-			return m.formatError("ANTITHESIS_INITIAL"), errors.New("invalid stage")
+			out, err = m.formatError("ANTITHESIS_INITIAL"), errors.New("invalid stage")
+		} else {
+			out, err = m.handleAntithesisInitial(req.Lemma)
 		}
-		return m.handleAntithesisInitial(req.Lemma)
 	case StageThesisDefense:
 		if req.Stage != "THESIS_DEFENSE" {
-			return m.formatError("THESIS_DEFENSE"), errors.New("invalid stage")
+			out, err = m.formatError("THESIS_DEFENSE"), errors.New("invalid stage")
+		} else {
+			out, err = m.handleThesisDefense(req.Lemma)
 		}
-		return m.handleThesisDefense(req.Lemma)
 	case StageAntithesisEvaluate:
 		if req.Stage != "ANTITHESIS_EVALUATE" {
-			return m.formatError("ANTITHESIS_EVALUATE"), errors.New("invalid stage")
+			out, err = m.formatError("ANTITHESIS_EVALUATE"), errors.New("invalid stage")
+		} else {
+			out, err = m.handleAntithesisEvaluate(req.Lemma, req.IsSatisfied)
 		}
-		return m.handleAntithesisEvaluate(req.Lemma, req.IsSatisfied)
 	case StageChaos:
 		if req.Stage != "CHAOS" {
-			return m.formatError("CHAOS"), errors.New("invalid stage")
+			out, err = m.formatError("CHAOS"), errors.New("invalid stage")
+		} else {
+			out, err = m.handleChaos(req.Lemma)
 		}
-		return m.handleChaos(req.Lemma)
 	default:
-		return "", fmt.Errorf("unknown pipeline stage: %s", m.pipeline.CurrentStage)
+		out, err = "", fmt.Errorf("unknown pipeline stage: %s", m.pipeline.CurrentStage)
 	}
+
+	return trackOutgoing(out), err
 }
 
 func (m *Machine) initialize(problem string) (string, error) {
+	// A new INITIALIZE implies a new session; explicitly reset context tracking
 	m.pipeline = &PipelineState{
 		OriginalPrompt: problem,
 		CurrentStage:   StageThesis,
 		LemmaTrail:     []string{},
 		DialecticRound: 0,
+		ContextBytes:   0,
+		TokensEst:      0,
 	}
 	return `{"stage_accepted": "INITIALIZE", "next_stage": "THESIS", "directive": "You are the Thesis Architect. Provide a clear, robust initial solution or hypothesis to the user's problem natively in your thought block. Once reached, distill it into a SINGLE-SENTENCE Lemma and call the tool with stage=THESIS."}`, nil
 }
@@ -223,17 +254,21 @@ func (m *Machine) MuzzleAndSynthesize(aporia string) string {
 	out.WriteString("### ⚖️ Aporia Verdict\n")
 	out.WriteString(strings.TrimSpace(aporia))
 
-	// Implicitly reset for next run
-	m.pipeline = &PipelineState{CurrentStage: StageIdle}
+	// Implicitly reset for next run, but preserve metrics for the dashboard
+	m.pipeline = &PipelineState{
+		CurrentStage: StageIdle,
+		ContextBytes: m.pipeline.ContextBytes,
+		TokensEst:    m.pipeline.TokensEst,
+	}
 
 	return out.String()
 }
 
 // GetMetrics returns telemetry metrics for the state machine.
-func (m *Machine) GetMetrics() (string, int) {
+func (m *Machine) GetMetrics() (string, int, int, int) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return string(m.pipeline.CurrentStage), m.pipeline.DeadlockCount
+	return string(m.pipeline.CurrentStage), m.pipeline.DeadlockCount, m.pipeline.ContextBytes, m.pipeline.TokensEst
 }
 
 // formatError provides explicit instruction to the agent if they mess up the format, breaking infinite silent loops.

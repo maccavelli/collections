@@ -10,10 +10,12 @@ type MetricPayload struct {
 	GCPauseNs          uint64 `json:"gc_pause_ns"`
 
 	// Session Metrics
-	NetworkBytesRead   int64  `json:"network_bytes_read"`
+	NetworkBytesRead    int64  `json:"network_bytes_read"`
 	NetworkBytesWritten int64  `json:"network_bytes_written"`
-	PipelineStage      string `json:"pipeline_stage"`
+	PipelineStage       string `json:"pipeline_stage"`
 	AporiaDeadlockCount int    `json:"aporia_deadlock_count"`
+	SessionContextBytes int    `json:"session_context_bytes"`
+	SessionTokensEst    int    `json:"session_tokens_est"`
 }
 
 var (

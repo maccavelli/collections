@@ -223,6 +223,8 @@ type model struct {
 	sessNetOut      int64
 	sessPipeline    string
 	sessDeadlocks   int
+	sessContextBytes int
+	sessTokensEst    int
 	sessConnected   bool
 	sessLastUpdate  time.Time
 
@@ -277,6 +279,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.sessNetOut = msg.NetworkBytesWritten
 		m.sessPipeline = msg.PipelineStage
 		m.sessDeadlocks = msg.AporiaDeadlockCount
+		m.sessContextBytes = msg.SessionContextBytes
+		m.sessTokensEst = msg.SessionTokensEst
 		m.sessConnected = true
 		m.sessLastUpdate = time.Now()
 	}
@@ -325,6 +329,8 @@ func renderSummary(m model) string {
 		{"Net Throughput Out", fmt.Sprintf("%d B", m.sessNetOut)},
 		{"Pipeline Stage", pipelineStage},
 		{"Aporia Deadlocks", strconv.Itoa(m.sessDeadlocks)},
+		{"Context Utilized", fmt.Sprintf("%d bytes", m.sessContextBytes)},
+		{"Tokens (Est.)", strconv.Itoa(m.sessTokensEst)},
 	}
 	sessTable := renderStyledTable([]string{"Metric", "Value"}, sessRows)
 	sessBox := cardStyle.Render(subTitleStyle.Render("Session Flow") + "\n" + sessTable)
