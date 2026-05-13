@@ -1,0 +1,186 @@
+package cmd
+
+import (
+	"errors"
+	"testing"
+	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
+	"mcp-server-socratic-thinker/internal/telemetry"
+)
+
+func TestIsClosedErr(t *testing.T) {
+	if isClosedErr(nil) {
+		t.Error("expected false for nil")
+	}
+	if isClosedErr(errors.New("random error")) {
+		t.Error("expected false for random error")
+	}
+	if !isClosedErr(errors.New("use of closed network connection")) {
+		t.Error("expected true for 'use of closed'")
+	}
+}
+
+func TestInitialModel(t *testing.T) {
+	m := initialModel()
+	if m.activeTab != tabSummary {
+		t.Errorf("expected activeTab=tabSummary, got %d", m.activeTab)
+	}
+	if m.boundPort != 0 {
+		t.Errorf("expected boundPort=0, got %d", m.boundPort)
+	}
+}
+
+func TestModel_Init(t *testing.T) {
+	m := initialModel()
+	cmd := m.Init()
+	if cmd != nil {
+		t.Error("expected nil cmd from Init()")
+	}
+}
+
+func TestModel_Update_WindowSize(t *testing.T) {
+	m := initialModel()
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	um := updated.(model)
+	if um.width != 120 || um.height != 40 {
+		t.Errorf("expected 120x40, got %dx%d", um.width, um.height)
+	}
+}
+
+func TestModel_Update_Navigation(t *testing.T) {
+	m := initialModel()
+
+	// Navigate down
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	um := updated.(model)
+	if um.activeTab != tabQuit {
+		t.Errorf("expected tabQuit after j, got %d", um.activeTab)
+	}
+
+	// Navigate down wraps
+	updated, _ = um.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	um = updated.(model)
+	if um.activeTab != tabSummary {
+		t.Errorf("expected tabSummary after wrap, got %d", um.activeTab)
+	}
+
+	// Navigate up wraps
+	updated, _ = um.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
+	um = updated.(model)
+	if um.activeTab != tabQuit {
+		t.Errorf("expected tabQuit after k wrap, got %d", um.activeTab)
+	}
+}
+
+func TestModel_Update_SystemMsg(t *testing.T) {
+	m := initialModel()
+	updated, _ := m.Update(systemMsg{
+		UptimeSeconds:    42,
+		MemoryAllocBytes: 1024 * 1024,
+		ActiveGoroutines: 5,
+		GCPauseNs:        100000,
+	})
+	um := updated.(model)
+	if um.sysUptime != 42 {
+		t.Errorf("expected uptime=42, got %d", um.sysUptime)
+	}
+	if um.sysGoroutines != 5 {
+		t.Errorf("expected goroutines=5, got %d", um.sysGoroutines)
+	}
+}
+
+func TestModel_Update_SessionMsg(t *testing.T) {
+	m := initialModel()
+	payload := telemetry.MetricPayload{
+		NetworkBytesRead:    100,
+		NetworkBytesWritten: 200,
+		PipelineStage:       "THESIS",
+		AporiaDeadlockCount: 1,
+	}
+	updated, _ := m.Update(sessionMsg(payload))
+	um := updated.(model)
+	if um.sessNetIn != 100 {
+		t.Errorf("expected sessNetIn=100, got %d", um.sessNetIn)
+	}
+	if um.sessPipeline != "THESIS" {
+		t.Errorf("expected sessPipeline=THESIS, got %s", um.sessPipeline)
+	}
+	if !um.sessConnected {
+		t.Error("expected sessConnected=true")
+	}
+}
+
+func TestRenderSummary_Disconnected(t *testing.T) {
+	m := initialModel()
+	m.width = 120
+	m.height = 40
+	out := renderSummary(m)
+	if len(out) == 0 {
+		t.Error("expected non-empty render")
+	}
+}
+
+func TestRenderSummary_Connected(t *testing.T) {
+	m := initialModel()
+	m.width = 120
+	m.height = 40
+	m.sessConnected = true
+	m.sessLastUpdate = time.Now()
+	m.sessPipeline = "CHAOS"
+	m.boundPort = 49153
+	out := renderSummary(m)
+	if len(out) == 0 {
+		t.Error("expected non-empty render")
+	}
+}
+
+func TestRenderSummary_NarrowWidth(t *testing.T) {
+	m := initialModel()
+	m.width = 80
+	m.height = 40
+	out := renderSummary(m)
+	if len(out) == 0 {
+		t.Error("expected non-empty render")
+	}
+}
+
+func TestModel_View(t *testing.T) {
+	m := initialModel()
+	m.width = 120
+	m.height = 40
+	out := m.View()
+	if len(out) == 0 {
+		t.Error("expected non-empty view")
+	}
+}
+
+func TestModel_View_Error(t *testing.T) {
+	m := initialModel()
+	m.err = errors.New("test error")
+	out := m.View()
+	if len(out) == 0 {
+		t.Error("expected non-empty view with error")
+	}
+}
+
+func TestModel_View_QuitTab(t *testing.T) {
+	m := initialModel()
+	m.activeTab = tabQuit
+	out := m.View()
+	if len(out) == 0 {
+		t.Error("expected non-empty quit tab view")
+	}
+}
+
+func TestRenderStyledTable(t *testing.T) {
+	headers := []string{"Col1", "Col2"}
+	rows := [][]string{
+		{"a", "b"},
+		{"c", "d"},
+	}
+	out := renderStyledTable(headers, rows)
+	if len(out) == 0 {
+		t.Error("expected non-empty table")
+	}
+}
