@@ -7,11 +7,12 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// Version is set from main.go ldflags
-var Version string = "dev"
+// Version is propagated from the main package for MCP Implementation metadata.
+var Version string
 
 var rootCmd = &cobra.Command{
-	Use:   "socratic-thinker",
+	Use:     "socratic-thinker",
+	Version: Version,
 	Short: "Socratic Thinker MCP Server",
 	Long:  `Socratic Thinker MCP Server provides deep cognitive processing and paradox resolution via the Model Context Protocol.`,
 	Run: func(cmd *cobra.Command, args []string) {
@@ -22,6 +23,7 @@ var rootCmd = &cobra.Command{
 
 // Execute adds all child commands to the root command and sets flags appropriately.
 func Execute() {
+	rootCmd.Version = Version
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
