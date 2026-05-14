@@ -2,12 +2,12 @@ package handler
 
 import (
 	"context"
-	"testing"
 	"strings"
+	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"mcp-server-socratic-thinker/internal/telemetry"
 	"mcp-server-socratic-thinker/internal/socratic"
+	"mcp-server-socratic-thinker/internal/telemetry"
 )
 
 func TestTextResult(t *testing.T) {
@@ -45,17 +45,17 @@ func TestWithRecovery(t *testing.T) {
 	}
 
 	wrapped := withRecovery(rb, handlerFunc)
-	
+
 	req := &mcp.CallToolRequest{}
 	res, err := wrapped(context.Background(), req)
-	
+
 	if err != nil {
 		t.Errorf("unexpected error returned: %v", err)
 	}
 	if res == nil || !res.IsError {
 		t.Errorf("expected an error result, got %+v", res)
 	}
-	
+
 	txt, _ := res.Content[0].(*mcp.TextContent)
 	if !strings.Contains(txt.Text, "test panic") {
 		t.Errorf("expected output to contain panic msg, got: %s", txt.Text)

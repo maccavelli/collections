@@ -55,7 +55,7 @@ func TestAutoFlusher(t *testing.T) {
 	if !df.flushed {
 		t.Error("expected flushed")
 	}
-	
+
 	df.flushed = false
 	af.Close()
 	if !df.flushed {

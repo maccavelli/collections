@@ -23,65 +23,87 @@ var dashboardCmd = &cobra.Command{
 	Aliases: []string{"dash"},
 	Short:   "View the telemetry dashboard",
 	Run: func(cmd *cobra.Command, args []string) {
-		// 1. Connect to serve process's UDP telemetry listener
-		var conn *net.UDPConn
-		var boundPort int
-		for _, port := range telemetry.TelemetryPorts {
-			addr := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: port}
-			c, err := net.DialUDP("udp", nil, addr)
-			if err == nil {
-				conn = c
-				boundPort = port
-				break
-			}
-		}
-
 		m := initialModel()
-		if conn != nil {
-			m.boundPort = boundPort
-		} else {
-			slog.Warn("could not connect to any telemetry port; session data will be unavailable")
-		}
 
-		// 2. Create program
+		// Create program
 		p := tea.NewProgram(m, tea.WithAltScreen())
 
-		// 3. Start persistent UDP client goroutine (ping + receive)
-		if conn != nil {
-			go func() {
-				defer conn.Close()
-				buf := make([]byte, 4096)
-				pingTicker := time.NewTicker(telemetry.EmissionInterval)
-				defer pingTicker.Stop()
+		// Start persistent UDP client goroutine with auto-reconnect
+		go func() {
+			conn, boundPort := sweepPorts()
+			if conn == nil {
+				slog.Warn("could not connect to any telemetry port; will retry")
+			} else {
+				p.Send(reconnectMsg{port: boundPort})
+			}
 
-				for range pingTicker.C {
-					// Send a 1-byte ping to register our address with the serve process
-					_, err := conn.Write([]byte{0x01})
-					if err != nil {
-						if isClosedErr(err) {
-							return
-						}
-						continue
-					}
+			buf := make([]byte, 4096)
+			pingTicker := time.NewTicker(telemetry.EmissionInterval)
+			defer pingTicker.Stop()
 
-					// Read the response (MetricPayload JSON)
-					conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-					n, err := conn.Read(buf)
-					if err != nil {
-						if isClosedErr(err) {
-							return
-						}
-						continue
+			const maxConsecutiveFailures = 6
+			consecutiveFailures := 0
+			backoff := 2 * time.Second
+			const maxBackoff = 10 * time.Second
+
+			for range pingTicker.C {
+				if conn == nil {
+					// Attempt reconnect with backoff
+					time.Sleep(backoff)
+					conn, boundPort = sweepPorts()
+					if conn != nil {
+						consecutiveFailures = 0
+						backoff = 2 * time.Second
+						p.Send(reconnectMsg{port: boundPort})
+						slog.Info("telemetry reconnected", "port", boundPort)
+					} else {
+						backoff = min(backoff*2, maxBackoff)
 					}
-					var payload telemetry.MetricPayload
-					if json.Unmarshal(buf[:n], &payload) == nil {
-						p.Send(sessionMsg(payload))
-					}
+					continue
 				}
-			}()
-		}
 
-		// 4. Start self-polling goroutine for system metrics
+				// Send ping
+				_, err := conn.Write([]byte{0x01})
+				if err != nil {
+					if isClosedErr(err) {
+						return
+					}
+					consecutiveFailures++
+					if consecutiveFailures >= maxConsecutiveFailures {
+						slog.Warn("telemetry connection lost, initiating re-sweep",
+							"failures", consecutiveFailures)
+						conn.Close()
+						conn = nil
+					}
+					continue
+				}
+
+				// Read response
+				conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+				n, err := conn.Read(buf)
+				if err != nil {
+					if isClosedErr(err) {
+						return
+					}
+					consecutiveFailures++
+					if consecutiveFailures >= maxConsecutiveFailures {
+						slog.Warn("telemetry connection lost, initiating re-sweep",
+							"failures", consecutiveFailures)
+						conn.Close()
+						conn = nil
+					}
+					continue
+				}
+
+				consecutiveFailures = 0
+				var payload telemetry.MetricPayload
+				if json.Unmarshal(buf[:n], &payload) == nil {
+					p.Send(sessionMsg(payload))
+				}
+			}
+		}()
+
+		// Start self-polling goroutine for system metrics
 		go func() {
 			startTime := time.Now()
 			for {
@@ -92,12 +114,14 @@ var dashboardCmd = &cobra.Command{
 					MemoryAllocBytes: memStats.Alloc,
 					ActiveGoroutines: runtime.NumGoroutine(),
 					GCPauseNs:        memStats.PauseTotalNs,
+					HeapObjects:      memStats.HeapObjects,
+					SysMemory:        memStats.Sys,
 				})
 				time.Sleep(1 * time.Second)
 			}
 		}()
 
-		// 5. Run blocks until user quits
+		// Run blocks until user quits
 		if _, err := p.Run(); err != nil {
 			fmt.Printf("Error running dashboard: %v\n", err)
 			os.Exit(1)
@@ -111,6 +135,39 @@ func isClosedErr(err error) bool {
 		return false
 	}
 	return strings.Contains(err.Error(), "use of closed")
+}
+
+// reconnectMsg notifies the BubbleTea program of a port change.
+type reconnectMsg struct {
+	port int
+}
+
+// dialAndValidate connects to a port and verifies the server responds.
+func dialAndValidate(port int) *net.UDPConn {
+	addr := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: port}
+	c, err := net.DialUDP("udp", nil, addr)
+	if err != nil {
+		return nil
+	}
+	_, _ = c.Write([]byte{0x01})
+	c.SetReadDeadline(time.Now().Add(1 * time.Second))
+	buf := make([]byte, 4096)
+	_, err = c.Read(buf)
+	if err != nil {
+		c.Close()
+		return nil
+	}
+	return c
+}
+
+// sweepPorts attempts to connect to the first responding telemetry port.
+func sweepPorts() (*net.UDPConn, int) {
+	for _, port := range telemetry.TelemetryPorts {
+		if c := dialAndValidate(port); c != nil {
+			return c, port
+		}
+	}
+	return nil, 0
 }
 
 // Styling Variables matching MagicDev
@@ -174,7 +231,7 @@ func renderStyledTable(headers []string, rows [][]string) string {
 				return lipgloss.NewStyle().Width(20)
 			}
 			if col == 1 {
-				return lipgloss.NewStyle().Width(14)
+				return lipgloss.NewStyle().Width(22)
 			}
 			return lipgloss.NewStyle()
 		})
@@ -202,6 +259,8 @@ type systemMsg struct {
 	MemoryAllocBytes uint64
 	ActiveGoroutines int
 	GCPauseNs        uint64
+	HeapObjects      uint64
+	SysMemory        uint64
 }
 
 // sessionMsg carries UDP-received session metrics from the serve process.
@@ -213,20 +272,22 @@ type model struct {
 	height    int
 
 	// System metrics (self-polled, always live)
-	sysUptime     int64
-	sysMemAlloc   uint64
-	sysGoroutines int
-	sysGCPause    uint64
+	sysUptime      int64
+	sysMemAlloc    uint64
+	sysGoroutines  int
+	sysGCPause     uint64
+	sysHeapObjects uint64
+	sysSysMem      uint64
 
 	// Session metrics (UDP-fed from serve process)
-	sessNetIn       int64
-	sessNetOut      int64
-	sessPipeline    string
-	sessDeadlocks   int
+	sessNetIn        int64
+	sessNetOut       int64
+	sessPipeline     string
+	trifectaReviews  int
 	sessContextBytes int
 	sessTokensEst    int
-	sessConnected   bool
-	sessLastUpdate  time.Time
+	sessConnected    bool
+	sessLastUpdate   time.Time
 
 	// Dashboard metadata
 	boundPort int
@@ -274,15 +335,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.sysMemAlloc = msg.MemoryAllocBytes
 		m.sysGoroutines = msg.ActiveGoroutines
 		m.sysGCPause = msg.GCPauseNs
+		m.sysHeapObjects = msg.HeapObjects
+		m.sysSysMem = msg.SysMemory
 	case sessionMsg:
 		m.sessNetIn = msg.NetworkBytesRead
 		m.sessNetOut = msg.NetworkBytesWritten
 		m.sessPipeline = msg.PipelineStage
-		m.sessDeadlocks = msg.AporiaDeadlockCount
+		m.trifectaReviews = msg.TrifectaReviewCount
 		m.sessContextBytes = msg.SessionContextBytes
 		m.sessTokensEst = msg.SessionTokensEst
 		m.sessConnected = true
 		m.sessLastUpdate = time.Now()
+	case reconnectMsg:
+		m.boundPort = msg.port
 	}
 
 	return m, nil
@@ -315,6 +380,8 @@ func renderSummary(m model) string {
 		{"Memory Allocated", fmt.Sprintf("%.2f MB", float64(m.sysMemAlloc)/1024/1024)},
 		{"Goroutines", strconv.Itoa(m.sysGoroutines)},
 		{"GC Pause", fmt.Sprintf("%.2fms", float64(m.sysGCPause)/1e6)},
+		{"Heap Objects", strconv.FormatUint(m.sysHeapObjects, 10)},
+		{"Total OS Memory", fmt.Sprintf("%.2f MB", float64(m.sysSysMem)/1024/1024)},
 	}
 	sysTable := renderStyledTable([]string{"Metric", "Value"}, sysRows)
 	sysBox := cardStyle.Render(subTitleStyle.Render("System Stats") + "\n" + sysTable)
@@ -328,7 +395,7 @@ func renderSummary(m model) string {
 		{"Net Throughput In", fmt.Sprintf("%d B", m.sessNetIn)},
 		{"Net Throughput Out", fmt.Sprintf("%d B", m.sessNetOut)},
 		{"Pipeline Stage", pipelineStage},
-		{"Aporia Deadlocks", strconv.Itoa(m.sessDeadlocks)},
+		{"Trifecta Reviews", strconv.Itoa(m.trifectaReviews)},
 		{"Context Utilized", fmt.Sprintf("%d bytes", m.sessContextBytes)},
 		{"Tokens (Est.)", strconv.Itoa(m.sessTokensEst)},
 	}

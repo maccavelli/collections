@@ -26,11 +26,13 @@ func Register(mcpServer *mcp.Server, machine *socratic.Machine, ringBuffer *tele
 	// 1. Socratic Thinker Tool
 	socraticTool := mcp.Tool{
 		Name: "socratic_thinker",
-		Description: `MANDATORY STATE MACHINE: Processes complex logic via a 4-stage sequential pipeline. You MUST use this tool; DO NOT simulate the logic in your own thought block.
+		Description: `[DIRECTIVE: Socratic Dialectic Engine] Engage this engine when you need to rigorously stress-test an architecture, evaluate competing trade-offs, or synthesize opposing paradigms through structured adversarial debate. Note: Do NOT invoke this tool for general sequential thought or abstract logic topologies; use sequential_thinking for standard logic loops.
+[MANDATORY WORKFLOW] Processes adversarial loops. You MUST use this tool; DO NOT simulate the analysis in your own thought block.
 1. INITIALIZE: Call the tool with stage="INITIALIZE" and provide the 'problem' string.
 2. EXECUTE: The tool will return explicit instructions for the next stage.
-3. RECURSE: You MUST pass your resulting analysis BACK INTO THIS TOOL one stage at a time, using the correct 'stage' and 'lemma' or 'aporia_synthesis' fields as instructed. Do not output your intermediate analysis to the user.
-4. WAIT: Do not attempt to batch stages.`,
+3. RECURSE: You MUST pass your resulting analysis BACK INTO THIS TOOL one stage at a time, using the correct 'stage' and 'lemma' or 'aporia_synthesis' fields as instructed.
+4. WAIT: Do not attempt to batch stages.
+Keywords: dialectic, socratic, adversarial, trade-offs, synthesis, tension, stress-test, rebuttal, skeptic, thesis`,
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -45,15 +47,15 @@ func Register(mcpServer *mcp.Server, machine *socratic.Machine, ringBuffer *tele
 				},
 				"lemma": map[string]any{
 					"type":        "string",
-					"description": "Your isolated one-sentence summary for the active stage. Do not include your detailed 'Chain of Thought' here; perform all detailed reasoning natively in your markdown response before invoking this tool.",
+					"description": "[REQUIRES: Native markdown thought block] Your isolated two-sentence summary for the active stage. Sentence 1: your position or finding. Sentence 2: the specific technical evidence, mechanism, or example supporting it. Do not include your detailed 'Chain of Thought' here; perform all detailed analysis natively in your markdown response before invoking this tool.",
 				},
 				"is_satisfied": map[string]any{
 					"type":        "boolean",
-					"description": "Used only in ANTITHESIS_EVALUATE to signal if the Thesis defense successfully resolved the tension. Acts as the Convergence Logic Gate.",
+					"description": "Used only in ANTITHESIS_EVALUATE to signal if the Thesis defense successfully resolved the tension. Acts as the Convergence Gate.",
 				},
 				"aporia_synthesis": map[string]any{
 					"type":        "string",
-					"description": "Your final synthesized solution. Only provide this during the APORIA stage. Do not include your detailed 'Chain of Thought' here; perform all detailed reasoning natively in your markdown response before invoking this tool.",
+					"description": "[REQUIRES: Native markdown thought block] Your final synthesized solution. This is not constrained to two sentences — provide a comprehensive synthesis. Only provide this during the APORIA stage. Do not include your detailed 'Chain of Thought' here; perform all detailed analysis natively in your markdown response before invoking this tool.",
 				},
 				"synthesis_critique": map[string]any{
 					"type":        "string",
@@ -65,7 +67,7 @@ func Register(mcpServer *mcp.Server, machine *socratic.Machine, ringBuffer *tele
 				},
 				"resolution_strategy": map[string]any{
 					"type":        "string",
-					"description": "Mandatory step outlining how to fix the logic ONLY if paradox_detected is true.",
+					"description": "Mandatory step outlining how to fix the synthesis loop ONLY if paradox_detected is true.",
 				},
 			},
 			"required": []string{"stage"},
@@ -96,7 +98,7 @@ func Register(mcpServer *mcp.Server, machine *socratic.Machine, ringBuffer *tele
 	// 2. Internal Logs Tool
 	logsTool := mcp.Tool{
 		Name:        "get_internal_logs",
-		Description: "Retrieves logs from the ring buffer to diagnose runtime issues.",
+		Description: "[ROLE: DIAGNOSTIC] SYSTEM LOG INSPECTOR: Retrieves Socratic Engine pipeline execution logs and dialectic state transitions from the local ring buffer. Do NOT use this for orchestrator, magicdev, or system-level diagnostics. Keywords: socratic dialectic state transition internal ringbuffer pipeline error",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{

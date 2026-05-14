@@ -3,16 +3,13 @@ package cmd
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
-	"net"
 	"os"
 	"os/signal"
 	"runtime"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -20,6 +17,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/spf13/cobra"
 	"mcp-server-socratic-thinker/internal/handler"
+	"mcp-server-socratic-thinker/internal/singleton"
 	"mcp-server-socratic-thinker/internal/socratic"
 	"mcp-server-socratic-thinker/internal/telemetry"
 )
@@ -33,6 +31,11 @@ var serveCmd = &cobra.Command{
 	Use:   "serve",
 	Short: "Start the Socratic Thinker MCP server",
 	Run: func(cmd *cobra.Command, args []string) {
+		// Singleton enforcement — acquire workspace-scoped UDS lock.
+		// Must be first: assassinates any zombie instance before we init anything.
+		lockLn := singleton.AcquireLock()
+		defer lockLn.Close()
+
 		// Defense-in-depth
 		if _, exists := os.LookupEnv("GOMEMLIMIT"); !exists {
 			_ = os.Setenv("GOMEMLIMIT", "1024MiB")
@@ -64,64 +67,36 @@ var serveCmd = &cobra.Command{
 		startTime := time.Now()
 
 		// Background telemetry server (UDP listener — dashboard connects to us)
+		telemetryServer := telemetry.NewServer()
+		if telemetryServer != nil {
+			telemetryServer.Start()
+			defer telemetryServer.Close()
+		}
+
+		// UDP emission goroutine — builds domain-specific payload and broadcasts
 		go func() {
-			var conn *net.UDPConn
-			for _, port := range telemetry.TelemetryPorts {
-				addr := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: port}
-				c, err := net.ListenUDP("udp", addr)
-				if err == nil {
-					conn = c
-					slog.Info("telemetry udp listener bound", "port", port)
-					break
-				}
-				slog.Warn("telemetry port unavailable", "port", port, "error", err)
-			}
-			if conn == nil {
-				slog.Warn("all telemetry ports exhausted; starting without dashboard emission")
+			if telemetryServer == nil {
 				return
 			}
-			defer conn.Close()
-
-			// Track the dashboard's address once it pings us
-			var dashboardAddr *net.UDPAddr
-			var dashboardAddrMu sync.Mutex
-
-			// Goroutine to receive pings from the dashboard
-			go func() {
-				buf := make([]byte, 64)
-				for {
-					_, remoteAddr, err := conn.ReadFromUDP(buf)
-					if err != nil {
-						if strings.Contains(err.Error(), "use of closed") {
-							return
-						}
-						continue
-					}
-					dashboardAddrMu.Lock()
-					dashboardAddr = remoteAddr
-					dashboardAddrMu.Unlock()
-				}
-			}()
-
 			ticker := time.NewTicker(telemetry.EmissionInterval)
 			defer ticker.Stop()
 
 			var memStats runtime.MemStats
+			runtime.ReadMemStats(&memStats) // Initial hydration
+			tickCount := 0
+
 			for {
 				select {
 				case <-ctx.Done():
 					return
 				case <-ticker.C:
-					dashboardAddrMu.Lock()
-					target := dashboardAddr
-					dashboardAddrMu.Unlock()
-
-					if target == nil {
-						continue // No dashboard connected yet
+					tickCount++
+					// ReadMemStats every 4th tick (2s cadence) to reduce STW overhead
+					if tickCount%4 == 0 {
+						runtime.ReadMemStats(&memStats)
 					}
 
-					runtime.ReadMemStats(&memStats)
-					stage, deadlockCount, contextBytes, tokensEst := machine.GetMetrics()
+					stage, trifectaCount, contextBytes, tokensEst := machine.GetMetrics()
 
 					payload := telemetry.MetricPayload{
 						UptimeSeconds:       int64(time.Since(startTime).Seconds()),
@@ -131,13 +106,12 @@ var serveCmd = &cobra.Command{
 						NetworkBytesRead:    bytesRead.Load(),
 						NetworkBytesWritten: bytesWritten.Load(),
 						PipelineStage:       stage,
-						AporiaDeadlockCount: deadlockCount,
+						TrifectaReviewCount: trifectaCount,
 						SessionContextBytes: contextBytes,
 						SessionTokensEst:    tokensEst,
 					}
 
-					data, _ := json.Marshal(payload)
-					_, _ = conn.WriteToUDP(data, target)
+					telemetryServer.Broadcast(payload)
 				}
 			}
 		}()

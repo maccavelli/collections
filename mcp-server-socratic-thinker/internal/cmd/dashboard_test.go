@@ -96,7 +96,7 @@ func TestModel_Update_SessionMsg(t *testing.T) {
 		NetworkBytesRead:    100,
 		NetworkBytesWritten: 200,
 		PipelineStage:       "THESIS",
-		AporiaDeadlockCount: 1,
+		TrifectaReviewCount: 1,
 	}
 	updated, _ := m.Update(sessionMsg(payload))
 	um := updated.(model)
@@ -182,5 +182,14 @@ func TestRenderStyledTable(t *testing.T) {
 	out := renderStyledTable(headers, rows)
 	if len(out) == 0 {
 		t.Error("expected non-empty table")
+	}
+}
+
+func TestModel_Update_ReconnectMsg(t *testing.T) {
+	m := initialModel()
+	updated, _ := m.Update(reconnectMsg{port: 49152})
+	um := updated.(model)
+	if um.boundPort != 49152 {
+		t.Errorf("expected boundPort=49152, got %d", um.boundPort)
 	}
 }
